@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "writing-context-rtfm"
+version = "0.1.0"
+description = "MCP extension for writing-context retrieval relying on RTFM"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "rtfm-ai",
+    "pyyaml"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+writing-context-rtfm = "writing_context_rtfm.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/writing_context_rtfm"]

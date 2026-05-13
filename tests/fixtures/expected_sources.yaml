@@ -1,0 +1,6 @@
+tasks:
+  - id: write_methodology
+    task: "Write the methodology section, detailing the dataset, algorithm selection, and deployment."
+    target_section: "section_approach"
+    expected_sources:
+      - "sections/03_approach.tex"

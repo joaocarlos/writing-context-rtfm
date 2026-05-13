@@ -1,0 +1,22 @@
+version: 1
+
+document:
+  title: "TinyML Fault Detection in Water Pump Systems"
+  thesis: "TinyML models can support fault detection and monitoring directly on water pumps using acoustic analysis."
+  writing_style:
+    tone: "academic, formal, concise"
+    avoid:
+      - "real-time deployment claims without caveats"
+
+sections:
+  section_approach:
+    title: "Proposed approach"
+    role: "Describe dataset, pipeline, algorithm selection, and quantization."
+    path: "sections/03_approach.tex"
+    key_terms:
+      - "MIMII"
+      - "CNN"
+      - "quantization"
+    depends_on: []
+    must_preserve: []
+    avoid: []

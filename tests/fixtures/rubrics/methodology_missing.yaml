@@ -1,0 +1,22 @@
+test_case: methodology_missing
+
+required_ideas:
+  - "The train-test split is fixed and reproducible."
+  - "The split happens after source standardization and feature construction."
+  - "Event descriptions are mapped to harmonized event types."
+  - "Derived attributes include temporal, spatial, resource-load, and duration attributes."
+
+required_terms:
+  - "fixed train-test split"
+  - "harmonized event types"
+  - "resource-load attributes"
+
+forbidden_claims:
+  - "real-time deployment"
+  - "operational validation"
+  - "fully autonomous emergency management"
+
+style_constraints:
+  - "academic"
+  - "concise"
+  - "no conclusion paragraph"

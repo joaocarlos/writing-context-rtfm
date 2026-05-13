@@ -1,0 +1,22 @@
+version: 1
+
+rtfm:
+  corpus: manuscript
+  project_root: .
+  sync_before_pack: false
+
+context:
+  default_token_budget: 6000
+  reserved_generation_margin: 0.10
+  max_search_results_per_query: 10
+  max_source_spans: 20
+  include_source_excerpts: false
+
+cache:
+  enabled: true
+  path: .writing-context/context_cache.sqlite
+  invalidate_on_refresh: true
+
+section_cards:
+  path: .writing-context/section_cards.yaml
+  required: false

@@ -1,0 +1,20 @@
+\section{Results and Discussion}
+\label{sec:results}
+
+This section presents the results of implementing the proposed fault detection in the water pump system workflow using TinyML on the Arduino Nano 33 BLE Sense platform.
+
+\subsection{Mel Frequency Cepstral Coefficient}
+
+The validation accuracy achieved with MFCC for fault detection in water pumping systems was 75.99\%. Analysis of the confusion matrix indicates that the model distinguished between normal and abnormal operation states with accuracies of 68.5\% and 83.3\%, respectively. In contrast, the model demonstrated limited effectiveness in classifying uncertain instances, achieving only 18.1\% accuracy.
+
+The F1-scores for the abnormal and normal classes were 0.85 and 0.78, respectively, indicating balanced performance in precision and recall for these categories.
+
+\subsection{Mel-Filterbank Energy}
+
+For the MFE approach, the validation accuracy was 78.4\%. The confusion matrix shows a pattern similar to that of MFCC, with relatively high accuracy for abnormal and normal instances (64.9\% and 74.6\%, respectively) and lower accuracy for uncertain instances (23.4\%).
+
+The F1-scores for the abnormal and normal classes were 0.78 and 0.77, respectively, demonstrating performance comparable to that of MFCC in both precision and recall. However, the model also exhibits reduced performance when classifying uncertain instances, as indicated by the lower F1-score.
+
+\section{Conclusion}\label{sec:conclusion}
+
+This study evaluated an embedded CNN implemented on an Arduino Nano 33 BLE Sense board, comparing two preprocessing techniques, MFCC and MFE, for fault detection in a water pumping system. Both MFCC and MFE demonstrated strong performance in distinguishing between normal and abnormal operational states, achieving validation accuracies of 75.99\% and 78.4\%, respectively. While the models achieved high accuracy on both normal and abnormal cases, they struggled to classify uncertain instances.

@@ -1,0 +1,24 @@
+version: 1
+
+document:
+  title: "Working document title"
+  thesis: "One or two sentences describing the manuscript's central purpose."
+  writing_style:
+    tone: "academic, formal, concise"
+    avoid:
+      - "unsupported claims"
+      - "overly broad conclusions"
+
+sections:
+  section_1:
+    title: "Introduction"
+    role: "Define the problem, motivation, and contribution."
+    path: "sections/01_introduction.tex"
+    key_terms:
+      - "territorial prioritization"
+      - "emergency management"
+    depends_on: []
+    must_preserve:
+      - "The system supports decision-making; it does not replace human judgment."
+    avoid:
+      - "operational deployment claims"

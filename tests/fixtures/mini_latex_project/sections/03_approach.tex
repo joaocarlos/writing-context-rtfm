@@ -1,0 +1,19 @@
+\section{Proposed approach}\label{sec:approach}
+
+This study focuses on detecting faults in water pumping systems by applying machine learning techniques within a compact device equipped with a microphone. Fault detection is achieved by evaluating the operational status of the pump through acoustic signal processing of the emitted sounds. The Edge Impulse platform serves as the implementation tool.
+
+\subsection{Dataset}
+
+The MIMII (Malfunctioning Industrial Machine Investigation and Inspection) dataset, which includes normal and anomalous operating sounds from various real-world machines, was used in this study. Specifically, the method focuses on the water pump subset. The data were collected using a circular array of eight microphones at a sampling rate of 16 kHz. Each recording is 10 seconds long.
+
+The pump subset comprises 456 normal and 456 anomalous recordings (after undersampling the majority class), resulting in a dataset that is perfectly balanced between classes. The data were partitioned into training (70\%) and testing (30\%) sets following a fixed train-test split that is reproducible. This fixed train-test split ensures reliable model evaluation. The split happens after source standardization and feature construction. Furthermore, event descriptions are mapped to harmonized event types. Derived attributes include temporal, spatial, resource-load attributes, and duration attributes.
+
+\subsection{Algorithm selection}
+
+The EIS framework and configuration for training and validating the ML model were established in this stage. The process included selecting the computational model type and optimizing parameters such as the number of internal layers and the learning rate. A CNN architecture was adopted because it is effective for spectrogram-like 2D representations extracted from audio signals. The model combines convolutional layers for feature extraction with fully connected layers for classification. The training setup used the Adam optimizer, a learning rate of 0.005, batch size of 32, and 100 epochs. Categorical cross-entropy was chosen as the loss function because the task involves more than one class, namely normal and abnormal. The target device for model deployment was also identified during this phase.
+
+\subsection{Deployment}
+
+Within the Edge Impulse workflow, the deployment block serves as a crucial stage for optimizing and deploying machine learning models on microcontroller-based devices. The deployment process comprises three steps: post-training quantization, export, and integration.
+
+Post-training quantization is a crucial method for enabling efficient deployment of neural network models on microcontrollers. The process begins by converting model weights from floating-point (Float32) to 8-bit integer (Int8) precision. A subsequent calibration phase utilizes a validation dataset to refine quantization parameters. The quantized model is further optimized for low-power hardware by applying techniques such as convolutional filter decomposition and operation reordering to improve computational efficiency and reduce memory usage.

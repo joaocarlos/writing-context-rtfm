@@ -1,6 +1,7 @@
 """MCP server logic."""
 import sys
 import json
+import os
 from dataclasses import asdict
 
 from writing_context_rtfm.config import load_config
@@ -8,6 +9,16 @@ from writing_context_rtfm.section_cards import load_section_cards
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.context_pack import ContextPackGenerator
+import logging
+
+# Set up logging to a file to debug transport issues
+log_path = "/tmp/writing-context-rtfm.log"
+logging.basicConfig(
+    filename=log_path,
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("mcp-server")
 
 def get_tools_list():
     return {
@@ -48,6 +59,7 @@ def handle_get_writing_context_pack(args):
     cards = load_section_cards(config.section_cards.path, required=config.section_cards.required)
     adapter = RTFMAdapter()
     store = ExtensionStore(config.cache.path)
+    store.init_db()
     generator = ContextPackGenerator(config, cards, adapter, store)
     
     task = args.get("task", "")
@@ -82,6 +94,7 @@ def handle_refresh_index(args):
 
 def process_message(line):
     try:
+        logger.debug(f"Received: {line}")
         req = json.loads(line)
         if "method" in req:
             method = req["method"]
@@ -96,6 +109,12 @@ def process_message(line):
                 return None  # notifications get no response, no error
             elif method == "tools/list":
                 result = get_tools_list()
+            elif method == "resources/list":
+                result = {"resources": []}
+            elif method == "resources/templates/list":
+                result = {"resourceTemplates": []}
+            elif method == "prompts/list":
+                result = {"prompts": []}
             elif method == "tools/call":
                 params = req.get("params", {})
                 name = params.get("name")
@@ -105,20 +124,33 @@ def process_message(line):
                 elif name == "refresh_index":
                     result = handle_refresh_index(args)
                 else:
-                    return json.dumps({
+                    response = json.dumps({
                         "jsonrpc": "2.0",
                         "id": req.get("id"),
                         "error": {"code": -32601, "message": f"Tool not found: {name}"}
                     })
+                    logger.debug(f"Responding (Error): {response}")
+                    return response
             else:
+                if "id" in req:
+                    response = json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": req.get("id"),
+                        "error": {"code": -32601, "message": f"Method not found: {method}"}
+                    })
+                    logger.debug(f"Responding (Error): {response}")
+                    return response
                 return None
                 
-            return json.dumps({
+            response = json.dumps({
                 "jsonrpc": "2.0",
                 "id": req.get("id"),
                 "result": result
             })
+            logger.debug(f"Responding: {response}")
+            return response
     except Exception as e:
+        logger.exception("Error processing message")
         return json.dumps({
             "jsonrpc": "2.0",
             "error": {"code": -32000, "message": str(e)}

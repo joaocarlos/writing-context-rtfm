@@ -23,8 +23,9 @@ must preserve verbatim, and what it must avoid. The packer uses this file to:
 - Expand search queries with relevant key terms and section titles
 - Apply a +0.8 score boost to chunks from the target section's file
 - Apply a 75% penalty to off-target key-term matches
-- Inject `must_preserve` strings directly into the final context pack as hard constraints
+- Inject `must_preserve` strings directly into the final context pack as hard constraints (Writing & Proofreading)
 - Discard any retrieved chunk whose content matches a phrase in `avoid`
+- Provide surgical constraints for `get_proofreading_context_pack`
 
 Getting this file right is the single highest-leverage action a writer can take to
 improve context pack quality.
@@ -65,7 +66,8 @@ sections:
       # use for things retrieved by key terms but not relevant to this section
     constraints:
       - "<free-form writing constraint, e.g. 'Do not introduce new datasets here'>"
-      # constraints end up in the context pack's `constraints` list for the LLM
+      # constraints end up in the context pack's `constraints` list
+      # for proofreading, these are injected as section-specific rules
 ```
 
 ## Field guidance
@@ -77,9 +79,9 @@ sections:
 | `writing_style.avoid` | When global prohibitions exist | Not yet consumed by packer in v0.1; acts as human reminder |
 | `key_terms` | Always for technical sections | Each term becomes its own RTFM search query |
 | `depends_on` | When a section cites work from another section | Adds +0.4 score boost to dependency file chunks |
-| `must_preserve` | For fixed claims, definitions, caveats | Injected verbatim into `constraints` in the context pack |
-| `avoid` | When a key term appears in many wrong sections | Discards retrieved chunks that match these phrases |
-| `constraints` | For structural or rhetorical rules | Injected into `constraints` in the context pack |
+| `must_preserve` | For fixed claims, definitions, caveats | Injected verbatim into `constraints` in the context pack. In proofreading, ensures claims are not altered. |
+| `avoid` | When a key term appears in many wrong sections | Discards retrieved chunks that match these phrases. Filters noisy terminology examples. |
+| `constraints` | For structural or rhetorical rules | Injected into `constraints` in the context pack for writing or proofreading. |
 | `path` | Always | Without a path, the packer cannot apply Target Boost or Key-Term Scope Penalty |
 
 ## Rules you must follow

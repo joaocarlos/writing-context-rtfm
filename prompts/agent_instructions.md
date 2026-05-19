@@ -20,6 +20,7 @@ manuscript freely is wasteful and will cause you to miss critical constraints.
 |------|--------|
 | Writing a new section or subsection | `get_writing_context_pack` with `task` + `target` |
 | Rewriting or expanding existing text | `get_writing_context_pack` with the rewrite task |
+| Proofreading a target file or lines | `get_proofreading_context_pack` with the target file/range |
 | Checking what constraints apply to a section | `get_writing_context_pack` — read `constraints` in the pack |
 | Verifying what prior sections said | `get_writing_context_pack` with `depends_on` section as `target` |
 | Refreshing context after edits to the manuscript | `refresh_index` first, then `get_writing_context_pack` |
@@ -34,6 +35,7 @@ and the pack's `status` is `"degraded"` or `warnings` is non-empty.
 | Tool | When to use |
 |------|-------------|
 | `get_writing_context_pack` | Before any writing task — returns prioritized source spans, constraints, and the document thesis |
+| `get_proofreading_context_pack` | Before proofreading/editing a specific span — returns target text, local paragraph context, and terminology usage |
 | `refresh_index` | After significant edits to the manuscript files, to re-sync the RTFM index and invalidate the cache |
 
 ---
@@ -60,6 +62,26 @@ warnings          — list of issues found during retrieval
 - `essential` — chunks from the target section file with high relevance. Use as primary context.
 - `supporting` — chunks from dependency sections or high-relevance background. Use for coherence.
 - `background` — low-relevance but retrieved. Use only if `essential` and `supporting` are insufficient.
+
+---
+
+### How to read a proofreading pack
+
+The pack returned by `get_proofreading_context_pack` is specialized for edits:
+
+```
+target              — metadata about the file and line range you are proofreading
+local_context       — exact text of the target span + the previous and next paragraphs
+constraints:
+  mode              — "surface" | "academic_clarity" | "consistency" | "latex_safe"
+  strictness        — "conservative" | "moderate" | "assertive"
+  general_rules     — rules based on the mode and strictness
+  section_rules     — section-specific rules (must_preserve + constraints)
+  terminology       — List of key terms with prior usage examples from the manuscript
+```
+
+**Terminology check:**
+Before changing a technical term, check the `terminology` list in the pack. It shows you how that term (or related terms) was used elsewhere to ensure you don't introduce inconsistencies.
 
 ---
 

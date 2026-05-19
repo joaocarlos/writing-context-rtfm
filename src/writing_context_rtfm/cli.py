@@ -10,6 +10,7 @@ from writing_context_rtfm.section_cards import load_section_cards
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.proofread import ProofreadPackGenerator
 
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
@@ -74,6 +75,26 @@ def pack_command(args):
     )
     print(json.dumps(asdict(pack), indent=2))
 
+def proofread_pack_command(args):
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+
+    cards = load_section_cards(config.section_cards.path, required=config.section_cards.required)
+    adapter = RTFMAdapter()
+    store = ExtensionStore(config.cache.path)
+    store.init_db()
+    generator = ProofreadPackGenerator(config, cards, adapter, store)
+
+    pack = generator.generate(
+        target_file=args.target_file,
+        line_start=args.line_start,
+        line_end=args.line_end,
+        mode=args.mode,
+        strictness=args.strictness,
+        max_tokens=args.max_tokens
+    )
+    print(json.dumps(asdict(pack), indent=2))
+
 def serve_command(args):
     from writing_context_rtfm.server import run_server
     run_server()
@@ -105,6 +126,16 @@ def main():
     parser_pack.add_argument("--budget", type=int, default=6000, help="Token budget")
     parser_pack.add_argument("--must-consider", nargs="*", help="Explicit files or concepts to consider")
 
+    # proofread-pack
+    parser_proof = subparsers.add_parser("proofread-pack", help="Generate a proofreading context pack")
+    parser_proof.add_argument("target_file", help="The file to proofread")
+    parser_proof.add_argument("--line-start", type=int, required=True, help="Start line number")
+    parser_proof.add_argument("--line-end", type=int, required=True, help="End line number")
+    parser_proof.add_argument("--mode", default="surface", choices=["surface", "academic_clarity", "consistency", "latex_safe"], help="Proofreading mode")
+    parser_proof.add_argument("--strictness", default="moderate", choices=["conservative", "moderate", "assertive"], help="Correction strictness")
+    parser_proof.add_argument("--max-tokens", type=int, default=4000, help="Maximum token budget")
+    parser_proof.add_argument("--project-root", default=".", help="Project root for config resolution")
+
     subparsers.add_parser("serve", help="Start the MCP server")
 
     args = parser.parse_args()
@@ -114,6 +145,7 @@ def main():
         "init-db": init_db_command,
         "sync": sync_command,
         "pack": pack_command,
+        "proofread-pack": proofread_pack_command,
         "serve": serve_command
     }
 

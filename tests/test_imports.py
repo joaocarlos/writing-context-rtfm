@@ -11,7 +11,8 @@ def test_imports():
     import writing_context_rtfm.hashing
     import writing_context_rtfm.server
     import writing_context_rtfm.schemas
-    import writing_context_rtfm.ranking
+    import writing_context_rtfm.proofread
+    import writing_context_rtfm.utils
     import writing_context_rtfm.token_budget
 
     assert writing_context_rtfm.__version__ == "0.1.0"

@@ -63,3 +63,42 @@ def load_section_cards(path: str = ".writing-context/section_cards.yaml", requir
         document=document,
         sections=sections
     )
+
+
+def validate_section_cards(cards: "SectionCards") -> List[str]:
+    """Check section cards for self-consistency.
+
+    Returns a list of human-readable warnings (broken depends_on refs, duplicate
+    paths, missing target files). The empty list means everything is consistent.
+    File existence is checked only when the path is relative — absolute paths
+    pointing outside the project are not probed.
+    """
+    warnings: List[str] = []
+    if not cards or not cards.sections:
+        return warnings
+
+    section_ids = set(cards.sections)
+    seen_paths: Dict[str, str] = {}
+
+    for sid, card in cards.sections.items():
+        for dep in card.depends_on or []:
+            if dep not in section_ids:
+                warnings.append(
+                    f"Section '{sid}' depends_on unknown section '{dep}'. "
+                    "Query expansion will skip this dependency."
+                )
+        if card.path:
+            prior = seen_paths.get(card.path)
+            if prior and prior != sid:
+                warnings.append(
+                    f"Sections '{prior}' and '{sid}' share the same path '{card.path}'. "
+                    "Path-based scoring may be ambiguous."
+                )
+            seen_paths[card.path] = sid
+            if not os.path.isabs(card.path) and not os.path.exists(card.path):
+                warnings.append(
+                    f"Section '{sid}' path '{card.path}' does not exist on disk. "
+                    "Target-file boosts won't fire for this section."
+                )
+
+    return warnings

@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.config import load_config, ContextConfig, AppConfig, RTFMConfig, CacheConfig, SectionCardsConfig
 from writing_context_rtfm.section_cards import load_section_cards
-from writing_context_rtfm.context_pack import ContextPackGenerator, is_allowed_source, _extract_task_keywords, EXCLUDED_SOURCE_PATTERNS
+from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.utils import is_allowed_source, extract_keywords, EXCLUDED_SOURCE_PATTERNS
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import RTFMResult
@@ -186,7 +187,7 @@ class TestQueryExpansion(unittest.TestCase):
         assert any("MIMII" in q or "CNN" in q or "quantization" in q for q in captured)
 
     def test_task_keyword_extraction(self):
-        kws = _extract_task_keywords("Write the methodology section detailing dataset and quantization")
+        kws = extract_keywords("Write the methodology section detailing dataset and quantization")
         assert "dataset" in kws
         assert "quantization" in kws
         assert "methodology" in kws

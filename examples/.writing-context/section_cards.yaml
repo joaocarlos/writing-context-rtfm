@@ -22,3 +22,20 @@ sections:
       - "The system supports decision-making; it does not replace human judgment."
     avoid:
       - "operational deployment claims"
+    constraints:
+      - "Ensure all citations use the \cite{} format."
+      - "Maintain consistent capitalization for technical terms like 'Territorial Prioritization'."
+
+  section_2:
+    title: "Methodology"
+    role: "Describe the algorithmic approach to territorial prioritization."
+    path: "sections/02_methodology.tex"
+    key_terms:
+      - "quantization"
+      - "priority-aware sampling"
+    depends_on:
+      - "section_1"
+    must_preserve:
+      - "The sampling frequency is fixed at 1Hz for real-time compliance."
+    constraints:
+      - "Do not alter the mathematical notation in equation environments."

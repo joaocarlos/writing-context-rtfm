@@ -12,41 +12,7 @@ from writing_context_rtfm.hashing import compute_task_hash, stable_hash
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
 
-# ---------------------------------------------------------------------------
-# Exclusion rules (Fix 2)
-# ---------------------------------------------------------------------------
-EXCLUDED_SOURCE_PATTERNS = [
-    ".writing-context/",
-    ".rtfm/",
-    ".git/",
-    "__pycache__/",
-]
-EXCLUDED_SOURCE_EXTENSIONS = {".sqlite", ".db", ".lock"}
-
-def is_allowed_source(path: str) -> bool:
-    """Return True if the path should appear as a manuscript source span."""
-    normalized = path.replace("\\", "/")
-    for pat in EXCLUDED_SOURCE_PATTERNS:
-        if pat in normalized:
-            return False
-    from pathlib import Path
-    if Path(normalized).suffix.lower() in EXCLUDED_SOURCE_EXTENSIONS:
-        return False
-    return True
-
-# ---------------------------------------------------------------------------
-# Task keyword extraction (Fix 4)
-# ---------------------------------------------------------------------------
-KEYWORD_STOPWORDS = {
-    "write", "the", "section", "detailing", "and", "of", "for", "a", "an",
-    "in", "to", "that", "with", "this", "is", "are", "be", "from", "on",
-    "how", "using", "about", "into", "each", "by", "our",
-}
-
-def _extract_task_keywords(task: str) -> List[str]:
-    words = task.lower().split()
-    return [w.strip(".,;:") for w in words
-            if w.strip(".,;:") not in KEYWORD_STOPWORDS and len(w.strip(".,;:")) > 3]
+from writing_context_rtfm.utils import is_allowed_source, extract_keywords
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -74,6 +40,8 @@ class PackQuality:
     discarded_low_score: int = 0
     discarded_excluded_path: int = 0
     discarded_avoid_match: int = 0
+    dropped_for_budget: int = 0
+    truncated: bool = False
     estimated_tokens: int = 0
 
 @dataclass(frozen=True)
@@ -153,7 +121,7 @@ class ContextPackGenerator:
                         _add(kt, "dep_title")
 
         # 5. Task keywords
-        for kw in _extract_task_keywords(task):
+        for kw in extract_keywords(task):
             _add(kw, "task_keyword")
 
         # 6. Explicit must-consider
@@ -347,19 +315,39 @@ class ContextPackGenerator:
         usable_budget = int(token_budget * (1.0 - self.config.context.reserved_generation_margin))
         selected: List[SourceSpan] = []
         current_tokens = 0
+        budget_dropped = 0
+        cap_truncated = False
         for span in filtered:
             est = self._estimate_tokens(span)
+            if len(selected) >= self.config.context.max_source_spans:
+                cap_truncated = True
+                budget_dropped += 1
+                continue
             if current_tokens + est <= usable_budget:
                 selected.append(span)
                 current_tokens += est
-                if len(selected) >= self.config.context.max_source_spans:
-                    break
+            else:
+                budget_dropped += 1
+
+        if budget_dropped > 0:
+            quality.dropped_for_budget = budget_dropped
+            quality.truncated = True
+            if cap_truncated:
+                warnings.append(
+                    f"{budget_dropped} candidate span(s) dropped: token budget or "
+                    f"max_source_spans={self.config.context.max_source_spans} cap reached. "
+                    "Increase token_budget or refine `target`/`must_consider` for more coverage."
+                )
+            else:
+                warnings.append(
+                    f"{budget_dropped} candidate span(s) dropped to stay within token budget "
+                    f"({usable_budget} usable of {token_budget}). Increase token_budget for more coverage."
+                )
 
         # --- Classify priority ---
         selected = self._classify_priority(selected, target_card, dep_cards)
 
         quality.selected_count = len(selected)
-        quality.estimated_tokens = current_tokens
 
         # --- Build pack metadata ---
         constraints: List[str] = []
@@ -369,6 +357,14 @@ class ContextPackGenerator:
             if target_card:
                 constraints.extend(target_card.constraints or [])
                 constraints.extend(target_card.must_preserve or [])
+
+        # Include constraint serialization in token estimate so clients can
+        # budget downstream generation accurately.
+        constraint_tokens = estimate_tokens("\n".join(constraints)) if constraints else 0
+        if doc_thesis:
+            constraint_tokens += estimate_tokens(doc_thesis)
+        total_tokens = current_tokens + constraint_tokens
+        quality.estimated_tokens = total_tokens
 
         status = "degraded" if warnings else "complete"
 
@@ -380,7 +376,7 @@ class ContextPackGenerator:
             terminology={},
             constraints=constraints,
             source_spans=selected,
-            estimated_tokens=current_tokens,
+            estimated_tokens=total_tokens,
             status=status,
             warnings=warnings,
             quality=asdict(quality),
@@ -448,7 +444,7 @@ class ContextPackGenerator:
 
         # Chapter title contains query terms (+0.5, up to 3 hits)
         chapter_title = (metadata.get("chapter_title") or "").lower()
-        task_kws = _extract_task_keywords(query)
+        task_kws = extract_keywords(query)
         kw_hits = sum(1 for kw in task_kws if kw in chapter_title)
         score += 0.5 * min(kw_hits, 3)
 

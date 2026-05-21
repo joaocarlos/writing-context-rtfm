@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 class RTFMConfig:
     corpus: str = "manuscript"
     project_root: str = "."
-    sync_before_pack: bool = False
+    sync_before_pack: bool = True
 
 @dataclass(frozen=True)
 class ContextConfig:

@@ -3,7 +3,7 @@ version: 1
 rtfm:
   corpus: manuscript
   project_root: .
-  sync_before_pack: false
+  sync_before_pack: true
 
 context:
   default_token_budget: 6000

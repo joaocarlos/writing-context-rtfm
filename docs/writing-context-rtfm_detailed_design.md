@@ -185,7 +185,7 @@ version: 1
 rtfm:
   corpus: manuscript
   project_root: .
-  sync_before_pack: false
+  sync_before_pack: true
 
 context:
   default_token_budget: 6000
@@ -213,7 +213,7 @@ from dataclasses import dataclass
 class RTFMConfig:
     corpus: str = "manuscript"
     project_root: str = "."
-    sync_before_pack: bool = False
+    sync_before_pack: bool = True
 
 @dataclass(frozen=True)
 class ContextConfig:

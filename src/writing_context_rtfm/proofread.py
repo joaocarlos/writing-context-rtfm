@@ -1,8 +1,8 @@
-"""Proofreading context mode logic."""
 import os
 import json
+import logging
 from dataclasses import dataclass, field, asdict
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
@@ -86,11 +86,13 @@ class ProofreadPackGenerator:
                  mode: str = "surface", strictness: str = "moderate",
                  max_tokens: int = 4000) -> ProofreadingContextPack:
         warnings = []
+        lines = []
         # Clamp early to valid 1-indexed range
         if os.path.exists(target_file):
             try:
                 with open(target_file, "r", encoding="utf-8") as f:
-                    num_lines = sum(1 for _ in f)
+                    lines = f.readlines()
+                num_lines = len(lines)
                 if num_lines == 0:
                     line_start = 1
                     line_end = 1
@@ -103,7 +105,7 @@ class ProofreadPackGenerator:
                 warnings.append(f"Failed to read file bounds: {e}")
 
         # 1. Load target span and local context
-        local_ctx = self._get_local_context(target_file, line_start, line_end)
+        local_ctx = self._get_local_context(target_file, line_start, line_end, lines=lines)
         
         # 2. Find section card
         section_card = self._find_section_card(target_file)
@@ -142,12 +144,16 @@ class ProofreadPackGenerator:
             warnings=warnings
         )
 
-    def _get_local_context(self, file_path: str, start: int, end: int) -> LocalContext:
-        if not os.path.exists(file_path):
-            return LocalContext(f"[File not found: {file_path}]", None, None)
-            
-        with open(file_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+    def _get_local_context(self, file_path: str, start: int, end: int, lines: Optional[List[str]] = None) -> LocalContext:
+        if lines is None:
+            if not os.path.exists(file_path):
+                return LocalContext(f"[File not found: {file_path}]", None, None)
+                
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+            except Exception as e:
+                return LocalContext(f"[Failed to read file: {e}]", None, None)
             
         num_lines = len(lines)
         if num_lines == 0:
@@ -165,7 +171,7 @@ class ProofreadPackGenerator:
         
         # Previous paragraph
         prev_lines = lines[:start-1]
-        prev_para = []
+        prev_para: List[str] = []
         for line in reversed(prev_lines):
             if not line.strip() and prev_para:
                 break
@@ -174,7 +180,7 @@ class ProofreadPackGenerator:
         
         # Next paragraph
         next_lines = lines[end:]
-        next_para = []
+        next_para: List[str] = []
         for line in next_lines:
             if not line.strip() and next_para:
                 break
@@ -211,7 +217,6 @@ class ProofreadPackGenerator:
             try:
                 results = self.adapter.search(term, corpus=self.config.rtfm.corpus, limit=5)
             except Exception as e:
-                import logging
                 logging.getLogger("proofread").warning(f"Failed to search for prior usage of '{term}': {e}")
                 warnings.append(f"Failed to search for prior usage of '{term}': {e}")
                 continue

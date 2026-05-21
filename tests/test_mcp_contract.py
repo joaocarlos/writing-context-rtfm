@@ -1,7 +1,7 @@
 """Integration test simulating an MCP client to answer validation checklist."""
 import json
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from writing_context_rtfm.server import process_message
 

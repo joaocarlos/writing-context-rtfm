@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
-from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
+from writing_context_rtfm.section_cards import SectionCards, DocumentCard
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.storage import ExtensionStore
 
@@ -57,32 +57,32 @@ class TestCachingRobustness(unittest.TestCase):
         task = "test task"
         
         # 1. First run (cache miss, gets cached)
-        pack1 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.assertEqual(self.adapter.search.call_count, 3)
         self.adapter.search.reset_mock()
         
         # 2. Second run (cache hit, search NOT called)
-        pack2 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.adapter.search.assert_not_called()
         
         # 3. Modify config.yaml (invalidates cache)
         self.config_file.write_text("version: 1\n# modified config comment")
-        pack3 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.assertEqual(self.adapter.search.call_count, 3)
         self.adapter.search.reset_mock()
         
         # 4. Another run (cache hit on the new state)
-        pack4 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.adapter.search.assert_not_called()
         
         # 5. Modify section_cards.yaml (invalidates cache)
         self.sc_file.write_text("version: 1\n# modified section cards comment")
-        pack5 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.assertEqual(self.adapter.search.call_count, 3)
         self.adapter.search.reset_mock()
         
         # 6. Another run (cache hit)
-        pack6 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.adapter.search.assert_not_called()
         
         # 7. Modify rtfm library.db (invalidates cache due to fingerprint change)
@@ -92,7 +92,7 @@ class TestCachingRobustness(unittest.TestCase):
         # Ensure system modification time changes if OS file resolution is coarse
         os.utime(self.rtfm_db, (time.time() + 10, time.time() + 10))
         
-        pack7 = self.generator.generate(task=task, target=None, token_budget=1000)
+        self.generator.generate(task=task, target=None, token_budget=1000)
         self.assertEqual(self.adapter.search.call_count, 3)
 
 if __name__ == '__main__':

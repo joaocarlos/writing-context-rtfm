@@ -9,6 +9,7 @@ class TestStorage(unittest.TestCase):
         self.store.init_db()
 
     def tearDown(self):
+        self.store.close()
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
 

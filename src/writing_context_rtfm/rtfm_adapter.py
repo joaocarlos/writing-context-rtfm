@@ -1,6 +1,9 @@
 """Adapter for RTFM interactions."""
 import subprocess
 import json
+import sys
+import os
+import shutil
 from typing import List, Optional
 from writing_context_rtfm.schemas import RTFMResult
 
@@ -11,21 +14,24 @@ class RTFMAdapterError(Exception):
 class RTFMAdapter:
     """Wrapper around the RTFM CLI."""
     
+    def __init__(self, project_root: Optional[str] = None) -> None:
+        self.project_root = project_root
+        self.resolved_rtfm = "rtfm"
+        
+        resolved = shutil.which("rtfm")
+        if resolved:
+            self.resolved_rtfm = resolved
+        else:
+            # Fallback to looking in the same directory as the current Python executable
+            python_dir = os.path.dirname(sys.executable)
+            candidate = os.path.join(python_dir, "rtfm")
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                self.resolved_rtfm = candidate
+
     def _run_command(self, cmd: List[str]) -> str:
         """Run a CLI command and return its standard output."""
-        import sys
-        import os
-        import shutil
-        
-        executable = cmd[0]
-        if executable == "rtfm":
-            resolved = shutil.which("rtfm")
-            if not resolved:
-                # Fallback to looking in the same directory as the current Python executable
-                python_dir = os.path.dirname(sys.executable)
-                candidate = os.path.join(python_dir, "rtfm")
-                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                    cmd[0] = candidate
+        if cmd[0] == "rtfm":
+            cmd[0] = self.resolved_rtfm
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)

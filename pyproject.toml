@@ -29,8 +29,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tiktoken = [
+    "tiktoken",
+]
 dev = [
     "pytest",
+    "ruff",
+    "mypy",
+    "types-pyyaml",
 ]
 
 [project.scripts]

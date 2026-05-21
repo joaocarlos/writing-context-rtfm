@@ -1,12 +1,10 @@
 import unittest
-from unittest.mock import MagicMock
 
 from eval.rubric import load_rubric
 from eval.metrics import (
     check_required_terms,
     check_forbidden_phrases,
     check_length_bounds,
-    check_citation_preservation,
     check_latex_compile_success,
     check_section_heading_presence,
     check_idea_coverage

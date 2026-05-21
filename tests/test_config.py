@@ -1,6 +1,4 @@
 import unittest
-import os
-import yaml
 from writing_context_rtfm.config import load_config
 
 class TestConfig(unittest.TestCase):

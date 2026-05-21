@@ -2,9 +2,9 @@
 import sys
 import json
 import os
-import traceback
 from dataclasses import asdict
 from typing import Any, Dict, Optional
+from pathlib import Path
 
 from writing_context_rtfm.config import load_config
 from writing_context_rtfm.section_cards import load_section_cards, validate_section_cards
@@ -12,6 +12,7 @@ from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.proofread import ProofreadPackGenerator
+from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 import logging
 from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology, get_term_context
 
@@ -417,12 +418,62 @@ def get_tools_list():
         ]
     }
 
+_RUNTIME_CACHE = None
+
 def _load_runtime():
     """Load config, section cards, adapter, store. Returns (config, cards, card_warnings, adapter, store).
 
     Section-card validation issues are returned as warnings (not exceptions) so
     they surface in the pack's `warnings` field instead of aborting the call.
     """
+    global _RUNTIME_CACHE
+
+    config_path = Path(".").resolve() / ".writing-context" / "config.yaml"
+    
+    config_mtime = None
+    config_size = None
+    if config_path.exists():
+        try:
+            stat = config_path.stat()
+            config_mtime = stat.st_mtime
+            config_size = stat.st_size
+        except OSError:
+            pass
+
+    sc_path = Path(".").resolve() / ".writing-context" / "section_cards.yaml"
+    if config_path.exists():
+        if _RUNTIME_CACHE is not None:
+            sc_path = Path(_RUNTIME_CACHE["config"].section_cards.path)
+        else:
+            try:
+                temp_config = load_config()
+                sc_path = Path(temp_config.section_cards.path)
+            except Exception:
+                pass
+
+    sc_mtime = None
+    sc_size = None
+    if sc_path.exists():
+        try:
+            stat = sc_path.stat()
+            sc_mtime = stat.st_mtime
+            sc_size = stat.st_size
+        except OSError:
+            pass
+
+    if (_RUNTIME_CACHE is not None and
+        _RUNTIME_CACHE["config_mtime"] == config_mtime and
+        _RUNTIME_CACHE["config_size"] == config_size and
+        _RUNTIME_CACHE["sc_mtime"] == sc_mtime and
+        _RUNTIME_CACHE["sc_size"] == sc_size):
+        return (
+            _RUNTIME_CACHE["config"],
+            _RUNTIME_CACHE["cards"],
+            _RUNTIME_CACHE["card_warnings"],
+            _RUNTIME_CACHE["adapter"],
+            _RUNTIME_CACHE["store"]
+        )
+
     config = load_config()
     cards = load_section_cards(config.section_cards.path, required=config.section_cards.required)
     card_warnings = validate_section_cards(cards) if cards else []
@@ -434,18 +485,33 @@ def _load_runtime():
         try:
             adapter.sync(config.rtfm.project_root, corpus=config.rtfm.corpus)
             if config.cache.invalidate_on_refresh:
-                from pathlib import Path
-                from writing_context_rtfm.hashing import stable_hash
                 rtfm_db = Path(config.rtfm.project_root) / ".rtfm" / "library.db"
-                if rtfm_db.exists():
-                    stat = rtfm_db.stat()
-                    fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
-                else:
-                    fingerprint = "no-rtfm-db"
+                fingerprint = compute_rtfm_fingerprint(rtfm_db)
                 store.invalidate_for_fingerprint(fingerprint)
         except Exception as e:
             logger.warning(f"Auto-sync failed before pack generation: {e}")
             card_warnings.append(f"Auto-sync failed: {e}")
+
+    try:
+        final_sc_path = Path(config.section_cards.path)
+        if final_sc_path.exists():
+            stat = final_sc_path.stat()
+            sc_mtime = stat.st_mtime
+            sc_size = stat.st_size
+    except OSError:
+        pass
+
+    _RUNTIME_CACHE = {
+        "config_mtime": config_mtime,
+        "config_size": config_size,
+        "sc_mtime": sc_mtime,
+        "sc_size": sc_size,
+        "config": config,
+        "cards": cards,
+        "card_warnings": card_warnings,
+        "adapter": adapter,
+        "store": store
+    }
 
     return config, cards, card_warnings, adapter, store
 
@@ -556,15 +622,9 @@ def handle_refresh_index(args):
         return _error_response(ERROR_RETRIEVAL, f"RTFM sync failed: {e}", type(e).__name__)
 
     if config.cache.invalidate_on_refresh:
-        from pathlib import Path
-        from writing_context_rtfm.hashing import stable_hash
         store = ExtensionStore(config.cache.path)
         rtfm_db = Path(project_root) / ".rtfm" / "library.db"
-        if rtfm_db.exists():
-            stat = rtfm_db.stat()
-            fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
-        else:
-            fingerprint = "no-rtfm-db"
+        fingerprint = compute_rtfm_fingerprint(rtfm_db)
         store.invalidate_for_fingerprint(fingerprint)
     return _success_response({"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh})
 

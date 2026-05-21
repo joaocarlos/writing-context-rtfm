@@ -1,13 +1,11 @@
 """Stabilization tests for context_pack.py fixes."""
-import os
 import unittest
-from dataclasses import asdict
 from unittest.mock import MagicMock, patch
 
-from writing_context_rtfm.config import load_config, ContextConfig, AppConfig, RTFMConfig, CacheConfig, SectionCardsConfig
+from writing_context_rtfm.config import load_config
 from writing_context_rtfm.section_cards import load_section_cards
 from writing_context_rtfm.context_pack import ContextPackGenerator
-from writing_context_rtfm.utils import is_allowed_source, extract_keywords, EXCLUDED_SOURCE_PATTERNS
+from writing_context_rtfm.utils import is_allowed_source, extract_keywords
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import RTFMResult
@@ -211,7 +209,6 @@ class TestQueryExpansion(unittest.TestCase):
 
 class TestTokenEstimation(unittest.TestCase):
     def test_prefers_snippet_length_over_line_count(self):
-        from writing_context_rtfm.context_pack import ContextPackGenerator
         gen, config, _ = make_generator()
         from writing_context_rtfm.context_pack import SourceSpan
         # 5-line span, but very long snippet

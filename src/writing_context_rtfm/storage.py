@@ -9,19 +9,27 @@ SCHEMA_VERSION = 1
 class ExtensionStore:
     def __init__(self, db_path: str = ".writing-context/context_cache.sqlite"):
         self.db_path = db_path
+        self._conn: Optional[sqlite3.Connection] = None
 
     def _connect(self) -> sqlite3.Connection:
-        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        if self._conn is None:
+            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.execute("PRAGMA foreign_keys = ON;")
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
 
-    def _enable_foreign_keys(self, conn: sqlite3.Connection) -> None:
-        conn.execute("PRAGMA foreign_keys = ON;")
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
 
     def init_db(self) -> None:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -123,7 +131,6 @@ class ExtensionStore:
 
     def get_cached_pack(self, task_hash: str, config_hash: str, section_cards_hash: str, index_fingerprint: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT p.payload_json
@@ -143,7 +150,6 @@ class ExtensionStore:
 
     def store_pack(self, run_id: str, run_data: Dict[str, Any], payload: Dict[str, Any], sources: List[Dict[str, Any]]) -> None:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO context_pack_runs
@@ -177,7 +183,6 @@ class ExtensionStore:
 
     def invalidate_for_fingerprint(self, fingerprint: str) -> None:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("""
                 DELETE FROM context_pack_runs
@@ -187,14 +192,12 @@ class ExtensionStore:
 
     def clear(self) -> None:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("DELETE FROM context_pack_runs")
             conn.commit()
 
     def get_more_context(self, run_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT path, line_start, line_end, score, reason, query, metadata_json
@@ -219,19 +222,19 @@ class ExtensionStore:
                 
             if results:
                 # Mark retrieved as selected so we don't paginate them next time
+                conditions = []
+                params = [run_id]
                 for r in results:
-                    cursor.execute("""
-                        UPDATE context_pack_sources
-                        SET selected = 1
-                        WHERE run_id = ? AND path = ? AND line_start = ? AND line_end = ?
-                    """, (run_id, r["path"], r["line_start"], r["line_end"]))
+                    conditions.append("(path = ? AND line_start IS ? AND line_end IS ?)")
+                    params.extend([r["path"], r["line_start"], r["line_end"]])
+                sql = f"UPDATE context_pack_sources SET selected = 1 WHERE run_id = ? AND ({' OR '.join(conditions)})"
+                cursor.execute(sql, params)
                 conn.commit()
                 
             return results
 
     def submit_feedback(self, run_id: str, metric_name: str, metric_value: float, metric_text: Optional[str] = None) -> None:
         with self._connect() as conn:
-            self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO evaluation_records (run_id, metric_name, metric_value, metric_text)

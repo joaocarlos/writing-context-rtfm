@@ -1,16 +1,12 @@
-import os
-import sys
 import unittest
 import tempfile
 import shutil
 import json
-import yaml
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
-from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
-from writing_context_rtfm.context_pack import ContextPack, ContextPackGenerator, SourceSpan
+from writing_context_rtfm.context_pack import ContextPack, ContextPackGenerator
 from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.server import process_message
@@ -172,10 +168,10 @@ class TestMilestone3(unittest.TestCase):
 
     def test_role_budgets_allocation(self):
         mock_results = [
-            RTFMResult(path="sec1.md", line_start=1, line_end=10, snippet="A" * 1200, score=0.9, metadata={}),
+            RTFMResult(path="sec1.md", line_start=1, line_end=10, snippet="B" * 1200, score=0.9, metadata={}),
             RTFMResult(path="sec1.md", line_start=15, line_end=25, snippet="B" * 1200, score=0.85, metadata={}),
-            RTFMResult(path="sec2.md", line_start=1, line_end=20, snippet="C" * 1200, score=0.8, metadata={}),
-            RTFMResult(path="ref.md", line_start=1, line_end=20, snippet="D" * 1200, score=0.75, metadata={}),
+            RTFMResult(path="sec2.md", line_start=1, line_end=20, snippet="B" * 1200, score=0.8, metadata={}),
+            RTFMResult(path="ref.md", line_start=1, line_end=20, snippet="B" * 1200, score=0.75, metadata={}),
         ]
         self.adapter.search.return_value = mock_results
 

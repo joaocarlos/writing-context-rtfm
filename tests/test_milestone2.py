@@ -1,5 +1,3 @@
-import os
-import sys
 import unittest
 import tempfile
 import shutil
@@ -9,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
 from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
-from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan, CacheDiagnostics
+from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.server import process_message
 
@@ -277,7 +275,7 @@ class TestMilestone2(unittest.TestCase):
             line_end=12
         )
         
-        roles = {s.path: s.source_role for s in classified}
+        {s.path: s.source_role for s in classified}
         self.assertEqual(classified[0].source_role, "target_text")  # L11 is inside target range 10-12
         self.assertEqual(classified[1].source_role, "local_context") # L20-22 is inside local range 1-27
         self.assertEqual(classified[2].source_role, "dependency")    # sec2.md is dependency

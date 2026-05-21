@@ -9,6 +9,7 @@ from writing_context_rtfm.rtfm_adapter import RTFMAdapter, RTFMAdapterError
 class TestRTFMAdapter(unittest.TestCase):
     def setUp(self):
         self.adapter = RTFMAdapter()
+        self.adapter.resolved_rtfm = "rtfm"
 
     @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
     def test_search_success(self, mock_run):

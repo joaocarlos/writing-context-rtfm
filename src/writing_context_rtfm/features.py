@@ -3,6 +3,7 @@ import re
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from concurrent.futures import ThreadPoolExecutor
 
 def sanitize_id(filename: str) -> str:
     """Removes extension and replaces non-alphanumeric characters with underscores."""
@@ -29,7 +30,7 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
     sc_path.parent.mkdir(exist_ok=True)
 
     # Load existing section cards
-    existing_cards = {
+    existing_cards: Dict[str, Any] = {
         "version": 1,
         "document": {
             "title": "My Manuscript",
@@ -43,8 +44,8 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
     }
     if sc_path.exists():
         try:
-            with open(sc_path, "r") as f:
-                loaded = yaml.safe_load(f)
+            with open(sc_path, "r") as fh:
+                loaded = yaml.safe_load(fh)
                 if isinstance(loaded, dict):
                     existing_cards = loaded
                     if "sections" not in existing_cards or not isinstance(existing_cards["sections"], dict):
@@ -59,9 +60,9 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
     for dirpath, dirnames, filenames in os.walk(root):
         # Filter directories in place
         dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
-        for f in filenames:
-            if f.endswith((".tex", ".md")) and f not in ("README.md", "GEMINI.md"):
-                full_path = Path(dirpath) / f
+        for fname in filenames:
+            if fname.endswith((".tex", ".md")) and fname not in ("README.md", "GEMINI.md"):
+                full_path = Path(dirpath) / fname
                 rel_path = full_path.relative_to(root)
                 found_files.append(rel_path)
 
@@ -70,9 +71,11 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
 
     # Map of rel_path to section cards in existing sections
     path_to_section_id = {}
-    for sid, scard in existing_cards["sections"].items():
-        if isinstance(scard, dict) and "path" in scard:
-            path_to_section_id[Path(scard["path"])] = sid
+    sections_dict = existing_cards.get("sections", {})
+    if isinstance(sections_dict, dict):
+        for sid, scard in sections_dict.items():
+            if isinstance(scard, dict) and "path" in scard:
+                path_to_section_id[Path(scard["path"])] = sid
 
     for rel_path in found_files:
         if rel_path in path_to_section_id:
@@ -81,33 +84,34 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
             base_sid = sanitize_id(rel_path.name)
             sid = base_sid
             counter = 1
-            while sid in existing_cards["sections"]:
-                sid = f"{base_sid}_{counter}"
-                counter += 1
+            if isinstance(sections_dict, dict):
+                while sid in sections_dict:
+                    sid = f"{base_sid}_{counter}"
+                    counter += 1
 
-            title = rel_path.stem.replace("_", " ").replace("-", " ").title()
-            existing_cards["sections"][sid] = {
-                "title": title,
-                "role": f"Draft and refine contents for {title}",
-                "path": str(rel_path),
-                "key_terms": [],
-                "depends_on": [],
-                "must_preserve": [],
-                "avoid": [],
-                "constraints": []
-            }
-            added.append({"id": sid, "path": str(rel_path)})
+                title = rel_path.stem.replace("_", " ").replace("-", " ").title()
+                sections_dict[sid] = {
+                    "title": title,
+                    "role": f"Draft and refine contents for {title}",
+                    "path": str(rel_path),
+                    "key_terms": [],
+                    "depends_on": [],
+                    "must_preserve": [],
+                    "avoid": [],
+                    "constraints": []
+                }
+                added.append({"id": sid, "path": str(rel_path)})
 
     # Write back
-    with open(sc_path, "w") as f:
-        yaml.safe_dump(existing_cards, f, sort_keys=False)
+    with open(sc_path, "w") as fh:
+        yaml.safe_dump(existing_cards, fh, sort_keys=False)
 
     return {
         "status": "success",
         "sc_path": str(sc_path),
         "added": added,
         "preserved_count": len(preserved),
-        "total_sections": len(existing_cards["sections"])
+        "total_sections": len(sections_dict)
     }
 
 def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str, Any]:
@@ -130,11 +134,13 @@ def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str
         return {"status": "error", "message": f"Section cards file not found at '{sc_path}'"}
 
     section_cards = load_section_cards(str(sc_path), required=True)
+    if not section_cards:
+        return {"status": "error", "message": "Failed to load section cards"}
     adapter = RTFMAdapter(str(root))
 
     # Map each section path to its declared section card
     path_to_section = {}
-    term_declarations = {} # term_lower -> list of section_ids
+    term_declarations: Dict[str, List[str]] = {} # term_lower -> list of section_ids
     for sid, scard in section_cards.sections.items():
         if scard.path:
             p = Path(scard.path)
@@ -149,59 +155,68 @@ def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str
             term_declarations[term_lower].append(sid)
 
     report = {}
+    futures = {}
 
-    for term_lower, sids in term_declarations.items():
-        try:
-            results = adapter.search(term_lower, corpus=config.rtfm.corpus, limit=50)
-        except Exception as e:
-            return {"status": "error", "message": f"RTFM search failed during audit: {e}"}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        # Submit all search requests in parallel
+        for term_lower in term_declarations:
+            futures[term_lower] = executor.submit(
+                adapter.search, term_lower, corpus=config.rtfm.corpus, limit=50
+            )
 
-        occurrences = []
-        warnings = []
-        occurring_paths = set()
+        # Process results in original declaration order to maintain deterministic report order
+        for term_lower, sids in term_declarations.items():
+            try:
+                results = futures[term_lower].result()
+            except Exception as e:
+                return {"status": "error", "message": f"RTFM search failed during audit: {e}"}
 
-        for r in results:
-            p = Path(r.path)
-            if p.is_absolute():
-                p = p.relative_to(root)
-            p_str = str(p)
-            occurring_paths.add(p_str)
-            occurrences.append({
-                "path": r.path,
-                "line_start": r.line_start,
-                "line_end": r.line_end,
-                "snippet": r.snippet
-            })
+            occurrences = []
+            warnings = []
+            occurring_paths = set()
 
-        if not occurrences:
-            warnings.append(f"Term '{term_lower}' is declared in {sids} but never found in the index.")
+            for r in results:
+                p = Path(r.path)
+                if p.is_absolute():
+                    p = p.relative_to(root)
+                p_str = str(p)
+                occurring_paths.add(p_str)
+                occurrences.append({
+                    "path": r.path,
+                    "line_start": r.line_start,
+                    "line_end": r.line_end,
+                    "snippet": r.snippet
+                })
 
-        for p_str in occurring_paths:
-            sid_occurrence = path_to_section.get(p_str)
-            if sid_occurrence:
-                declares = False
-                for sid in sids:
-                    if sid == sid_occurrence:
-                        declares = True
-                        break
-                    occ_card = section_cards.sections.get(sid_occurrence)
-                    if occ_card and sid in (occ_card.depends_on or []):
-                        declares = True
-                        break
-                if not declares:
-                    warnings.append(
-                        f"Term '{term_lower}' is used in '{p_str}' (Section '{sid_occurrence}'), "
-                        f"but '{sid_occurrence}' neither declares it nor depends on sections that do ({sids})."
-                    )
-            else:
-                warnings.append(f"Term '{term_lower}' is used in unmapped file '{p_str}'.")
+            if not occurrences:
+                warnings.append(f"Term '{term_lower}' is declared in {sids} but never found in the index.")
 
-        report[term_lower] = {
-            "declared_in_sections": sids,
-            "occurrence_count": len(occurrences),
-            "warnings": warnings,
-            "occurrences": occurrences[:5]
-        }
+            for p_str in occurring_paths:
+                sid_occurrence = path_to_section.get(p_str)
+                if sid_occurrence:
+                    declares = False
+                    for sid in sids:
+                        if sid == sid_occurrence:
+                            declares = True
+                            break
+                        occ_card = section_cards.sections.get(sid_occurrence)
+                        if occ_card and sid in (occ_card.depends_on or []):
+                            declares = True
+                            break
+                    if not declares:
+                        warnings.append(
+                            f"Term '{term_lower}' is used in '{p_str}' (Section '{sid_occurrence}'), "
+                            f"but '{sid_occurrence}' neither declares it nor depends on sections that do ({sids})."
+                        )
+                else:
+                    warnings.append(f"Term '{term_lower}' is used in unmapped file '{p_str}'.")
+
+            report[term_lower] = {
+                "declared_in_sections": sids,
+                "occurrence_count": len(occurrences),
+                "warnings": warnings,
+                "occurrences": occurrences[:5]
+            }
 
     return {
         "status": "success",
@@ -237,42 +252,38 @@ def get_term_context(term: str, project_root: Optional[str] = None) -> Dict[str,
     term_lower = term.lower()
     terminology = section_cards.document.terminology
 
-    # 1. Direct match (case-insensitive)
-    for k, details in terminology.items():
-        if k.lower() == term_lower:
-            return {
-                "status": "found",
-                "term": k,
-                "definition": details.get("definition", ""),
-                "variants": details.get("variants", []),
-                "avoid": details.get("avoid", [])
-            }
+    # Pre-build lookup maps for O(1) matching of direct, variant, and avoid terms
+    direct_lookup = {}
+    variant_lookup = {}
+    avoid_lookup = {}
 
-    # 2. Check variants (case-insensitive)
     for k, details in terminology.items():
-        variants = [v.lower() for v in details.get("variants", [])]
-        if term_lower in variants:
-            return {
-                "status": "found",
-                "term": k,
-                "definition": details.get("definition", ""),
-                "variants": details.get("variants", []),
-                "avoid": details.get("avoid", [])
-            }
+        k_lower = k.lower()
+        direct_lookup[k_lower] = (k, details)
 
-    # 3. Check avoid list (case-insensitive)
-    for k, details in terminology.items():
-        avoids = [a.lower() for a in details.get("avoid", [])]
-        if term_lower in avoids:
-            return {
-                "status": "found",
-                "term": k,
-                "definition": details.get("definition", ""),
-                "variants": details.get("variants", []),
-                "avoid": details.get("avoid", [])
-            }
+        for v in details.get("variants", []):
+            variant_lookup[v.lower()] = (k, details)
+
+        for a in details.get("avoid", []):
+            avoid_lookup[a.lower()] = (k, details)
+
+    # Resolve match
+    if term_lower in direct_lookup:
+        canonical_term, details = direct_lookup[term_lower]
+    elif term_lower in variant_lookup:
+        canonical_term, details = variant_lookup[term_lower]
+    elif term_lower in avoid_lookup:
+        canonical_term, details = avoid_lookup[term_lower]
+    else:
+        return {
+            "status": "not_found",
+            "message": f"Term '{term}' not found in terminology dictionary."
+        }
 
     return {
-        "status": "not_found",
-        "message": f"Term '{term}' not found in terminology dictionary."
+        "status": "found",
+        "term": canonical_term,
+        "definition": details.get("definition", ""),
+        "variants": details.get("variants", []),
+        "avoid": details.get("avoid", [])
     }

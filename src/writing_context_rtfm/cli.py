@@ -2,7 +2,9 @@
 import argparse
 import sys
 import json
-from dataclasses import asdict
+import shutil
+import yaml
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from writing_context_rtfm.config import load_config
@@ -11,10 +13,12 @@ from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.proofread import ProofreadPackGenerator
+from writing_context_rtfm.hashing import compute_rtfm_fingerprint
+from writing_context_rtfm.features import get_term_context
+from writing_context_rtfm.server import run_server
 
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
-    import os
     root = Path(getattr(args, "project_root", ".")).resolve()
     wc = root / ".writing-context"
     wc.mkdir(exist_ok=True)
@@ -47,12 +51,7 @@ def sync_command(args):
         
         # Compute real library.db fingerprint after sync
         rtfm_db = Path(project_root) / ".rtfm" / "library.db"
-        if rtfm_db.exists():
-            stat = rtfm_db.stat()
-            from writing_context_rtfm.hashing import stable_hash
-            fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
-        else:
-            fingerprint = "no-rtfm-db"
+        fingerprint = compute_rtfm_fingerprint(rtfm_db)
             
         store.invalidate_for_fingerprint(fingerprint)
         print("Sync completed successfully.")
@@ -91,7 +90,6 @@ def pack_command(args):
 
     # Override corpus from CLI if provided
     if getattr(args, "corpus", None):
-        from dataclasses import replace
         config = replace(config, rtfm=replace(config.rtfm, corpus=args.corpus))
 
     sc_path = config.section_cards.path
@@ -151,7 +149,6 @@ def proofread_pack_command(args):
 def get_term_command(args):
     project_root = getattr(args, "project_root", ".")
     try:
-        from writing_context_rtfm.features import get_term_context
         res = get_term_context(args.term, project_root)
         print(json.dumps(res, indent=2))
     except Exception as e:
@@ -159,12 +156,9 @@ def get_term_command(args):
         sys.exit(1)
 
 def serve_command(args):
-    from writing_context_rtfm.server import run_server
     run_server()
 
 def doctor_command(args):
-    import shutil
-    import yaml
     project_root = Path(getattr(args, "project_root", ".")).resolve()
     
     print("Writing Context RTFM Extension Doctor")
@@ -174,11 +168,11 @@ def doctor_command(args):
     rtfm_cli = shutil.which("rtfm")
     rtfm_pkg = False
     try:
-        import rtfm_ai
+        import rtfm_ai  # type: ignore # noqa: F401
         rtfm_pkg = True
     except ImportError:
         try:
-            import rtfm
+            import rtfm  # type: ignore # noqa: F401
             rtfm_pkg = True
         except ImportError:
             pass
@@ -200,19 +194,18 @@ def doctor_command(args):
         except Exception as e:
             print(f"[*] Config:           [FAIL] Failed to load {config_file.relative_to(project_root)}: {e}")
     else:
-        print(f"[*] Config:           [WARN] config.yaml not found (using defaults)")
+        print("[*] Config:           [WARN] config.yaml not found (using defaults)")
 
     if sc_file.exists():
         try:
             with open(sc_file, "r") as f:
                 yaml.safe_load(f)
-            from writing_context_rtfm.section_cards import load_section_cards
             cards = load_section_cards(str(sc_file), required=False)
             print(f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)}")
         except Exception as e:
             print(f"[*] Section Cards:    [FAIL] Failed to parse {sc_file.relative_to(project_root)}: {e}")
     else:
-        print(f"[*] Section Cards:    [WARN] section_cards.yaml not found")
+        print("[*] Section Cards:    [WARN] section_cards.yaml not found")
 
     # 3. Database Check
     db_path = project_root / ".rtfm" / "library.db"

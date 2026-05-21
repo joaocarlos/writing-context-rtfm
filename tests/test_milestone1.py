@@ -1,15 +1,12 @@
-import os
-import sys
 import unittest
 import tempfile
 import shutil
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
 from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
-from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan, CacheDiagnostics
+from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.cli import doctor_command, inspect_target_command
 
@@ -223,7 +220,7 @@ class TestMilestone1(unittest.TestCase):
         with redirect_stdout(f):
             # Patch import to simulate rtfm available / CLI available
             with patch("shutil.which", return_value="/usr/local/bin/rtfm"), \
-                 patch("sys.exit") as mock_exit:
+                 patch("sys.exit"):
                 doctor_command(args)
                 
         output = f.getvalue()

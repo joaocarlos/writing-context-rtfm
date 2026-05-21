@@ -1,18 +1,28 @@
 """Context pack schemas and generation."""
 import uuid
-import sys
+import hashlib
 from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Dict, Any, Tuple
+from pathlib import Path
+from collections import defaultdict
 
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.section_cards import SectionCards, SectionCard
 from writing_context_rtfm.schemas import RTFMResult
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.hashing import compute_task_hash, stable_hash
+from writing_context_rtfm.hashing import compute_task_hash, stable_hash, compute_rtfm_fingerprint
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
 
 from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands
+
+def _path_matches(path: str, card_path: Optional[str]) -> bool:
+    """Helper to check if path matches a card's path case-insensitively."""
+    if not card_path:
+        return False
+    p_norm = path.replace("\\", "/").lower()
+    c_norm = card_path.replace("\\", "/").lower().lstrip("./")
+    return p_norm.endswith(c_norm)
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -84,6 +94,25 @@ class ContextPackGenerator:
         self.section_cards = section_cards
         self.adapter = adapter
         self.store = store
+        self._hash_cache: Dict[Path, Tuple[float, int, str]] = {}
+
+    def _get_file_hash(self, path: Path, fallback_val: str) -> str:
+        if not path.exists():
+            return fallback_val
+        try:
+            stat = path.stat()
+            mtime = stat.st_mtime
+            size = stat.st_size
+            
+            cached = self._hash_cache.get(path)
+            if cached and cached[0] == mtime and cached[1] == size:
+                return cached[2]
+                
+            file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            self._hash_cache[path] = (mtime, size, file_hash)
+            return file_hash
+        except (OSError, IOError):
+            return fallback_val
 
     # -----------------------------------------------------------------------
     # Fix 4: Query builder
@@ -174,7 +203,6 @@ class ContextPackGenerator:
             return []
 
         # 1. Group spans by file path
-        from collections import defaultdict
         by_file = defaultdict(list)
         for c in candidates:
             by_file[c.path].append(c)
@@ -185,7 +213,7 @@ class ContextPackGenerator:
             # Sort spans by line_start
             spans.sort(key=lambda x: (x.line_start or 1, x.line_end or x.line_start or 1))
 
-            current_merged = []
+            current_merged: List[SourceSpan] = []
             for span in spans:
                 if not current_merged:
                     current_merged.append(span)
@@ -325,10 +353,10 @@ class ContextPackGenerator:
         discarded = 0
         for span in candidates:
             snippet = ((span.metadata or {}).get("snippet") or "").lower()
-            path_lower = span.path.lower()
+            span.path.lower()
             # Only apply avoid filter to spans NOT from the target file
             # (target file content stays regardless — we need it to write)
-            if target_card and target_card.path and path_lower.endswith(target_card.path.lower().lstrip("./")):
+            if target_card and _path_matches(span.path, target_card.path):
                 kept.append(span)
                 continue
             if any(phrase.lower() in snippet for phrase in avoid_phrases):
@@ -401,28 +429,17 @@ class ContextPackGenerator:
         )
         
         # Calculate real config file content hash
-        from pathlib import Path
-        import hashlib
         config_path = Path(self.config.rtfm.project_root) / ".writing-context" / "config.yaml"
-        if config_path.exists():
-            config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
-        else:
-            config_hash = stable_hash(str(self.config.version))
+        config_hash = self._get_file_hash(config_path, stable_hash(str(self.config.version)))
 
         # Calculate real section cards content hash
         sc_path = Path(self.config.section_cards.path)
-        if sc_path.exists():
-            sc_hash = hashlib.sha256(sc_path.read_bytes()).hexdigest()
-        else:
-            sc_hash = stable_hash(str(self.section_cards.version) if self.section_cards else "none")
+        sc_fallback = stable_hash(str(self.section_cards.version) if self.section_cards else "none")
+        sc_hash = self._get_file_hash(sc_path, sc_fallback)
 
         # Compute real RTFM database fingerprint based on mtime and size
         rtfm_db = Path(self.config.rtfm.project_root) / ".rtfm" / "library.db"
-        if rtfm_db.exists():
-            stat = rtfm_db.stat()
-            fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
-        else:
-            fingerprint = "no-rtfm-db"
+        fingerprint = compute_rtfm_fingerprint(rtfm_db)
 
         if self.config.cache.enabled:
             cached = self.store.get_cached_pack(task_hash, config_hash, sc_hash, fingerprint)
@@ -463,12 +480,12 @@ class ContextPackGenerator:
 
         # --- Target Line Range Resolution ---
         target_path = None
+        target_card: Optional[SectionCard] = None
         if self.section_cards and target and target in self.section_cards.sections:
             target_card = self.section_cards.sections[target]
             target_path = target_card.path
         elif target:
             # Check if target is a file path
-            from pathlib import Path
             test_path = Path(pr) / target
             if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
                 target_path = target
@@ -481,7 +498,6 @@ class ContextPackGenerator:
                 status = "degraded"
             else:
                 try:
-                    from pathlib import Path
                     full_path = Path(pr) / target_path
                     if full_path.exists() and full_path.is_file():
                         file_content = full_path.read_text(encoding="utf-8", errors="replace")
@@ -709,22 +725,22 @@ class ContextPackGenerator:
                 if dc.key_terms:
                     key_terms.extend(dc.key_terms)
             
+            canonical_lookup = {}
+            variant_lookup = {}
+            for canonical_term, details in glossary.items():
+                defn = details.get("definition") or ""
+                canonical_lookup[canonical_term.lower()] = (canonical_term, defn)
+                for variant in details.get("variants", []):
+                    variant_lookup[variant.lower()] = (canonical_term, defn)
+
             for kt in key_terms:
                 kt_lower = kt.lower()
-                found = False
-                for canonical_term, details in glossary.items():
-                    if canonical_term.lower() == kt_lower:
-                        terminology_pack[canonical_term] = details.get("definition") or ""
-                        found = True
-                        break
-                if found:
-                    continue
-                for canonical_term, details in glossary.items():
-                    variants = [v.lower() for v in details.get("variants", [])]
-                    if kt_lower in variants:
-                        terminology_pack[canonical_term] = details.get("definition") or ""
-                        found = True
-                        break
+                if kt_lower in canonical_lookup:
+                    canonical_term, defn = canonical_lookup[kt_lower]
+                    terminology_pack[canonical_term] = defn
+                elif kt_lower in variant_lookup:
+                    canonical_term, defn = variant_lookup[kt_lower]
+                    terminology_pack[canonical_term] = defn
 
         if terminology_pack:
             term_str = "\n".join(f"{k}: {v}" for k, v in terminology_pack.items())
@@ -802,15 +818,8 @@ class ContextPackGenerator:
         content = result.snippet or ""
         metadata = result.metadata or {}
 
-        is_target_file = (
-            target_card is not None
-            and target_card.path is not None
-            and path_lower.endswith(target_card.path.lower().lstrip("./"))
-        )
-        is_dep_file = any(
-            dc.path and path_lower.endswith(dc.path.lower().lstrip("./"))
-            for dc in dep_cards
-        )
+        is_target_file = _path_matches(result.path, target_card.path if target_card else None)
+        is_dep_file = any(_path_matches(result.path, dc.path) for dc in dep_cards)
 
         # RTFM semantic relevance (weight 1.0)
         rtfm_score = result.score or 0.0
@@ -872,13 +881,13 @@ class ContextPackGenerator:
     @staticmethod
     def _build_reason(result: RTFMResult, target_card: Optional[SectionCard],
                        dep_cards: List[SectionCard], query_type: str, query: str) -> str:
-        path_lower = result.path.replace("\\", "/").lower()
+        result.path.replace("\\", "/").lower()
         chapter = (result.metadata or {}).get("chapter_title") or ""
 
-        if target_card and target_card.path and path_lower.endswith(target_card.path.lower().lstrip("./")):
+        if target_card and _path_matches(result.path, target_card.path):
             return f"Target section — {chapter}" if chapter else "Target section"
         for dc in dep_cards:
-            if dc.path and path_lower.endswith(dc.path.lower().lstrip("./")):
+            if _path_matches(result.path, dc.path):
                 return f"Dependency section '{dc.title or dc.id}' — {chapter}" if chapter else f"Dependency '{dc.id}'"
         if query_type == "key_term":
             return f"Key term '{query}' match — {chapter}" if chapter else f"Key term '{query}'"
@@ -911,9 +920,9 @@ class ContextPackGenerator:
 
         result = []
         for span in spans:
-            path_norm = span.path.replace("\\", "/")
-            is_target = target_path_val and path_norm.endswith(target_path_val.lstrip("./"))
-            is_dep = any(path_norm.endswith(dp.lstrip("./")) for dp in dep_paths)
+            span.path.replace("\\", "/")
+            is_target = _path_matches(span.path, target_path_val)
+            is_dep = any(_path_matches(span.path, dp) for dp in dep_paths)
 
             # Determine source_role
             if span.source_role in ("target_text", "local_context"):

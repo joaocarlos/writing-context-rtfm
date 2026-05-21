@@ -48,3 +48,4 @@ result_b.txt
 # RTFM / Writing Context Cache
 .rtfm/
 .writing-context/context_cache.sqlite
+*.log

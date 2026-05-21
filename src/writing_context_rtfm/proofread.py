@@ -9,7 +9,7 @@ from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.section_cards import SectionCards, SectionCard
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.utils import is_allowed_source, extract_keywords
+from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands
 from writing_context_rtfm.token_budget import estimate_tokens
 
 @dataclass(frozen=True)
@@ -46,6 +46,7 @@ class ProofreadingContextPack:
     constraints: ProofreadingConstraints
     estimated_tokens: int
     status: str = "complete"
+    warnings: List[str] = field(default_factory=list)
 
 MODE_CONSTRAINTS = {
     "surface": [
@@ -84,7 +85,23 @@ class ProofreadPackGenerator:
     def generate(self, target_file: str, line_start: int, line_end: int,
                  mode: str = "surface", strictness: str = "moderate",
                  max_tokens: int = 4000) -> ProofreadingContextPack:
-        
+        warnings = []
+        # Clamp early to valid 1-indexed range
+        if os.path.exists(target_file):
+            try:
+                with open(target_file, "r", encoding="utf-8") as f:
+                    num_lines = sum(1 for _ in f)
+                if num_lines == 0:
+                    line_start = 1
+                    line_end = 1
+                else:
+                    line_start = max(1, min(line_start, num_lines))
+                    line_end = max(1, min(line_end, num_lines))
+                    if line_start > line_end:
+                        line_start, line_end = line_end, line_start
+            except Exception as e:
+                warnings.append(f"Failed to read file bounds: {e}")
+
         # 1. Load target span and local context
         local_ctx = self._get_local_context(target_file, line_start, line_end)
         
@@ -99,29 +116,30 @@ class ProofreadPackGenerator:
         
         # 3. Extract key terms and get prior usage
         key_terms = extract_keywords(local_ctx.target_span)
-        terminology = self._get_prior_usage(key_terms, target_file)
+        terminology = self._get_prior_usage(key_terms, target_file, warnings)
         
         # 4. Generate constraints
         constraints = self._generate_constraints(mode, strictness, section_card, terminology)
         
         # 5. Assemble and estimate tokens
-        pack = ProofreadingContextPack(
-            target=target_info,
-            local_context=local_ctx,
-            constraints=constraints,
-            estimated_tokens=0  # placeholder
-        )
-        
-        # Token budgeting (simple version for proofreading)
         total_text = local_ctx.target_span + (local_ctx.previous_paragraph or "") + (local_ctx.next_paragraph or "")
         est = estimate_tokens(total_text) + estimate_tokens(json.dumps(asdict(constraints)))
         
+        # LaTeX safety layer scanning
+        latex_commands = scan_latex_commands(local_ctx.target_span)
+        if latex_commands:
+            warnings.append(
+                "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
+                f"and must not be modified or deleted: {', '.join(latex_commands)}"
+            )
+            
         return ProofreadingContextPack(
             target=target_info,
             local_context=local_ctx,
             constraints=constraints,
             estimated_tokens=est,
-            status="complete" if est <= max_tokens else "degraded"
+            status="complete" if est <= max_tokens else "degraded",
+            warnings=warnings
         )
 
     def _get_local_context(self, file_path: str, start: int, end: int) -> LocalContext:
@@ -130,6 +148,16 @@ class ProofreadPackGenerator:
             
         with open(file_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
+            
+        num_lines = len(lines)
+        if num_lines == 0:
+            return LocalContext("", None, None)
+            
+        # Clamp inputs to valid 1-indexed range to prevent negative slicing bugs
+        start = max(1, min(start, num_lines))
+        end = max(1, min(end, num_lines))
+        if start > end:
+            start, end = end, start
             
         # Target span
         target_lines = lines[start-1:end]
@@ -159,28 +187,40 @@ class ProofreadPackGenerator:
         if not self.section_cards:
             return None
         
-        # Search for exact path or suffix match
-        target_path = Path(target_file)
+        # Normalize and resolve target path to absolute
+        target_abs = Path(target_file).resolve()
         for card in self.section_cards.sections.values():
             if card.path:
-                card_path = Path(card.path)
-                if card_path == target_path or target_file.endswith(card.path):
+                # Resolve card path relative to the project root
+                card_abs = Path(self.config.rtfm.project_root).joinpath(card.path).resolve()
+                if card_abs == target_abs:
                     return card
         return None
 
-    def _get_prior_usage(self, terms: List[str], exclude_file: str) -> List[TerminologyConstraint]:
+    def _get_prior_usage(self, terms: List[str], exclude_file: str, warnings: List[str]) -> List[TerminologyConstraint]:
         constraints = []
         seen_terms = set()
+        exclude_abs = Path(exclude_file).resolve()
         
         # Limit to top 5 terms to avoid token bloat
         for term in terms[:5]:
             if term.lower() in seen_terms:
                 continue
                 
-            results = self.adapter.search(term, corpus=self.config.rtfm.corpus, limit=5)
+            # Gracefully handle search failures (e.g. index not synced)
+            try:
+                results = self.adapter.search(term, corpus=self.config.rtfm.corpus, limit=5)
+            except Exception as e:
+                import logging
+                logging.getLogger("proofread").warning(f"Failed to search for prior usage of '{term}': {e}")
+                warnings.append(f"Failed to search for prior usage of '{term}': {e}")
+                continue
+
             examples = []
             for r in results:
-                if r.path == exclude_file:
+                # Resolve RTFM path to absolute for robust comparison
+                r_abs = Path(self.config.rtfm.project_root).joinpath(r.path).resolve()
+                if r_abs == exclude_abs:
                     continue
                 if not is_allowed_source(r.path):
                     continue

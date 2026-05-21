@@ -2,13 +2,14 @@
 import os
 import yaml
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 @dataclass(frozen=True)
 class DocumentCard:
     title: Optional[str] = None
     thesis: Optional[str] = None
     writing_style: Optional[Dict[str, object]] = None
+    terminology: Optional[Dict[str, Any]] = None
 
 @dataclass(frozen=True)
 class SectionCard:
@@ -38,10 +39,29 @@ def load_section_cards(path: str = ".writing-context/section_cards.yaml", requir
         data = yaml.safe_load(f) or {}
 
     doc_data = data.get("document", {})
+    
+    terminology_raw = doc_data.get("terminology") or {}
+    terminology = {}
+    if isinstance(terminology_raw, dict):
+        for term, val in terminology_raw.items():
+            if isinstance(val, str):
+                terminology[term] = {
+                    "definition": val,
+                    "variants": [],
+                    "avoid": []
+                }
+            elif isinstance(val, dict):
+                terminology[term] = {
+                    "definition": val.get("definition") or "",
+                    "variants": val.get("variants") or [],
+                    "avoid": val.get("avoid") or []
+                }
+
     document = DocumentCard(
         title=doc_data.get("title"),
         thesis=doc_data.get("thesis"),
-        writing_style=doc_data.get("writing_style")
+        writing_style=doc_data.get("writing_style"),
+        terminology=terminology
     )
     
     sections = {}
@@ -68,17 +88,14 @@ def load_section_cards(path: str = ".writing-context/section_cards.yaml", requir
 def validate_section_cards(cards: "SectionCards") -> List[str]:
     """Check section cards for self-consistency.
 
-    Returns a list of human-readable warnings (broken depends_on refs, duplicate
-    paths, missing target files). The empty list means everything is consistent.
-    File existence is checked only when the path is relative — absolute paths
-    pointing outside the project are not probed.
+    Returns a list of human-readable warnings (e.g., broken depends_on refs). 
+    The empty list means everything is consistent.
     """
     warnings: List[str] = []
     if not cards or not cards.sections:
         return warnings
 
     section_ids = set(cards.sections)
-    seen_paths: Dict[str, str] = {}
 
     for sid, card in cards.sections.items():
         for dep in card.depends_on or []:
@@ -86,19 +103,6 @@ def validate_section_cards(cards: "SectionCards") -> List[str]:
                 warnings.append(
                     f"Section '{sid}' depends_on unknown section '{dep}'. "
                     "Query expansion will skip this dependency."
-                )
-        if card.path:
-            prior = seen_paths.get(card.path)
-            if prior and prior != sid:
-                warnings.append(
-                    f"Sections '{prior}' and '{sid}' share the same path '{card.path}'. "
-                    "Path-based scoring may be ambiguous."
-                )
-            seen_paths[card.path] = sid
-            if not os.path.isabs(card.path) and not os.path.exists(card.path):
-                warnings.append(
-                    f"Section '{sid}' path '{card.path}' does not exist on disk. "
-                    "Target-file boosts won't fire for this section."
                 )
 
     return warnings

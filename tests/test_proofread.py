@@ -145,3 +145,31 @@ def test_exclusion_rules(mock_config, mock_section_cards, mock_adapter, mock_sto
     for term_const in pack.constraints.terminology:
         for usage in term_const.usage_examples:
             assert usage != "Should be excluded"
+
+def test_proofread_clamping_bounds(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+    generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
+    
+    # 0 start line should clamp to 1; 999 end line should clamp to file line count (6)
+    pack = generator.generate(
+        target_file=test_file,
+        line_start=0,
+        line_end=999,
+    )
+    
+    assert pack.target.line_start == 1
+    assert pack.target.line_end == 6
+    assert "This is the first paragraph." in pack.local_context.target_span
+    assert "This is the last paragraph." in pack.local_context.target_span
+
+def test_proofread_adapter_search_exception(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+    generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
+    
+    # Force search to raise an exception
+    mock_adapter.search.side_effect = Exception("RTFM search failed")
+    
+    pack = generator.generate(test_file, 3, 4)
+    
+    # Verify the pack is generated successfully despite search failure
+    assert pack.target.file_path == test_file
+    assert len(pack.constraints.terminology) == 0
+    assert any("RTFM search failed" in w for w in pack.warnings)

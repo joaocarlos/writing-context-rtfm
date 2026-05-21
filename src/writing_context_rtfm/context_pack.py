@@ -12,7 +12,7 @@ from writing_context_rtfm.hashing import compute_task_hash, stable_hash
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
 
-from writing_context_rtfm.utils import is_allowed_source, extract_keywords
+from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -27,6 +27,16 @@ class SourceSpan:
     priority: str = "background"     # "essential" | "supporting" | "background"
     query: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    source_role: str = "reference"   # "target_text" | "local_context" | "dependency" | "reference"
+
+@dataclass(frozen=True)
+class CacheDiagnostics:
+    enabled: bool
+    hit: bool
+    task_hash: Optional[str] = None
+    config_hash: Optional[str] = None
+    section_cards_hash: Optional[str] = None
+    rtfm_index_fingerprint: Optional[str] = None
 
 @dataclass
 class PackQuality:
@@ -58,6 +68,10 @@ class ContextPack:
     warnings: List[str] = field(default_factory=list)
     quality: Optional[Dict[str, Any]] = None
     summary: Optional[str] = None
+    run_id: Optional[str] = None
+    cache: Optional[CacheDiagnostics] = None
+    task_type: Optional[str] = None
+    pack_mode: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +89,9 @@ class ContextPackGenerator:
     # Fix 4: Query builder
     # -----------------------------------------------------------------------
     def _build_queries(self, task: str, target: Optional[str],
-                       must_consider: List[str]) -> Tuple[List[str], Optional[SectionCard], List[SectionCard], Dict[str, str]]:
+                       must_consider: List[str], task_type: Optional[str] = None,
+                       pack_mode: Optional[str] = None,
+                       has_line_range: bool = False) -> Tuple[List[str], Optional[SectionCard], List[SectionCard], Dict[str, str]]:
         """Returns (queries, target_card, dep_cards, query_type_map).
 
         query_type_map maps each query string to one of:
@@ -85,6 +101,7 @@ class ContextPackGenerator:
           'dep_title'    — dependency section title
           'task_keyword' — keyword extracted from raw task
           'must_consider'— explicit user override
+          'thesis'       - document thesis
         """
         queries: List[str] = []
         query_type_map: Dict[str, str] = {}
@@ -99,30 +116,49 @@ class ContextPackGenerator:
         # 1. Raw task
         _add(task, "task")
 
+        # 2. Document thesis (if review)
+        if task_type == "review" and self.section_cards and self.section_cards.document.thesis:
+            _add(self.section_cards.document.thesis, "thesis")
+
         if self.section_cards and target and target in self.section_cards.sections:
             target_card = self.section_cards.sections[target]
 
-            # 2. Target section title
-            if target_card.title:
-                _add(target_card.title, "title")
+            # 3. Target section title and key terms (skip key terms if minimal or line range exists)
+            if not has_line_range and pack_mode != "minimal":
+                if target_card.title:
+                    _add(target_card.title, "title")
+                
+                # Align with previous sections scales down target key terms
+                if task_type == "align_with_previous_sections":
+                    max_kt = 2
+                elif pack_mode == "deep":
+                    max_kt = 12
+                else:
+                    max_kt = 6
 
-            # 3. Key terms (up to 6)
-            for kt in (target_card.key_terms or [])[:6]:
-                _add(kt, "key_term")
+                for kt in (target_card.key_terms or [])[:max_kt]:
+                    _add(kt, "key_term")
+            elif not has_line_range and pack_mode == "minimal":
+                if target_card.title:
+                    _add(target_card.title, "title")
 
-            # 4. Dependency section titles
+            # 4. Dependency section titles and key terms (skip key terms if minimal)
             for dep_id in (target_card.depends_on or []):
                 if dep_id in self.section_cards.sections:
                     dep_card = self.section_cards.sections[dep_id]
                     dep_cards.append(dep_card)
                     if dep_card.title:
                         _add(dep_card.title, "dep_title")
-                    for kt in (dep_card.key_terms or [])[:3]:
-                        _add(kt, "dep_title")
+                    
+                    if pack_mode != "minimal":
+                        max_dep_kt = 6 if pack_mode == "deep" else 3
+                        for kt in (dep_card.key_terms or [])[:max_dep_kt]:
+                            _add(kt, "dep_key_term")
 
-        # 5. Task keywords
-        for kw in extract_keywords(task):
-            _add(kw, "task_keyword")
+        # 5. Task keywords (skip if minimal or review)
+        if pack_mode != "minimal" and task_type != "review":
+            for kw in extract_keywords(task):
+                _add(kw, "task_keyword")
 
         # 6. Explicit must-consider
         for mc in must_consider:
@@ -134,14 +170,112 @@ class ContextPackGenerator:
     # Deduplication
     # -----------------------------------------------------------------------
     def _deduplicate_spans(self, candidates: List[SourceSpan]) -> List[SourceSpan]:
-        grouped: Dict[Tuple, SourceSpan] = {}
+        if not candidates:
+            return []
+
+        # 1. Group spans by file path
+        from collections import defaultdict
+        by_file = defaultdict(list)
         for c in candidates:
-            key = (c.path, c.line_start, c.line_end)
-            if key not in grouped or c.score > grouped[key].score:
-                grouped[key] = c
-        final = list(grouped.values())
-        final.sort(key=lambda x: (-x.score, x.path, x.line_start or 0))
-        return final
+            by_file[c.path].append(c)
+
+        merged_candidates = []
+
+        for path, spans in by_file.items():
+            # Sort spans by line_start
+            spans.sort(key=lambda x: (x.line_start or 1, x.line_end or x.line_start or 1))
+
+            current_merged = []
+            for span in spans:
+                if not current_merged:
+                    current_merged.append(span)
+                    continue
+
+                prev = current_merged[-1]
+                prev_start = prev.line_start or 1
+                prev_end = prev.line_end or prev_start
+                curr_start = span.line_start or 1
+                curr_end = span.line_end or curr_start
+
+                # Overlap or adjacency check:
+                # If current interval starts within or adjacent to previous interval
+                if curr_start <= prev_end + 1:
+                    new_end = max(prev_end, curr_end)
+                    
+                    # Combine reasons
+                    reasons = []
+                    for r in [prev.reason, span.reason]:
+                        if r and r not in reasons:
+                            reasons.append(r)
+                    combined_reason = "; ".join(reasons)
+
+                    # Select max score
+                    max_score = max(prev.score, span.score)
+
+                    # Combine query names
+                    queries = []
+                    for q in [prev.query, span.query]:
+                        if q and q not in queries:
+                            queries.append(q)
+                    combined_query = ", ".join(queries) if queries else None
+
+                    # Reconstruct merged snippet
+                    prev_snippet = (prev.metadata or {}).get("snippet", "") if prev.metadata else ""
+                    curr_snippet = (span.metadata or {}).get("snippet", "") if span.metadata else ""
+                    
+                    prev_lines = prev_snippet.splitlines() if prev_snippet else []
+                    curr_lines = curr_snippet.splitlines() if curr_snippet else []
+
+                    # Calculate offset union of lines
+                    if curr_start == prev_end + 1:
+                        merged_lines = prev_lines + curr_lines
+                    elif curr_start > prev_start:
+                        non_overlap_start = max(0, len(curr_lines) - (curr_end - prev_end))
+                        merged_lines = prev_lines + curr_lines[non_overlap_start:]
+                    else:
+                        if curr_end >= prev_end:
+                            merged_lines = curr_lines
+                        else:
+                            non_overlap_end = max(0, prev_start - curr_start)
+                            merged_lines = curr_lines[:non_overlap_end] + prev_lines
+
+                    merged_snippet = "\n".join(merged_lines)
+
+                    # Update metadata
+                    merged_meta = {}
+                    if prev.metadata:
+                        merged_meta.update(prev.metadata)
+                    if span.metadata:
+                        merged_meta.update(span.metadata)
+                    merged_meta["snippet"] = merged_snippet
+
+                    # Combine priority and role based on hierarchy
+                    priority_order = {"essential": 3, "supporting": 2, "background": 1}
+                    role_order = {"target_text": 4, "local_context": 3, "dependency": 2, "reference": 1}
+                    
+                    merged_priority = prev.priority if priority_order.get(prev.priority, 0) >= priority_order.get(span.priority, 0) else span.priority
+                    merged_role = prev.source_role if role_order.get(prev.source_role, 0) >= role_order.get(span.source_role, 0) else span.source_role
+
+                    # Replace the last element with the merged span
+                    current_merged[-1] = SourceSpan(
+                        path=path,
+                        line_start=prev_start,
+                        line_end=new_end,
+                        reason=combined_reason,
+                        score=max_score,
+                        priority=merged_priority,
+                        query=combined_query,
+                        metadata=merged_meta,
+                        source_role=merged_role
+                    )
+                else:
+                    current_merged.append(span)
+
+            merged_candidates.extend(current_merged)
+
+        # Sort the final candidates by descending score
+        merged_candidates.sort(key=lambda x: (-x.score, x.path, x.line_start or 0))
+        return merged_candidates
 
     # -----------------------------------------------------------------------
     # Fix 3: Score filtering with structural override
@@ -220,12 +354,29 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     def generate(self, task: str, target: Optional[str], token_budget: int,
                  must_consider: Optional[List[str]] = None,
-                 project_root: Optional[str] = None) -> ContextPack:
+                 project_root: Optional[str] = None,
+                 task_type: Optional[str] = None,
+                 line_start: Optional[int] = None,
+                 line_end: Optional[int] = None,
+                 pack_mode: Optional[str] = None,
+                 role_budgets: Optional[Dict[str, float]] = None) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
+        task_type = task_type or "write_new_section"
+        pack_mode = pack_mode or "standard"
+
+        # Apply pack mode defaults / overrides
+        if pack_mode == "minimal":
+            token_budget = min(token_budget, 2000)
+            max_spans = 5
+        elif pack_mode == "deep":
+            max_spans = 35
+        else:
+            max_spans = self.config.context.max_source_spans
 
         # --- Diagnostics setup (Fix 7) ---
         warnings: List[str] = []
+        status = "complete"
         quality = PackQuality(
             project_root=pr,
             config_loaded=True,
@@ -241,15 +392,56 @@ class ContextPackGenerator:
                 warnings.append("No --target provided. Query expansion is limited to raw task string.")
 
         # --- Cache check ---
-        task_hash = compute_task_hash(task, target, token_budget)
-        config_hash = stable_hash(str(self.config.version))
-        sc_hash = stable_hash(str(self.section_cards.version) if self.section_cards else "none")
-        fingerprint = "v0.1-fingerprint"
+        task_hash = compute_task_hash(
+            task, target, token_budget,
+            task_type=task_type,
+            line_start=line_start,
+            line_end=line_end,
+            pack_mode=pack_mode
+        )
+        
+        # Calculate real config file content hash
+        from pathlib import Path
+        import hashlib
+        config_path = Path(self.config.rtfm.project_root) / ".writing-context" / "config.yaml"
+        if config_path.exists():
+            config_hash = hashlib.sha256(config_path.read_bytes()).hexdigest()
+        else:
+            config_hash = stable_hash(str(self.config.version))
+
+        # Calculate real section cards content hash
+        sc_path = Path(self.config.section_cards.path)
+        if sc_path.exists():
+            sc_hash = hashlib.sha256(sc_path.read_bytes()).hexdigest()
+        else:
+            sc_hash = stable_hash(str(self.section_cards.version) if self.section_cards else "none")
+
+        # Compute real RTFM database fingerprint based on mtime and size
+        rtfm_db = Path(self.config.rtfm.project_root) / ".rtfm" / "library.db"
+        if rtfm_db.exists():
+            stat = rtfm_db.stat()
+            fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
+        else:
+            fingerprint = "no-rtfm-db"
 
         if self.config.cache.enabled:
             cached = self.store.get_cached_pack(task_hash, config_hash, sc_hash, fingerprint)
             if cached:
                 spans = [SourceSpan(**s) for s in cached.get("source_spans", [])]
+                cd_data = cached.get("cache")
+                if isinstance(cd_data, dict):
+                    cd_data_copy = dict(cd_data)
+                    cd_data_copy["hit"] = True
+                    cd = CacheDiagnostics(**cd_data_copy)
+                else:
+                    cd = CacheDiagnostics(
+                        enabled=True,
+                        hit=True,
+                        task_hash=task_hash,
+                        config_hash=config_hash,
+                        section_cards_hash=sc_hash,
+                        rtfm_index_fingerprint=fingerprint
+                    )
                 return ContextPack(
                     task=cached["task"],
                     target=cached.get("target"),
@@ -263,14 +455,110 @@ class ContextPackGenerator:
                     warnings=cached.get("warnings", []),
                     quality=cached.get("quality"),
                     summary=cached.get("summary"),
+                    run_id=cached.get("run_id"),
+                    cache=cd,
+                    task_type=cached.get("task_type"),
+                    pack_mode=cached.get("pack_mode")
                 )
 
+        # --- Target Line Range Resolution ---
+        target_path = None
+        if self.section_cards and target and target in self.section_cards.sections:
+            target_card = self.section_cards.sections[target]
+            target_path = target_card.path
+        elif target:
+            # Check if target is a file path
+            from pathlib import Path
+            test_path = Path(pr) / target
+            if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
+                target_path = target
+
+        all_candidates: List[SourceSpan] = []
+        lines_prepended = False
+        if line_start is not None and line_end is not None:
+            if not target_path:
+                warnings.append("line_start and line_end provided but target file path could not be resolved.")
+                status = "degraded"
+            else:
+                try:
+                    from pathlib import Path
+                    full_path = Path(pr) / target_path
+                    if full_path.exists() and full_path.is_file():
+                        file_content = full_path.read_text(encoding="utf-8", errors="replace")
+                        lines = file_content.splitlines()
+                        num_lines = len(lines)
+                        
+                        start = max(1, min(line_start, num_lines))
+                        end = max(1, min(line_end, num_lines))
+                        if start > end:
+                            start, end = end, start
+                            
+                        # Extract target text span
+                        target_snippet = "\n".join(lines[start-1:end])
+                        target_span = SourceSpan(
+                            path=target_path,
+                            line_start=start,
+                            line_end=end,
+                            reason="Target text range",
+                            score=1.0,
+                            priority="essential",
+                            source_role="target_text",
+                            metadata={"snippet": target_snippet}
+                        )
+                        all_candidates.append(target_span)
+                        
+                        # Local context before
+                        if start > 1:
+                            ctx_start = max(1, start - 15)
+                            ctx_end = start - 1
+                            before_snippet = "\n".join(lines[ctx_start-1:ctx_end])
+                            before_span = SourceSpan(
+                                path=target_path,
+                                line_start=ctx_start,
+                                line_end=ctx_end,
+                                reason="Surrounding target context (before)",
+                                score=0.9,
+                                priority="supporting",
+                                source_role="local_context",
+                                metadata={"snippet": before_snippet}
+                            )
+                            all_candidates.append(before_span)
+                            
+                        # Local context after
+                        if end < num_lines:
+                            ctx_start = end + 1
+                            ctx_end = min(num_lines, end + 15)
+                            after_snippet = "\n".join(lines[ctx_start-1:ctx_end])
+                            after_span = SourceSpan(
+                                path=target_path,
+                                line_start=ctx_start,
+                                line_end=ctx_end,
+                                reason="Surrounding target context (after)",
+                                score=0.9,
+                                priority="supporting",
+                                source_role="local_context",
+                                metadata={"snippet": after_snippet}
+                            )
+                            all_candidates.append(after_span)
+                            
+                        lines_prepended = True
+                    else:
+                        warnings.append(f"Target file '{target_path}' not found for line range extraction.")
+                        status = "degraded"
+                except Exception as e:
+                    warnings.append(f"Failed to read target file '{target_path}': {e}")
+                    status = "degraded"
+
         # --- Query expansion (Fix 4) ---
-        queries, target_card, dep_cards, query_type_map = self._build_queries(task, target, must_consider)
+        queries, target_card, dep_cards, query_type_map = self._build_queries(
+            task, target, must_consider,
+            task_type=task_type,
+            pack_mode=pack_mode,
+            has_line_range=lines_prepended
+        )
         quality.queries_issued = len(queries)
 
         # --- Retrieval ---
-        all_candidates: List[SourceSpan] = []
         for q in queries:
             try:
                 results = self.adapter.search(
@@ -284,7 +572,7 @@ class ContextPackGenerator:
                         continue
                     # Combined scoring with query-type scoping
                     query_type = query_type_map.get(q, "task_keyword")
-                    score = self._compute_final_score(r, target_card, dep_cards, must_consider, q, query_type)
+                    score = self._compute_final_score(r, target_card, dep_cards, must_consider, q, query_type, task_type=task_type)
                     span = SourceSpan(
                         path=r.path,
                         line_start=r.line_start,
@@ -311,23 +599,56 @@ class ContextPackGenerator:
         filtered, avoid_count = self._filter_avoid(filtered, target_card)
         quality.discarded_avoid_match = avoid_count
 
+        # Resolve role budgets (runtime override > config)
+        resolved_budgets = dict(self.config.context.role_budgets)
+        if role_budgets:
+            resolved_budgets.update(role_budgets)
+
+        # --- Classify priority and roles BEFORE selection so we have source_role populated ---
+        filtered = self._classify_priority(
+            filtered, target_card, dep_cards,
+            target_path=target_path,
+            line_start=line_start,
+            line_end=line_end
+        )
+
         # --- Token budget selection ---
         usable_budget = int(token_budget * (1.0 - self.config.context.reserved_generation_margin))
         selected: List[SourceSpan] = []
         current_tokens = 0
+        tokens_by_role = {r: 0 for r in resolved_budgets}
+
+        # Pass 1: Strict allocation based on role fractions
+        pass2_candidates: List[SourceSpan] = []
+        for span in filtered:
+            role = span.source_role
+            est = self._estimate_tokens(span)
+            role_limit = int(resolved_budgets.get(role, 0.0) * usable_budget)
+
+            if len(selected) < max_spans and tokens_by_role.get(role, 0) + est <= role_limit and current_tokens + est <= usable_budget:
+                selected.append(span)
+                tokens_by_role[role] = tokens_by_role.get(role, 0) + est
+                current_tokens += est
+            else:
+                pass2_candidates.append(span)
+
+        # Pass 2: Redistribution of remaining budget
         budget_dropped = 0
         cap_truncated = False
-        for span in filtered:
+        unselected: List[SourceSpan] = []
+        for span in pass2_candidates:
             est = self._estimate_tokens(span)
-            if len(selected) >= self.config.context.max_source_spans:
+            if len(selected) >= max_spans:
                 cap_truncated = True
                 budget_dropped += 1
+                unselected.append(span)
                 continue
             if current_tokens + est <= usable_budget:
                 selected.append(span)
                 current_tokens += est
             else:
                 budget_dropped += 1
+                unselected.append(span)
 
         if budget_dropped > 0:
             quality.dropped_for_budget = budget_dropped
@@ -335,7 +656,7 @@ class ContextPackGenerator:
             if cap_truncated:
                 warnings.append(
                     f"{budget_dropped} candidate span(s) dropped: token budget or "
-                    f"max_source_spans={self.config.context.max_source_spans} cap reached. "
+                    f"max_source_spans={max_spans} cap reached. "
                     "Increase token_budget or refine `target`/`must_consider` for more coverage."
                 )
             else:
@@ -344,10 +665,24 @@ class ContextPackGenerator:
                     f"({usable_budget} usable of {token_budget}). Increase token_budget for more coverage."
                 )
 
-        # --- Classify priority ---
-        selected = self._classify_priority(selected, target_card, dep_cards)
-
         quality.selected_count = len(selected)
+
+        # LaTeX safety layer scanning
+        latex_commands = []
+        for span in selected:
+            if span.source_role == "target_text":
+                snippet = (span.metadata or {}).get("snippet") or ""
+                if snippet:
+                    latex_commands.extend(scan_latex_commands(snippet))
+        unique_latex = []
+        for cmd in latex_commands:
+            if cmd not in unique_latex:
+                unique_latex.append(cmd)
+        if unique_latex:
+            warnings.append(
+                "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
+                f"and must not be modified or deleted: {', '.join(unique_latex)}"
+            )
 
         # --- Build pack metadata ---
         constraints: List[str] = []
@@ -363,29 +698,72 @@ class ContextPackGenerator:
         constraint_tokens = estimate_tokens("\n".join(constraints)) if constraints else 0
         if doc_thesis:
             constraint_tokens += estimate_tokens(doc_thesis)
+
+        terminology_pack: Dict[str, str] = {}
+        if self.section_cards and self.section_cards.document and self.section_cards.document.terminology:
+            glossary = self.section_cards.document.terminology
+            key_terms = []
+            if target_card and target_card.key_terms:
+                key_terms.extend(target_card.key_terms)
+            for dc in dep_cards:
+                if dc.key_terms:
+                    key_terms.extend(dc.key_terms)
+            
+            for kt in key_terms:
+                kt_lower = kt.lower()
+                found = False
+                for canonical_term, details in glossary.items():
+                    if canonical_term.lower() == kt_lower:
+                        terminology_pack[canonical_term] = details.get("definition") or ""
+                        found = True
+                        break
+                if found:
+                    continue
+                for canonical_term, details in glossary.items():
+                    variants = [v.lower() for v in details.get("variants", [])]
+                    if kt_lower in variants:
+                        terminology_pack[canonical_term] = details.get("definition") or ""
+                        found = True
+                        break
+
+        if terminology_pack:
+            term_str = "\n".join(f"{k}: {v}" for k, v in terminology_pack.items())
+            constraint_tokens += estimate_tokens(term_str)
+
         total_tokens = current_tokens + constraint_tokens
         quality.estimated_tokens = total_tokens
 
-        status = "degraded" if warnings else "complete"
+        run_id = str(uuid.uuid4())
+        status_str = "degraded" if (warnings or status == "degraded") else "complete"
 
         pack = ContextPack(
             task=task,
             target=target,
             document_thesis=doc_thesis,
             prior_claims=[],
-            terminology={},
+            terminology=terminology_pack,
             constraints=constraints,
             source_spans=selected,
             estimated_tokens=total_tokens,
-            status=status,
+            status=status_str,
             warnings=warnings,
             quality=asdict(quality),
-            summary=f"Context pack generated with {len(selected)} source spans."
+            summary=f"Context pack generated with {len(selected)} source spans.",
+            run_id=run_id,
+            cache=CacheDiagnostics(
+                enabled=self.config.cache.enabled,
+                hit=False,
+                task_hash=task_hash,
+                config_hash=config_hash,
+                section_cards_hash=sc_hash,
+                rtfm_index_fingerprint=fingerprint
+            ),
+            task_type=task_type,
+            pack_mode=pack_mode
         )
 
         # --- Cache write ---
         if self.config.cache.enabled:
-            run_id = str(uuid.uuid4())
             run_data = {
                 "task_hash": task_hash,
                 "task": task,
@@ -397,8 +775,18 @@ class ContextPackGenerator:
                 "rtfm_index_fingerprint": fingerprint
             }
             payload = asdict(pack)
-            sources = [asdict(s) for s in selected]
-            self.store.store_pack(run_id, run_data, payload, sources)
+            
+            sources_to_store = []
+            for s in selected:
+                d = asdict(s)
+                d["selected"] = 1
+                sources_to_store.append(d)
+            for s in unselected:
+                d = asdict(s)
+                d["selected"] = 0
+                sources_to_store.append(d)
+                
+            self.store.store_pack(run_id, run_data, payload, sources_to_store)
 
         return pack
 
@@ -406,8 +794,9 @@ class ContextPackGenerator:
     # Combined scoring with query-type scoping
     # -----------------------------------------------------------------------
     def _compute_final_score(self, result: RTFMResult, target_card: Optional[SectionCard],
-                              dep_cards: List[SectionCard], must_consider: List[str],
-                              query: str, query_type: str = "task") -> float:
+                               dep_cards: List[SectionCard], must_consider: List[str],
+                               query: str, query_type: str = "task",
+                               task_type: Optional[str] = None) -> float:
         score = 0.0
         path_lower = result.path.replace("\\", "/").lower()
         content = result.snippet or ""
@@ -431,16 +820,24 @@ class ContextPackGenerator:
         # is NOT from the target or dependency file, penalize heavily.
         # Key terms should retrieve content *about* that concept in the target section,
         # not every paper section that happens to mention the term.
-        if query_type == "key_term" and not is_target_file and not is_dep_file:
+        if query_type in ("key_term", "dep_key_term") and not is_target_file and not is_dep_file:
             score *= 0.25
 
-        # Target file match (+0.8)
+        # Target file match boost
         if is_target_file:
-            score += 0.8
+            if task_type in ("revise_existing_section", "expand", "condense", "proofread"):
+                score += 1.5
+            elif task_type == "align_with_previous_sections":
+                score += 0.2
+            else:
+                score += 0.8
 
-        # Dependency file match (+0.4)
+        # Dependency file match boost
         if is_dep_file:
-            score += 0.4
+            if task_type == "align_with_previous_sections":
+                score += 1.2
+            else:
+                score += 0.4
 
         # Chapter title contains query terms (+0.5, up to 3 hits)
         chapter_title = (metadata.get("chapter_title") or "").lower()
@@ -485,6 +882,8 @@ class ContextPackGenerator:
                 return f"Dependency section '{dc.title or dc.id}' — {chapter}" if chapter else f"Dependency '{dc.id}'"
         if query_type == "key_term":
             return f"Key term '{query}' match — {chapter}" if chapter else f"Key term '{query}'"
+        if query_type == "dep_key_term":
+            return f"Dependency key term '{query}' match — {chapter}" if chapter else f"Dependency key term '{query}'"
         if query_type in ("title", "dep_title"):
             return f"Section title match — {chapter}" if chapter else "Section title match"
         return f"Task query match — {chapter}" if chapter else f"Matched query: {query}"
@@ -494,12 +893,18 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     def _classify_priority(self, spans: List[SourceSpan],
                            target_card: Optional[SectionCard],
-                           dep_cards: List[SectionCard]) -> List[SourceSpan]:
-        """Assign priority: essential | supporting | background."""
+                           dep_cards: List[SectionCard],
+                           target_path: Optional[str] = None,
+                           line_start: Optional[int] = None,
+                           line_end: Optional[int] = None) -> List[SourceSpan]:
+        """Assign priority: essential | supporting | background and source_role: target_text | local_context | dependency | reference."""
         if not spans:
             return spans
 
-        target_path = target_card.path if target_card else None
+        target_path_val = target_path
+        if not target_path_val and target_card and target_card.path:
+            target_path_val = target_card.path
+
         dep_paths = {dc.path for dc in dep_cards if dc.path}
         top_score = max(s.score for s in spans)
         high_threshold = top_score * 0.4   # top 40% of score range = essential
@@ -507,19 +912,52 @@ class ContextPackGenerator:
         result = []
         for span in spans:
             path_norm = span.path.replace("\\", "/")
-            is_target = target_path and path_norm.endswith(target_path.lstrip("./"))
+            is_target = target_path_val and path_norm.endswith(target_path_val.lstrip("./"))
             is_dep = any(path_norm.endswith(dp.lstrip("./")) for dp in dep_paths)
 
-            if is_target and span.score >= high_threshold:
-                priority = "essential"
-            elif is_target or is_dep:
-                priority = "supporting"
-            elif span.score >= high_threshold:
+            # Determine source_role
+            if span.source_role in ("target_text", "local_context"):
+                role = span.source_role
+            elif is_target:
+                if line_start is not None and line_end is not None:
+                    span_start = span.line_start if span.line_start is not None else 1
+                    span_end = span.line_end if span.line_end is not None else (span_start + 30)
+                    
+                    target_s = line_start
+                    target_e = line_end
+                    local_s = max(1, line_start - 15)
+                    local_e = line_end + 15
+
+                    if max(target_s, span_start) <= min(target_e, span_end):
+                        role = "target_text"
+                    elif max(local_s, span_start) <= min(local_e, span_end):
+                        role = "local_context"
+                    else:
+                        role = "reference"
+                else:
+                    role = "target_text"
+            elif is_dep:
+                role = "dependency"
+            else:
+                role = "reference"
+
+            # Determine priority
+            if role == "target_text":
+                if span.score >= high_threshold:
+                    priority = "essential"
+                else:
+                    priority = "supporting"
+            elif role == "local_context" or role == "dependency":
                 priority = "supporting"
             else:
-                priority = "background"
+                if span.score >= high_threshold:
+                    priority = "supporting"
+                else:
+                    priority = "background"
 
-            # Replace frozen dataclass with updated priority
+            if span.priority == "essential":
+                priority = "essential"
+
             result.append(SourceSpan(
                 path=span.path,
                 line_start=span.line_start,
@@ -529,5 +967,6 @@ class ContextPackGenerator:
                 priority=priority,
                 query=span.query,
                 metadata=span.metadata,
+                source_role=role
             ))
         return result

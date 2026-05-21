@@ -13,13 +13,27 @@ class RTFMAdapter:
     
     def _run_command(self, cmd: List[str]) -> str:
         """Run a CLI command and return its standard output."""
+        import sys
+        import os
+        import shutil
+        
+        executable = cmd[0]
+        if executable == "rtfm":
+            resolved = shutil.which("rtfm")
+            if not resolved:
+                # Fallback to looking in the same directory as the current Python executable
+                python_dir = os.path.dirname(sys.executable)
+                candidate = os.path.join(python_dir, "rtfm")
+                if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                    cmd[0] = candidate
+
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout
         except subprocess.CalledProcessError as e:
             raise RTFMAdapterError(f"Command '{' '.join(cmd)}' failed with error: {e.stderr}") from e
         except FileNotFoundError as e:
-            raise RTFMAdapterError("RTFM CLI not found. Is it installed and in PATH?") from e
+            raise RTFMAdapterError(f"RTFM CLI not found (tried to run {cmd[0]}). Is it installed?") from e
 
     def search(self, query: str, *, corpus: str, limit: int = 10) -> List[RTFMResult]:
         """Search indexed content using RTFM."""
@@ -56,11 +70,8 @@ class RTFMAdapter:
         cmd = ["rtfm", "expand", result_id]
         return self._run_command(cmd)
 
-    def sync(self, project_root: str, *, corpus: str) -> bool:
+    def sync(self, project_root: str, *, corpus: str) -> None:
         """Trigger RTFM sync."""
         cmd = ["rtfm", "sync", project_root, "--corpus", corpus]
-        try:
-            self._run_command(cmd)
-            return True
-        except RTFMAdapterError:
-            return False
+        self._run_command(cmd)
+

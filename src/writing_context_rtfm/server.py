@@ -13,6 +13,59 @@ from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.proofread import ProofreadPackGenerator
 import logging
+from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology, get_term_context
+
+# --- Prompt formatters ------------------------------------------------------
+
+def _format_write_section_prompt(pack: Any) -> str:
+    source_spans_txt = []
+    for s in pack.source_spans:
+        snippet = (s.metadata or {}).get("snippet") or ""
+        source_spans_txt.append(
+            f"--- File: {s.path} (Lines {s.line_start}-{s.line_end}) [{s.priority}]\n"
+            f"Reason: {s.reason}\n"
+            f"Content:\n{snippet}\n"
+        )
+    source_spans_joined = "\n".join(source_spans_txt)
+    constraints_joined = "\n".join(f"- {c}" for c in pack.constraints) if pack.constraints else "None"
+
+    return (
+        f"You are writing/editing a manuscript section. Follow the task instructions below and stay aligned with the manuscript's thesis and constraints.\n\n"
+        f"Task: {pack.task}\n"
+        f"Target Section: {pack.target or 'Unknown'}\n\n"
+        f"[Manuscript Thesis]:\n{pack.document_thesis or 'None'}\n\n"
+        f"[Constraints & Rules]:\n{constraints_joined}\n\n"
+        f"[Prior Source Spans (Surgical Context)]:\n{source_spans_joined}\n\n"
+        f"Instruction: Draft or revise the section based strictly on the provided context spans and constraints above. Maintain academic tone and LaTeX/Markdown formatting consistency."
+    )
+
+def _format_proofread_section_prompt(pack: Any) -> str:
+    terminology_txt = []
+    for t in (pack.constraints.terminology or []):
+        examples_str = "; ".join(f"'{ex}'" for ex in t.usage_examples) if t.usage_examples else "None"
+        terminology_txt.append(f"- '{t.term}': used in: {examples_str}")
+    terminology_joined = "\n".join(terminology_txt) if terminology_txt else "None"
+
+    constraints_joined = "\n".join(f"- {c}" for c in pack.constraints.section_specific_rules) if pack.constraints.section_specific_rules else "None"
+    general_joined = "\n".join(f"- {c}" for c in pack.constraints.general_rules) if pack.constraints.general_rules else "None"
+
+    local_txt = ""
+    if pack.local_context.previous_paragraph:
+        local_txt += f"[Previous Context Paragraph]:\n{pack.local_context.previous_paragraph}\n\n"
+    local_txt += f"[Target Text to Revise]:\n{pack.local_context.target_span}\n\n"
+    if pack.local_context.next_paragraph:
+        local_txt += f"[Next Context Paragraph]:\n{pack.local_context.next_paragraph}\n\n"
+
+    return (
+        f"You are proofreading and refining the following segment of the manuscript.\n\n"
+        f"Target file: {pack.target.file_path} (Lines {pack.target.line_start}-{pack.target.line_end})\n"
+        f"Mode: {pack.constraints.mode} | Strictness: {pack.constraints.strictness}\n\n"
+        f"[Local Context surrounding Target]:\n{local_txt}"
+        f"[General Rules for {pack.constraints.mode}]:\n{general_joined}\n\n"
+        f"[Section Constraints]:\n{constraints_joined}\n\n"
+        f"[Terminology Usage Examples (Prior Context)]:\n{terminology_joined}\n\n"
+        f"Instruction: Revise the target segment strictly following the mode and constraints above. Maintain terminology consistency as shown in the examples."
+    )
 
 # Log path can be overridden via WRITING_CONTEXT_LOG; falls back to a user-local
 # directory when /tmp is not writable (e.g., locked-down systems).
@@ -133,6 +186,43 @@ def get_tools_list():
                                 "to force inclusion of specific files when the section card doesn't cover them."
                             ),
                         },
+                        "task_type": {
+                            "type": "string",
+                            "enum": [
+                                "write_new_section",
+                                "revise_existing_section",
+                                "proofread",
+                                "expand",
+                                "condense",
+                                "align_with_previous_sections",
+                                "review"
+                            ],
+                            "description": "The specific type of writing task.",
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "description": "Optional starting line range in the target file.",
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "description": "Optional ending line range in the target file.",
+                        },
+                        "pack_mode": {
+                            "type": "string",
+                            "enum": ["minimal", "standard", "deep"],
+                            "description": "Override context pack depth level/budget.",
+                        },
+                        "role_budgets": {
+                            "type": "object",
+                            "description": (
+                                "Optional dictionary overriding default budget allocations. Keys must be "
+                                "source roles (target_text, local_context, dependency, reference) and values "
+                                "must be float fractions summing to 1.0 (e.g. {'target_text': 0.40, 'reference': 0.10})."
+                            ),
+                            "additionalProperties": {
+                                "type": "number"
+                            }
+                        },
                     },
                     "required": ["task"],
                 },
@@ -222,6 +312,108 @@ def get_tools_list():
                     },
                 },
             },
+            {
+                "name": "initialize_section_cards",
+                "description": (
+                    "Scan the workspace for .tex and .md files and generate or append missing section cards "
+                    "to section_cards.yaml. Proposes section IDs, file paths, and default constraints."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_root": {
+                            "type": "string",
+                            "description": "Custom project root path (optional). Defaults to current workspace."
+                        }
+                    }
+                }
+            },
+            {
+                "name": "request_more_context",
+                "description": (
+                    "Retrieve the next page/tier of unselected supporting/background context spans from a previous "
+                    "context generation run. Useful when initial token budgets were too restrictive."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "run_id": {
+                            "type": "string",
+                            "description": "The unique UUID run_id returned from a prior get_writing_context_pack call."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of extra context spans to fetch (default: 5)."
+                        }
+                    },
+                    "required": ["run_id"]
+                }
+            },
+            {
+                "name": "submit_generation_feedback",
+                "description": (
+                    "Log quality evaluation feedback for a context pack generation run to improve subsequent context selection."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "run_id": {
+                            "type": "string",
+                            "description": "The unique UUID run_id from the context pack."
+                        },
+                        "metric_name": {
+                            "type": "string",
+                            "description": "Metric category being logged (e.g. helpfulness, hallucinations, constraint_violated)."
+                        },
+                        "metric_value": {
+                            "type": "number",
+                            "description": "Numeric evaluation value (e.g. 1.0 for positive/present, 0.0 for negative/absent)."
+                        },
+                        "metric_text": {
+                            "type": "string",
+                            "description": "Optional text details or description of issue/helpfulness."
+                        }
+                    },
+                    "required": ["run_id", "metric_name", "metric_value"]
+                }
+            },
+            {
+                "name": "audit_manuscript_terminology",
+                "description": (
+                    "Scan all section cards key terms and run searches against the RTFM index to analyze usage "
+                    "patterns, flagging undeclared usages, missing terms, and potential semantic drift."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_root": {
+                            "type": "string",
+                            "description": "Custom project root path (optional). Defaults to current workspace."
+                        }
+                    }
+                }
+            },
+            {
+                "name": "get_term_context",
+                "description": (
+                    "Look up a term in the terminology glossary defined in section_cards.yaml. "
+                    "Returns the term definition, allowed variants, and phrases to avoid."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "term": {
+                            "type": "string",
+                            "description": "The term (canonical, variant, or avoid phrase) to look up."
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path."
+                        }
+                    },
+                    "required": ["term"]
+                }
+            }
         ]
     }
 
@@ -237,6 +429,24 @@ def _load_runtime():
     adapter = RTFMAdapter()
     store = ExtensionStore(config.cache.path)
     store.init_db()
+
+    if config.rtfm.sync_before_pack:
+        try:
+            adapter.sync(config.rtfm.project_root, corpus=config.rtfm.corpus)
+            if config.cache.invalidate_on_refresh:
+                from pathlib import Path
+                from writing_context_rtfm.hashing import stable_hash
+                rtfm_db = Path(config.rtfm.project_root) / ".rtfm" / "library.db"
+                if rtfm_db.exists():
+                    stat = rtfm_db.stat()
+                    fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
+                else:
+                    fingerprint = "no-rtfm-db"
+                store.invalidate_for_fingerprint(fingerprint)
+        except Exception as e:
+            logger.warning(f"Auto-sync failed before pack generation: {e}")
+            card_warnings.append(f"Auto-sync failed: {e}")
+
     return config, cards, card_warnings, adapter, store
 
 
@@ -255,9 +465,27 @@ def handle_get_writing_context_pack(args):
     target = args.get("target")
     budget = args.get("token_budget", config.context.default_token_budget)
     must_consider = args.get("must_consider", []) or []
+    task_type = args.get("task_type")
+    line_start_val = args.get("line_start")
+    line_end_val = args.get("line_end")
+    pack_mode = args.get("pack_mode")
+    role_budgets = args.get("role_budgets")
+
+    line_start = int(line_start_val) if line_start_val is not None else None
+    line_end = int(line_end_val) if line_end_val is not None else None
 
     try:
-        pack = generator.generate(task, target, budget, must_consider)
+        pack = generator.generate(
+            task=task,
+            target=target,
+            token_budget=budget,
+            must_consider=must_consider,
+            task_type=task_type,
+            line_start=line_start,
+            line_end=line_end,
+            pack_mode=pack_mode,
+            role_budgets=role_budgets
+        )
     except Exception as e:
         logger.exception("Pack generation failed")
         return _error_response(ERROR_RETRIEVAL, "Context pack generation failed.", type(e).__name__)
@@ -300,8 +528,11 @@ def handle_get_proofreading_context_pack(args):
         return _error_response(ERROR_RETRIEVAL, "Proofreading pack generation failed.", type(e).__name__)
 
     payload = asdict(pack)
+    all_warnings = list(pack.warnings or [])
     if card_warnings:
-        payload["section_card_warnings"] = card_warnings
+        all_warnings.extend(card_warnings)
+    if all_warnings:
+        payload["warnings"] = all_warnings
         if payload.get("status") == "complete":
             payload["status"] = "degraded"
     return _success_response(payload)
@@ -319,18 +550,88 @@ def handle_refresh_index(args):
     corpus = args.get("corpus", config.rtfm.corpus)
 
     try:
-        success = adapter.sync(project_root, corpus=corpus)
+        adapter.sync(project_root, corpus=corpus)
     except Exception as e:
         logger.exception("RTFM sync raised")
-        return _error_response(ERROR_RETRIEVAL, "RTFM sync raised an exception.", type(e).__name__)
-
-    if not success:
-        return _error_response(ERROR_RETRIEVAL, "RTFM sync failed.")
+        return _error_response(ERROR_RETRIEVAL, f"RTFM sync failed: {e}", type(e).__name__)
 
     if config.cache.invalidate_on_refresh:
+        from pathlib import Path
+        from writing_context_rtfm.hashing import stable_hash
         store = ExtensionStore(config.cache.path)
-        store.invalidate_for_fingerprint("new_fingerprint_after_sync")
+        rtfm_db = Path(project_root) / ".rtfm" / "library.db"
+        if rtfm_db.exists():
+            stat = rtfm_db.stat()
+            fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
+        else:
+            fingerprint = "no-rtfm-db"
+        store.invalidate_for_fingerprint(fingerprint)
     return _success_response({"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh})
+
+def handle_initialize_section_cards(args):
+    project_root = args.get("project_root")
+    try:
+        res = initialize_section_cards(project_root)
+        return _success_response(res)
+    except Exception as e:
+        logger.exception("Failed to initialize section cards")
+        return _error_response(ERROR_INTERNAL, f"Initialization failed: {e}", type(e).__name__)
+
+def handle_request_more_context(args):
+    run_id = args.get("run_id")
+    if not run_id:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: run_id")
+    limit = args.get("limit", 5)
+    try:
+        config = load_config()
+        store = ExtensionStore(config.cache.path)
+        store.init_db()
+        results = store.get_more_context(run_id, limit)
+        return _success_response({"run_id": run_id, "source_spans": results, "count": len(results)})
+    except Exception as e:
+        logger.exception("Failed to request more context")
+        return _error_response(ERROR_INTERNAL, f"Failed to request more context: {e}", type(e).__name__)
+
+def handle_submit_generation_feedback(args):
+    run_id = args.get("run_id")
+    metric_name = args.get("metric_name")
+    metric_value = args.get("metric_value")
+    metric_text = args.get("metric_text")
+    if not run_id or not metric_name or metric_value is None:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required arguments: run_id, metric_name, and metric_value")
+    try:
+        config = load_config()
+        store = ExtensionStore(config.cache.path)
+        store.init_db()
+        store.submit_feedback(run_id, metric_name, float(metric_value), metric_text)
+        return _success_response({"status": "feedback_saved", "run_id": run_id})
+    except Exception as e:
+        logger.exception("Failed to submit feedback")
+        return _error_response(ERROR_INTERNAL, f"Failed to submit feedback: {e}", type(e).__name__)
+
+def handle_audit_manuscript_terminology(args):
+    project_root = args.get("project_root")
+    try:
+        res = audit_manuscript_terminology(project_root)
+        return _success_response(res)
+    except Exception as e:
+        logger.exception("Failed to audit terminology")
+        return _error_response(ERROR_INTERNAL, f"Terminology audit failed: {e}", type(e).__name__)
+
+def handle_get_term_context(args):
+    if not args or "term" not in args:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: term")
+    term = args.get("term")
+    project_root = args.get("project_root")
+    try:
+        if not project_root:
+            config = load_config()
+            project_root = config.rtfm.project_root
+        res = get_term_context(term, project_root)
+        return _success_response(res)
+    except Exception as e:
+        logger.exception("Failed to lookup term context")
+        return _error_response(ERROR_INTERNAL, f"Terminology lookup failed: {e}", type(e).__name__)
 
 def process_message(line):
     try:
@@ -354,7 +655,128 @@ def process_message(line):
             elif method == "resources/templates/list":
                 result = {"resourceTemplates": []}
             elif method == "prompts/list":
-                result = {"prompts": []}
+                result = {
+                    "prompts": [
+                        {
+                            "name": "write_section",
+                            "description": "Pre-structure a prompt for drafting or editing a manuscript section with surgical context.",
+                            "arguments": [
+                                {"name": "task", "description": "Natural-language description of the writing task", "required": True},
+                                {"name": "target", "description": "section_id from section_cards.yaml (e.g. section_intro)", "required": True},
+                                {"name": "token_budget", "description": "Maximum token budget for context (default: 6000)", "required": False},
+                                {"name": "task_type", "description": "Writing task type (choices: write_new_section, revise_existing_section, proofread, expand, condense, align_with_previous_sections, review)", "required": False},
+                                {"name": "line_start", "description": "Target start line range", "required": False},
+                                {"name": "line_end", "description": "Target end line range", "required": False},
+                                {"name": "pack_mode", "description": "Context pack mode (choices: minimal, standard, deep)", "required": False}
+                            ]
+                        },
+                        {
+                            "name": "proofread_section",
+                            "description": "Pre-structure a prompt for proofreading or editing a specific line range of a file.",
+                            "arguments": [
+                                {"name": "target_file", "description": "Path to the file being proofread", "required": True},
+                                {"name": "line_start", "description": "1-indexed starting line number", "required": True},
+                                {"name": "line_end", "description": "1-indexed ending line number", "required": True},
+                                {"name": "mode", "description": "Proofreading mode (surface, academic_clarity, consistency, latex_safe)", "required": False},
+                                {"name": "strictness", "description": "Strictness level (conservative, moderate, assertive)", "required": False}
+                            ]
+                        }
+                    ]
+                }
+            elif method == "prompts/get":
+                params = req.get("params", {})
+                name = params.get("name")
+                arguments = params.get("arguments", {})
+                if name == "write_section":
+                    task = arguments.get("task", "")
+                    target = arguments.get("target")
+                    budget_arg = arguments.get("token_budget")
+                    task_type = arguments.get("task_type")
+                    line_start_val = arguments.get("line_start")
+                    line_end_val = arguments.get("line_end")
+                    pack_mode = arguments.get("pack_mode")
+                    try:
+                        config, cards, card_warnings, adapter, store = _load_runtime()
+                        budget = int(budget_arg) if budget_arg is not None else config.context.default_token_budget
+                        line_start = int(line_start_val) if line_start_val is not None else None
+                        line_end = int(line_end_val) if line_end_val is not None else None
+                        generator = ContextPackGenerator(config, cards, adapter, store)
+                        pack = generator.generate(
+                            task=task,
+                            target=target,
+                            token_budget=budget,
+                            task_type=task_type,
+                            line_start=line_start,
+                            line_end=line_end,
+                            pack_mode=pack_mode
+                        )
+                        prompt_text = _format_write_section_prompt(pack)
+                        result = {
+                            "description": "Hydrated drafting/editing prompt with surgical context.",
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": {
+                                        "type": "text",
+                                        "text": prompt_text
+                                    }
+                                }
+                            ]
+                        }
+                    except Exception as e:
+                        logger.exception("Failed to hydrate prompt write_section")
+                        response = json.dumps({
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "error": {"code": -32603, "message": f"Failed to hydrate prompt: {e}"}
+                        })
+                        return response
+                elif name == "proofread_section":
+                    target_file = arguments.get("target_file", "")
+                    line_start_arg = arguments.get("line_start")
+                    line_end_arg = arguments.get("line_end")
+                    mode = arguments.get("mode", "surface")
+                    strictness = arguments.get("strictness", "moderate")
+                    try:
+                        config, cards, card_warnings, adapter, store = _load_runtime()
+                        line_start = int(line_start_arg)
+                        line_end = int(line_end_arg)
+                        generator = ProofreadPackGenerator(config, cards, adapter, store)
+                        pack = generator.generate(
+                            target_file=target_file,
+                            line_start=line_start,
+                            line_end=line_end,
+                            mode=mode,
+                            strictness=strictness
+                        )
+                        prompt_text = _format_proofread_section_prompt(pack)
+                        result = {
+                            "description": "Hydrated proofreading prompt with target text and terminology.",
+                            "messages": [
+                                {
+                                    "role": "user",
+                                    "content": {
+                                        "type": "text",
+                                        "text": prompt_text
+                                    }
+                                }
+                            ]
+                        }
+                    except Exception as e:
+                        logger.exception("Failed to hydrate prompt proofread_section")
+                        response = json.dumps({
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "error": {"code": -32603, "message": f"Failed to hydrate prompt: {e}"}
+                        })
+                        return response
+                else:
+                    response = json.dumps({
+                        "jsonrpc": "2.0",
+                        "id": req.get("id"),
+                        "error": {"code": -32601, "message": f"Prompt not found: {name}"}
+                    })
+                    return response
             elif method == "tools/call":
                 params = req.get("params", {})
                 name = params.get("name")
@@ -365,6 +787,16 @@ def process_message(line):
                     result = handle_get_proofreading_context_pack(args)
                 elif name == "refresh_index":
                     result = handle_refresh_index(args)
+                elif name == "initialize_section_cards":
+                    result = handle_initialize_section_cards(args)
+                elif name == "request_more_context":
+                    result = handle_request_more_context(args)
+                elif name == "submit_generation_feedback":
+                    result = handle_submit_generation_feedback(args)
+                elif name == "audit_manuscript_terminology":
+                    result = handle_audit_manuscript_terminology(args)
+                elif name == "get_term_context":
+                    result = handle_get_term_context(args)
                 else:
                     response = json.dumps({
                         "jsonrpc": "2.0",

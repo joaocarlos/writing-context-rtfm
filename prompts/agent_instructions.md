@@ -1,118 +1,68 @@
-<!-- writing-context-rtfm MCP tools -->
-## MCP Tools: writing-context-rtfm
+# MCP Agent Instructions: writing-context-rtfm
 
-**IMPORTANT: This project uses `writing-context-rtfm` for surgical context retrieval.
-ALWAYS call `get_writing_context_pack` BEFORE writing, rewriting, or expanding any
-section of this manuscript.** The context pack is cheaper (fewer tokens), scoped to
-your task, and enforces the constraints the author has defined. Reading the whole
-manuscript freely is wasteful and will cause you to miss critical constraints.
-
-**EXCEPTIONS**: Do NOT call `get_writing_context_pack` when:
-- The user is asking a factual or structural question about the project (answer directly).
-- The task is purely administrative (renaming files, formatting YAML, git operations).
-- The user explicitly says "no context needed" or "just answer".
+This project uses `writing-context-rtfm` to supply context packs and constraints. **Always** call these tools before writing/refining manuscript sections to minimize token count, align with the document's thesis, and respect constraints.
 
 ---
 
-### When to use `get_writing_context_pack` FIRST
+## 1. Tool Reference
 
-| Task | Action |
-|------|--------|
-| Writing a new section or subsection | `get_writing_context_pack` with `task` + `target` |
-| Rewriting or expanding existing text | `get_writing_context_pack` with the rewrite task |
-| Proofreading a target file or lines | `get_proofreading_context_pack` with the target file/range |
-| Checking what constraints apply to a section | `get_writing_context_pack` — read `constraints` in the pack |
-| Verifying what prior sections said | `get_writing_context_pack` with `depends_on` section as `target` |
-| Refreshing context after edits to the manuscript | `refresh_index` first, then `get_writing_context_pack` |
-
-Fall back to direct file reads **only** when the pack's `source_spans` are insufficient
-and the pack's `status` is `"degraded"` or `warnings` is non-empty.
-
----
-
-### Tools
-
-| Tool | When to use |
-|------|-------------|
-| `get_writing_context_pack` | Before any writing task — returns prioritized source spans, constraints, and the document thesis |
-| `get_proofreading_context_pack` | Before proofreading/editing a specific span — returns target text, local paragraph context, and terminology usage |
-| `refresh_index` | After significant edits to the manuscript files, to re-sync the RTFM index and invalidate the cache |
+| Tool Name | When to Use | Key Arguments |
+|:---|:---|:---|
+| `get_writing_context_pack` | Before drafting, revising, or review. | `task` (query), `target` (section_id), `token_budget`, `task_type` (e.g. `"revise"`), `pack_mode` (`"minimal"`, `"standard"`, `"deep"`), `role_budgets` (JSON float overrides), `line_start`, `line_end` |
+| `get_proofreading_context_pack` | Before proofreading/editing lines. | `target_file`, `line_start`, `line_end`, `mode` (`"latex_safe"`, `"default"`) |
+| `get_term_context` | Check definitions/avoid variants for a term. | `term` (case-insensitive lookup), `project_root` |
+| `request_more_context` | Expand context when the budget was too tight. | `run_id` (from previous pack), `limit` (max 5) |
+| `submit_generation_feedback` | Log context quality evaluations. | `run_id`, `metric_name`, `metric_value`, `metric_text` |
+| `initialize_section_cards` | Scaffold YAML configs for untracked sections. | `project_root` |
+| `audit_manuscript_terminology` | Verify key terms and flag semantic drift. | `project_root` |
+| `refresh_index` | Re-sync the RTFM index after making edits. | `project_root`, `corpus` |
 
 ---
 
-### How to read a context pack
+## 2. Advanced Parameters & Features
 
-The pack returned by `get_writing_context_pack` has this structure:
-
-```
-task              — the writing task you submitted
-target            — the section you are writing
-document_thesis   — the manuscript's overarching argument (always respect this)
-constraints       — hard rules injected from section cards (must_preserve + constraints fields)
-source_spans      — the retrieved context chunks, each tagged with:
-  path            — which file the chunk came from
-  priority        — "essential" | "supporting" | "background"
-  reason          — why this chunk was included
-  score           — relevance score
-status            — "complete" | "degraded" (degraded = missing section cards or failed queries)
-warnings          — list of issues found during retrieval
-```
-
-**Priority rules:**
-- `essential` — chunks from the target section file with high relevance. Use as primary context.
-- `supporting` — chunks from dependency sections or high-relevance background. Use for coherence.
-- `background` — low-relevance but retrieved. Use only if `essential` and `supporting` are insufficient.
+- **Task Types (`task_type`)**: Tailor search weights and strategies:
+  - `"write_new_section"`, `"revise_existing_section"`, `"proofread"`, `"expand"`, `"condense"`, `"align_with_previous_sections"`, `"review"`.
+- **Pack Modes (`pack_mode`)**: Choose token & depth levels:
+  - `"minimal"`: budget cap 2k, bypasses keyword expansion, max 5 spans.
+  - `"standard"`: default settings.
+  - `"deep"`: max 35 spans, deep keyword lookups.
+- **Role Budgets (`role_budgets`)**: Override fraction distribution per source role:
+  - Roles: `"target_text"`, `"local_context"`, `"dependency"`, `"reference"`.
+- **LaTeX Safety**:
+  - Automatically identifies immutable commands (`\cite`, `\ref`, `\label`) and math structures.
+  - Emits specific warnings for matched lines. **Do not** edit or alter these matches.
 
 ---
 
-### How to read a proofreading pack
+## 3. Prompts Reference
 
-The pack returned by `get_proofreading_context_pack` is specialized for edits:
+This MCP server implements native MCP Prompts. Call these via `prompts/get` to get fully hydrated prompts with context packs and thesis structures pre-formatted:
 
-```
-target              — metadata about the file and line range you are proofreading
-local_context       — exact text of the target span + the previous and next paragraphs
-constraints:
-  mode              — "surface" | "academic_clarity" | "consistency" | "latex_safe"
-  strictness        — "conservative" | "moderate" | "assertive"
-  general_rules     — rules based on the mode and strictness
-  section_rules     — section-specific rules (must_preserve + constraints)
-  terminology       — List of key terms with prior usage examples from the manuscript
-```
-
-**Terminology check:**
-Before changing a technical term, check the `terminology` list in the pack. It shows you how that term (or related terms) was used elsewhere to ensure you don't introduce inconsistencies.
+- **`write_section`**: For drafting or revising a specific section.
+  - Arguments: `task`, `target`, `token_budget` (optional), `task_type` (optional), `pack_mode` (optional).
+- **`proofread_section`**: For refining and correction.
+  - Arguments: `target_file`, `line_start`, `line_end`, `mode` (optional), `strictness` (optional).
 
 ---
 
-### Workflow
+## 4. Workflow for Writing & Editing
 
-```
-1. User asks you to write/rewrite/expand section X
-   └─► Call get_writing_context_pack(task=<task>, target=<section_id>, token_budget=<N>)
-
-2. Read the pack:
-   a. Respect ALL strings in `constraints` — these are the author's hard rules.
-   b. Use `document_thesis` to stay aligned with the manuscript's central argument.
-   c. Read `essential` spans first. Read `supporting` spans for coherence checks.
-   d. Treat `background` spans as supplementary only.
-
-3. Write the section using ONLY the retrieved context as your source of truth.
-   - Do not introduce facts, claims, or data not present in the source spans.
-   - Do not contradict any `must_preserve` constraint.
-
-4. If the pack status is "degraded" or source_spans is empty:
-   - Report the warnings to the user before writing.
-   - Ask whether to proceed with limited context or to run refresh_index first.
-
-5. After writing, do NOT re-read the entire manuscript to "check consistency".
-   Instead, call get_writing_context_pack for the adjacent section if needed.
+```mermaid
+graph TD
+    A[Draft/Edit Request] --> B[Call get_writing_context_pack]
+    B --> C{LaTeX Warnings / Terms Check?}
+    C --> D[Call get_term_context if needed]
+    D --> E{Context Sufficient?}
+    E -->|Yes| F[Draft Section matching constraints & safety guidelines]
+    E -->|No| G[Call request_more_context]
+    G --> F
+    F --> H[Submit feedback to submit_generation_feedback]
 ```
 
----
+1. **Get Context Pack**: Call `get_writing_context_pack` with the appropriate `target` section ID and `task_type`.
+2. **Handle LaTeX warnings & constraints**: Carefully inspect returned `warnings` to preserve LaTeX structures. Respect `document_thesis` and section `constraints`.
+3. **Verify Terms**: Call `get_term_context` to lookup definitions and avoid-terms.
+4. **Draft with surgical focus**: Use the `source_spans` categorized by `source_role`. Do not read entire raw files unless pack `status` is `"degraded"`.
+5. **Feed back**: Call `submit_generation_feedback` with `helpfulness=1.0` (helpful) or `hallucinations=1.0` to optimize caching.
 
-### Section IDs
-
-Section IDs (used as `target`) are defined in `.writing-context/section_cards.yaml`.
-List them before writing if unsure which ID to use. Common pattern: `section_intro`,
-`section_methodology`, `section_results`, `section_conclusion`.

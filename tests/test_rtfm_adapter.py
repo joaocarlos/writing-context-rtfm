@@ -80,7 +80,7 @@ class TestRTFMAdapter(unittest.TestCase):
         mock_run.return_value = MagicMock()
         
         result = self.adapter.sync("/project", corpus="test_corpus")
-        self.assertTrue(result)
+        self.assertIsNone(result)
         
         mock_run.assert_called_once_with(
             ["rtfm", "sync", "/project", "--corpus", "test_corpus"],
@@ -91,8 +91,8 @@ class TestRTFMAdapter(unittest.TestCase):
     def test_sync_failure(self, mock_run):
         mock_run.side_effect = subprocess.CalledProcessError(returncode=1, cmd=["rtfm"], stderr="Sync failed")
         
-        result = self.adapter.sync("/project", corpus="test_corpus")
-        self.assertFalse(result)
+        with self.assertRaises(RTFMAdapterError):
+            self.adapter.sync("/project", corpus="test_corpus")
 
     @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
     def test_context_retrieval(self, mock_run):

@@ -40,14 +40,50 @@ def sync_command(args):
     adapter = RTFMAdapter()
     sync_path = args.path if args.path != "." else project_root
     corpus = args.corpus or config.rtfm.corpus
-    if adapter.sync(sync_path, corpus=corpus):
+    try:
+        adapter.sync(sync_path, corpus=corpus)
         store = ExtensionStore(config.cache.path)
         store.init_db()
-        store.invalidate_for_fingerprint("new-fingerprint")
+        
+        # Compute real library.db fingerprint after sync
+        rtfm_db = Path(project_root) / ".rtfm" / "library.db"
+        if rtfm_db.exists():
+            stat = rtfm_db.stat()
+            from writing_context_rtfm.hashing import stable_hash
+            fingerprint = stable_hash(str(stat.st_mtime), str(stat.st_size))
+        else:
+            fingerprint = "no-rtfm-db"
+            
+        store.invalidate_for_fingerprint(fingerprint)
         print("Sync completed successfully.")
-    else:
-        print("Sync failed.", file=sys.stderr)
+    except Exception as e:
+        print(f"Sync failed: {e}", file=sys.stderr)
         sys.exit(1)
+
+def cache_command(args):
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+    store = ExtensionStore(config.cache.path)
+    store.init_db()
+
+    if args.cache_action == "clear":
+        store.clear()
+        print("Cache cleared successfully.")
+    elif args.cache_action == "stats":
+        with store._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM context_pack_runs")
+            run_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM context_pack_sources")
+            source_count = cursor.fetchone()[0]
+        
+        db_file = Path(config.cache.path)
+        db_size = db_file.stat().st_size if db_file.exists() else 0
+        
+        print(f"Cache location: {config.cache.path}")
+        print(f"Total runs:     {run_count}")
+        print(f"Total sources:  {source_count}")
+        print(f"File size:      {db_size} bytes")
 
 def pack_command(args):
     project_root = getattr(args, "project_root", ".")
@@ -66,12 +102,29 @@ def pack_command(args):
     store.init_db()
     generator = ContextPackGenerator(config, cards, adapter, store)
 
+    role_budgets = None
+    if getattr(args, "role_budgets", None):
+        try:
+            role_budgets = json.loads(args.role_budgets)
+            if not isinstance(role_budgets, dict):
+                print("Error: --role-budgets must be a JSON dictionary.", file=sys.stderr)
+                sys.exit(1)
+            role_budgets = {str(k): float(v) for k, v in role_budgets.items()}
+        except Exception as e:
+            print(f"Error parsing --role-budgets JSON: {e}", file=sys.stderr)
+            sys.exit(1)
+
     pack = generator.generate(
         task=args.task,
         target=args.target,
         token_budget=args.budget,
         must_consider=args.must_consider or [],
-        project_root=project_root
+        project_root=project_root,
+        task_type=getattr(args, "task_type", None),
+        line_start=getattr(args, "line_start", None),
+        line_end=getattr(args, "line_end", None),
+        pack_mode=getattr(args, "pack_mode", None),
+        role_budgets=role_budgets
     )
     print(json.dumps(asdict(pack), indent=2))
 
@@ -95,9 +148,133 @@ def proofread_pack_command(args):
     )
     print(json.dumps(asdict(pack), indent=2))
 
+def get_term_command(args):
+    project_root = getattr(args, "project_root", ".")
+    try:
+        from writing_context_rtfm.features import get_term_context
+        res = get_term_context(args.term, project_root)
+        print(json.dumps(res, indent=2))
+    except Exception as e:
+        print(json.dumps({"status": "error", "message": str(e)}), file=sys.stderr)
+        sys.exit(1)
+
 def serve_command(args):
     from writing_context_rtfm.server import run_server
     run_server()
+
+def doctor_command(args):
+    import shutil
+    import yaml
+    project_root = Path(getattr(args, "project_root", ".")).resolve()
+    
+    print("Writing Context RTFM Extension Doctor")
+    print("======================================")
+    
+    # 1. RTFM CLI / Package check
+    rtfm_cli = shutil.which("rtfm")
+    rtfm_pkg = False
+    try:
+        import rtfm_ai
+        rtfm_pkg = True
+    except ImportError:
+        try:
+            import rtfm
+            rtfm_pkg = True
+        except ImportError:
+            pass
+            
+    print(f"[*] RTFM CLI:         {'[OK] Found at ' + rtfm_cli if rtfm_cli else '[WARN] Not found in PATH'}")
+    print(f"[*] RTFM Library:     {'[OK] Package rtfm/rtfm-ai importable' if rtfm_pkg else '[FAIL] Package not importable'}")
+    
+    # 2. Project config
+    config_file = project_root / ".writing-context" / "config.yaml"
+    sc_file = project_root / ".writing-context" / "section_cards.yaml"
+    
+    print(f"[*] Project Root:     {project_root}")
+    
+    config = None
+    if config_file.exists():
+        try:
+            config = load_config(str(project_root))
+            print(f"[*] Config:           [OK] Loaded from {config_file.relative_to(project_root)}")
+        except Exception as e:
+            print(f"[*] Config:           [FAIL] Failed to load {config_file.relative_to(project_root)}: {e}")
+    else:
+        print(f"[*] Config:           [WARN] config.yaml not found (using defaults)")
+
+    if sc_file.exists():
+        try:
+            with open(sc_file, "r") as f:
+                yaml.safe_load(f)
+            from writing_context_rtfm.section_cards import load_section_cards
+            cards = load_section_cards(str(sc_file), required=False)
+            print(f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)}")
+        except Exception as e:
+            print(f"[*] Section Cards:    [FAIL] Failed to parse {sc_file.relative_to(project_root)}: {e}")
+    else:
+        print(f"[*] Section Cards:    [WARN] section_cards.yaml not found")
+
+    # 3. Database Check
+    db_path = project_root / ".rtfm" / "library.db"
+    if db_path.exists():
+        print(f"[*] RTFM DB:          [OK] Found at {db_path.relative_to(project_root)}")
+    else:
+        print(f"[*] RTFM DB:          [FAIL] No RTFM library database found at {db_path.relative_to(project_root)} (Needs sync)")
+
+    # 4. Cache Check
+    if not config:
+        try:
+            config = load_config(str(project_root))
+        except Exception:
+            pass
+
+    if config:
+        cache_db = Path(config.cache.path)
+        if cache_db.exists():
+            try:
+                store = ExtensionStore(str(cache_db))
+                store.init_db()
+                try:
+                    rel_cache = cache_db.relative_to(project_root)
+                except ValueError:
+                    rel_cache = cache_db
+                print(f"[*] Cache DB:         [OK] Found and initialized at {rel_cache}")
+            except Exception as e:
+                print(f"[*] Cache DB:         [FAIL] Cache database at {cache_db} exists but failed to initialize: {e}")
+        else:
+            try:
+                rel_cache = cache_db.relative_to(project_root)
+            except ValueError:
+                rel_cache = cache_db
+            print(f"[*] Cache DB:         [OK] Not found (will be automatically created at {rel_cache})")
+
+def inspect_target_command(args):
+    project_root = Path(getattr(args, "project_root", ".")).resolve()
+    config = load_config(str(project_root))
+    sc_path = Path(config.section_cards.path)
+    if not sc_path.is_absolute():
+        sc_path = project_root / sc_path
+        
+    if not sc_path.exists():
+        print(f"Error: Section cards file not found at '{sc_path}'", file=sys.stderr)
+        sys.exit(1)
+        
+    cards = load_section_cards(str(sc_path), required=True)
+    target = args.target
+    if target not in cards.sections:
+        print(f"Error: Section '{target}' not found in {sc_path}", file=sys.stderr)
+        sys.exit(1)
+        
+    card = cards.sections[target]
+    print(f"Target Section ID: {target}")
+    print(f"Title:             {card.title}")
+    print(f"Path:              {card.path}")
+    print(f"Role:              {card.role}")
+    print(f"Depends On:        {card.depends_on}")
+    print(f"Key Terms:         {card.key_terms}")
+    print(f"Must Preserve:     {getattr(card, 'must_preserve', [])}")
+    print(f"Avoid:             {getattr(card, 'avoid', [])}")
+    print(f"Constraints:       {getattr(card, 'constraints', [])}")
 
 def main():
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
@@ -125,6 +302,11 @@ def main():
     parser_pack.add_argument("--target", help="Target section ID")
     parser_pack.add_argument("--budget", type=int, default=6000, help="Token budget")
     parser_pack.add_argument("--must-consider", nargs="*", help="Explicit files or concepts to consider")
+    parser_pack.add_argument("--task-type", choices=["write_new_section", "revise_existing_section", "proofread", "expand", "condense", "align_with_previous_sections", "review"], help="Writing task type")
+    parser_pack.add_argument("--line-start", type=int, help="Target start line range")
+    parser_pack.add_argument("--line-end", type=int, help="Target end line range")
+    parser_pack.add_argument("--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode")
+    parser_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
 
     # proofread-pack
     parser_proof = subparsers.add_parser("proofread-pack", help="Generate a proofreading context pack")
@@ -136,6 +318,25 @@ def main():
     parser_proof.add_argument("--max-tokens", type=int, default=4000, help="Maximum token budget")
     parser_proof.add_argument("--project-root", default=".", help="Project root for config resolution")
 
+    # cache
+    parser_cache = subparsers.add_parser("cache", help="Manage cache database")
+    parser_cache.add_argument("cache_action", choices=["clear", "stats"], help="Action to perform")
+    parser_cache.add_argument("--project-root", default=".", help="Project root path")
+
+    # doctor
+    p_doc = subparsers.add_parser("doctor", help="Run diagnostic health checks on extension environment")
+    p_doc.add_argument("--project-root", default=".", help="Project root path")
+
+    # inspect-target
+    p_insp = subparsers.add_parser("inspect-target", help="Inspect configuration details for a target section")
+    p_insp.add_argument("--target", required=True, help="Target section ID key")
+    p_insp.add_argument("--project-root", default=".", help="Project root path")
+
+    # get-term
+    parser_get_term = subparsers.add_parser("get-term", help="Look up a term in the terminology glossary")
+    parser_get_term.add_argument("term", help="The term to look up")
+    parser_get_term.add_argument("--project-root", default=".", help="Project root path")
+
     subparsers.add_parser("serve", help="Start the MCP server")
 
     args = parser.parse_args()
@@ -146,7 +347,11 @@ def main():
         "sync": sync_command,
         "pack": pack_command,
         "proofread-pack": proofread_pack_command,
-        "serve": serve_command
+        "serve": serve_command,
+        "cache": cache_command,
+        "doctor": doctor_command,
+        "inspect-target": inspect_target_command,
+        "get-term": get_term_command
     }
 
     commands[args.command](args)

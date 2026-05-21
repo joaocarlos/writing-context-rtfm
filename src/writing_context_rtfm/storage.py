@@ -64,9 +64,16 @@ class ExtensionStore:
                 rank INTEGER,
                 query TEXT,
                 metadata_json TEXT,
+                selected INTEGER DEFAULT 1,
                 FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
             );
             """)
+
+            # Ensure selected column exists for migration from older versions
+            try:
+                cursor.execute("ALTER TABLE context_pack_sources ADD COLUMN selected INTEGER DEFAULT 1;")
+            except sqlite3.OperationalError:
+                pass
 
             cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_context_pack_sources_run_id
@@ -151,12 +158,12 @@ class ExtensionStore:
             for rank, src in enumerate(sources):
                 cursor.execute("""
                     INSERT INTO context_pack_sources
-                    (run_id, path, line_start, line_end, score, reason, rank, query, metadata_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (run_id, path, line_start, line_end, score, reason, rank, query, metadata_json, selected)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     run_id, src.get("path"), src.get("line_start"), src.get("line_end"),
                     src.get("score"), src.get("reason"), rank, src.get("query"),
-                    json.dumps(src.get("metadata", {}))
+                    json.dumps(src.get("metadata", {})), src.get("selected", 1)
                 ))
 
             cursor.execute("""
@@ -183,4 +190,51 @@ class ExtensionStore:
             self._enable_foreign_keys(conn)
             cursor = conn.cursor()
             cursor.execute("DELETE FROM context_pack_runs")
+            conn.commit()
+
+    def get_more_context(self, run_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            self._enable_foreign_keys(conn)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT path, line_start, line_end, score, reason, query, metadata_json
+                FROM context_pack_sources
+                WHERE run_id = ? AND selected = 0
+                ORDER BY rank ASC
+                LIMIT ?
+            """, (run_id, limit))
+            rows = cursor.fetchall()
+            
+            results = []
+            for row in rows:
+                results.append({
+                    "path": row["path"],
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"],
+                    "score": row["score"],
+                    "reason": row["reason"],
+                    "query": row["query"],
+                    "metadata": json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+                })
+                
+            if results:
+                # Mark retrieved as selected so we don't paginate them next time
+                for r in results:
+                    cursor.execute("""
+                        UPDATE context_pack_sources
+                        SET selected = 1
+                        WHERE run_id = ? AND path = ? AND line_start = ? AND line_end = ?
+                    """, (run_id, r["path"], r["line_start"], r["line_end"]))
+                conn.commit()
+                
+            return results
+
+    def submit_feedback(self, run_id: str, metric_name: str, metric_value: float, metric_text: Optional[str] = None) -> None:
+        with self._connect() as conn:
+            self._enable_foreign_keys(conn)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO evaluation_records (run_id, metric_name, metric_value, metric_text)
+                VALUES (?, ?, ?, ?)
+            """, (run_id, metric_name, metric_value, metric_text))
             conn.commit()

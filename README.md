@@ -39,9 +39,25 @@ python3 src/writing_context_rtfm/cli.py pack \
 
 ## Installation & MCP Integration
 
-`writing-context-rtfm` functions as an MCP (Model Context Protocol) server. To use it with your favorite AI IDE or desktop agent, configure your client to launch the server.
+`writing-context-rtfm` functions as an MCP (Model Context Protocol) server. You can run it dynamically using `uvx` (recommended) or install it globally on your system.
 
-*(Note: Since this relies on `rtfm-ai` and Python 3.11+, using [`uv`](https://docs.astral.sh/uv/) is highly recommended to resolve dependencies cleanly).*
+### Option A: Dynamic Run (Recommended)
+You do not need to install the package manually. You can prefix commands with `uvx` (or `npx` equivalent) to run the server on demand.
+
+### Option B: Global Installation
+If you prefer a static global installation:
+
+```bash
+# Using uv
+uv tool install writing-context-rtfm
+
+# Using pipx
+pipx install writing-context-rtfm
+```
+
+Once installed, use `writing-context-rtfm serve` as the server command instead of `uvx writing-context-rtfm serve`.
+
+---
 
 ### 1. Claude Desktop
 Add this to your `claude_desktop_config.json` (on macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -84,7 +100,36 @@ Update your MCP settings file (e.g., `cline_mcp_settings.json`):
 }
 ```
 
-*(If testing locally before publishing, you can use `uvx --from /absolute/path/to/writing-context-rtfm writing-context-rtfm serve` instead).*
+### 4. Claude Code (Anthropic CLI Agent)
+You can configure the server globally for Claude Code using:
+
+```bash
+claude mcp add --scope user --transport stdio writing-context-rtfm -- uvx writing-context-rtfm serve
+```
+
+Or for a specific project/repository:
+
+```bash
+claude mcp add --scope local --transport stdio writing-context-rtfm -- uvx writing-context-rtfm serve
+```
+
+### 5. Codex (CLI & Desktop)
+To add the server using the Codex CLI:
+
+```bash
+codex mcp add writing-context-rtfm -- uvx writing-context-rtfm serve
+```
+
+Alternatively, you can manually append it to your Codex configuration file (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.writing-context-rtfm]
+command = "uvx"
+args = ["writing-context-rtfm", "serve"]
+enabled = true
+```
+
+*(If testing locally before publishing, you can use `uvx --from /absolute/path/to/writing-context-rtfm writing-context-rtfm serve` or `uv run python -m writing_context_rtfm.cli serve` instead).*
 
 ---
 

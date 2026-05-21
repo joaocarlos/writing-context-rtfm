@@ -398,7 +398,7 @@ class ContextPackGenerator:
             token_budget = min(token_budget, 2000)
             max_spans = 5
         elif pack_mode == "deep":
-            max_spans = 35
+            max_spans = 60
         else:
             max_spans = self.config.context.max_source_spans
 

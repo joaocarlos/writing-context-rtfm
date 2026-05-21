@@ -12,10 +12,10 @@ class RTFMConfig:
 
 @dataclass(frozen=True)
 class ContextConfig:
-    default_token_budget: int = 6000
+    default_token_budget: int = 12000
     reserved_generation_margin: float = 0.10
     max_search_results_per_query: int = 10
-    max_source_spans: int = 20
+    max_source_spans: int = 35
     include_source_excerpts: bool = False
     min_score: float = 0.01
     min_relative_score: float = 0.05

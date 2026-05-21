@@ -25,7 +25,8 @@ classifiers = [
 ]
 dependencies = [
     "rtfm-ai",
-    "pyyaml"
+    "pyyaml",
+    "pylatexenc"
 ]
 
 [project.optional-dependencies]

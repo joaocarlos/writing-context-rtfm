@@ -15,6 +15,7 @@ from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 import logging
 from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology, get_term_context
+from writing_context_rtfm.latex import build_reference_graph
 
 # --- Prompt formatters ------------------------------------------------------
 
@@ -414,6 +415,22 @@ def get_tools_list():
                     },
                     "required": ["term"]
                 }
+            },
+            {
+                "name": "get_manuscript_reference_graph",
+                "description": (
+                    "Build and return the LaTeX cross-reference and dependency graph of the manuscript. "
+                    "This details defined labels, references to those labels, citations, and file inclusions."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional custom project root path. Defaults to the workspace root."
+                        }
+                    }
+                }
             }
         ]
     }
@@ -693,6 +710,18 @@ def handle_get_term_context(args):
         logger.exception("Failed to lookup term context")
         return _error_response(ERROR_INTERNAL, f"Terminology lookup failed: {e}", type(e).__name__)
 
+def handle_get_manuscript_reference_graph(args):
+    project_root = args.get("project_root")
+    try:
+        if not project_root:
+            config = load_config()
+            project_root = config.rtfm.project_root
+        res = build_reference_graph(project_root)
+        return _success_response(res)
+    except Exception as e:
+        logger.exception("Failed to build reference graph")
+        return _error_response(ERROR_INTERNAL, f"Failed to build reference graph: {e}", type(e).__name__)
+
 def process_message(line):
     try:
         logger.debug(f"Received: {line}")
@@ -857,6 +886,8 @@ def process_message(line):
                     result = handle_audit_manuscript_terminology(args)
                 elif name == "get_term_context":
                     result = handle_get_term_context(args)
+                elif name == "get_manuscript_reference_graph":
+                    result = handle_get_manuscript_reference_graph(args)
                 else:
                     response = json.dumps({
                         "jsonrpc": "2.0",

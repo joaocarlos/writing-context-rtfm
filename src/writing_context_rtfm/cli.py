@@ -269,6 +269,112 @@ def inspect_target_command(args):
     print(f"Avoid:             {getattr(card, 'avoid', [])}")
     print(f"Constraints:       {getattr(card, 'constraints', [])}")
 
+def show_graph_command(args):
+    from writing_context_rtfm.latex import build_reference_graph
+    
+    project_root = Path(args.project_root).resolve()
+    
+    # 1. Build LaTeX reference graph
+    try:
+        graph = build_reference_graph(str(project_root))
+    except Exception as e:
+        print(f"Error building LaTeX reference graph: {e}", file=sys.stderr)
+        sys.exit(1)
+        
+    # 2. Try loading section cards for showing section card dependencies
+    cards = None
+    try:
+        config = load_config(str(project_root))
+        sc_path = Path(config.section_cards.path)
+        if not sc_path.is_absolute():
+            sc_path = project_root / sc_path
+        if sc_path.exists():
+            cards = load_section_cards(str(sc_path), required=False)
+    except Exception:
+        pass
+
+    if getattr(args, "format", "text") == "json":
+        # Output as raw JSON if requested
+        payload = {
+            "graph": graph,
+            "sections": {}
+        }
+        if cards and cards.sections:
+            for sid, scard in cards.sections.items():
+                payload["sections"][sid] = {
+                    "path": scard.path,
+                    "depends_on": scard.depends_on
+                }
+        print(json.dumps(payload, indent=2))
+        return
+
+    # Text format output
+    print("LaTeX Reference Graph & Section Dependencies")
+    print("============================================")
+    print(f"Project Root: {project_root}\n")
+
+    print("LaTeX Files Scanned:")
+    files = graph.get("files", [])
+    if files:
+        for f in sorted(files):
+            print(f"  - {f}")
+    else:
+        print("  (No LaTeX files found)")
+    print("")
+
+    print("Defined Labels:")
+    labels = graph.get("labels", {})
+    if labels:
+        for key in sorted(labels.keys()):
+            info = labels[key]
+            print(f"  - {key} (defined in {info.get('file')}:{info.get('line')})")
+    else:
+        print("  (No label definitions found)")
+    print("")
+
+    print("Cross-References & Citations:")
+    references = graph.get("references", {})
+    citations = graph.get("citations", {})
+    
+    has_refs_or_cites = False
+    all_files = sorted(list(set(list(references.keys()) + list(citations.keys()))))
+    for f in all_files:
+        file_refs = references.get(f, [])
+        file_cites = citations.get(f, [])
+        if file_refs or file_cites:
+            has_refs_or_cites = True
+            print(f"  - {f}:")
+            if file_refs:
+                print(f"    References: {', '.join(sorted(file_refs))}")
+            if file_cites:
+                print(f"    Citations:  {', '.join(sorted(file_cites))}")
+                
+    if not has_refs_or_cites:
+        print("  (No cross-references or citations found)")
+    print("")
+
+    print("File Inclusions:")
+    file_deps = graph.get("file_dependencies", {})
+    has_inclusions = False
+    for f in sorted(file_deps.keys()):
+        inclusions = file_deps[f]
+        if inclusions:
+            has_inclusions = True
+            print(f"  - {f} includes: {', '.join(sorted(inclusions))}")
+            
+    if not has_inclusions:
+        print("  (No file inclusions found)")
+    print("")
+
+    print("Section Card Dependencies (section_cards.yaml):")
+    if cards and cards.sections:
+        for sid in sorted(cards.sections.keys()):
+            scard = cards.sections[sid]
+            deps = scard.depends_on or []
+            print(f"  - {sid} ({scard.path}) depends on: {deps}")
+    else:
+        print("  (No section cards or section_cards.yaml not found/empty)")
+
 def main():
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -330,6 +436,11 @@ def main():
     parser_get_term.add_argument("term", help="The term to look up")
     parser_get_term.add_argument("--project-root", default=".", help="Project root path")
 
+    # show-graph
+    parser_show_graph = subparsers.add_parser("show-graph", help="Show LaTeX reference graph & section card dependencies")
+    parser_show_graph.add_argument("--project-root", default=".", help="Project root path")
+    parser_show_graph.add_argument("--format", default="text", choices=["text", "json"], help="Output format")
+
     subparsers.add_parser("serve", help="Start the MCP server")
 
     args = parser.parse_args()
@@ -344,7 +455,8 @@ def main():
         "cache": cache_command,
         "doctor": doctor_command,
         "inspect-target": inspect_target_command,
-        "get-term": get_term_command
+        "get-term": get_term_command,
+        "show-graph": show_graph_command
     }
 
     commands[args.command](args)

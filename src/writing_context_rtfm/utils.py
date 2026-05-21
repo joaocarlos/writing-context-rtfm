@@ -1,7 +1,8 @@
 """Common utilities for the extension."""
-import re
 from pathlib import Path
 from typing import List
+
+from writing_context_rtfm.latex import scan_latex_commands as scan_latex_commands
 
 # ---------------------------------------------------------------------------
 # Exclusion rules
@@ -38,21 +39,3 @@ def extract_keywords(text: str) -> List[str]:
     words = text.lower().split()
     return [w.strip(".,;:") for w in words
             if w.strip(".,;:") not in KEYWORD_STOPWORDS and len(w.strip(".,;:")) > 3]
-
-
-LATEX_PATTERNS = [
-    re.compile(r'\\(?:cite|ref|label|cite[a-zA-Z]*|ref[a-zA-Z]*|cref|Cref|autoref)\{[^}]*\}', flags=re.DOTALL),
-    re.compile(r'\$\$.*?\$\$', flags=re.DOTALL),
-    re.compile(r'\$[^$]+?\$', flags=re.DOTALL),
-    re.compile(r'\\begin\{[a-zA-Z*]+\}.*?\\end\{[a-zA-Z*]+\}', flags=re.DOTALL)
-]
-
-def scan_latex_commands(text: str) -> List[str]:
-    """Scan text for LaTeX citations, labels, refs, and math environments."""
-    found = []
-    for pat in LATEX_PATTERNS:
-        for match in pat.finditer(text):
-            m_clean = match.group(0).strip().replace('\n', ' ')
-            if m_clean not in found:
-                found.append(m_clean)
-    return found

@@ -102,6 +102,70 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
                 }
                 added.append({"id": sid, "path": str(rel_path)})
 
+    # Automatically resolve section dependencies via reference graph
+    from writing_context_rtfm.latex import build_reference_graph
+
+    def normalize_rel_path(p: Any, root_path: Path) -> str:
+        path_obj = Path(p)
+        if path_obj.is_absolute():
+            try:
+                return str(path_obj.relative_to(root_path))
+            except ValueError:
+                return str(path_obj)
+        return str(path_obj)
+
+    try:
+        graph = build_reference_graph(str(root))
+        
+        # Build map of normalized relative path string -> section ID
+        rel_path_to_sid = {}
+        if isinstance(sections_dict, dict):
+            for sid, scard in sections_dict.items():
+                if isinstance(scard, dict) and "path" in scard:
+                    norm_path = normalize_rel_path(scard["path"], root)
+                    rel_path_to_sid[norm_path] = sid
+
+            # Map from labels to their defining section IDs
+            label_to_sid = {}
+            for label, label_info in graph.get("labels", {}).items():
+                def_file = label_info.get("file")
+                if def_file and def_file in rel_path_to_sid:
+                    label_to_sid[label] = rel_path_to_sid[def_file]
+
+            # Update depends_on for each section card
+            for sid, scard in sections_dict.items():
+                if not isinstance(scard, dict) or "path" not in scard:
+                    continue
+                
+                norm_path = normalize_rel_path(scard["path"], root)
+                deps = set()
+                
+                # Existing dependencies in YAML (preserve them)
+                existing_deps = scard.get("depends_on", [])
+                if isinstance(existing_deps, list):
+                    for d in existing_deps:
+                        if isinstance(d, str):
+                            deps.add(d)
+
+                # 1. Add dependencies from cross-references (labels defined in other sections)
+                file_refs = graph.get("references", {}).get(norm_path, [])
+                for ref_key in file_refs:
+                    target_sid = label_to_sid.get(ref_key)
+                    if target_sid and target_sid != sid:
+                        deps.add(target_sid)
+
+                # 2. Add dependencies from file inclusions
+                file_inc_deps = graph.get("file_dependencies", {}).get(norm_path, [])
+                for inc_file in file_inc_deps:
+                    target_sid = rel_path_to_sid.get(inc_file)
+                    if target_sid and target_sid != sid:
+                        deps.add(target_sid)
+
+                # Store back sorted list of dependencies
+                scard["depends_on"] = sorted(list(deps))
+    except Exception:
+        pass
+
     # Write back
     with open(sc_path, "w") as fh:
         yaml.safe_dump(existing_cards, fh, sort_keys=False)

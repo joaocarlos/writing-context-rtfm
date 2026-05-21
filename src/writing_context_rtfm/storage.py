@@ -96,7 +96,7 @@ class ExtensionStore:
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS context_pack_payloads (
                 run_id TEXT PRIMARY KEY,
-                payload_json TEXT NOT NULL,
+                payload_json BLOB NOT NULL,
                 estimated_tokens INTEGER,
                 source_count INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -129,6 +129,21 @@ class ExtensionStore:
             """)
             conn.commit()
 
+    def _compress(self, data: str) -> bytes:
+        import zlib
+        return zlib.compress(data.encode("utf-8"), level=6)
+
+    def _decompress(self, data: Any) -> str:
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            import zlib
+            try:
+                return zlib.decompress(data).decode("utf-8")
+            except zlib.error:
+                if isinstance(data, memoryview):
+                    return bytes(data).decode("utf-8")
+                return data.decode("utf-8")
+        return str(data)
+
     def get_cached_pack(self, task_hash: str, config_hash: str, section_cards_hash: str, index_fingerprint: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             cursor = conn.cursor()
@@ -145,7 +160,7 @@ class ExtensionStore:
             """, (task_hash, config_hash, section_cards_hash, index_fingerprint))
             row = cursor.fetchone()
             if row:
-                return json.loads(row["payload_json"])
+                return json.loads(self._decompress(row["payload_json"]))
         return None
 
     def store_pack(self, run_id: str, run_data: Dict[str, Any], payload: Dict[str, Any], sources: List[Dict[str, Any]]) -> None:
@@ -177,7 +192,7 @@ class ExtensionStore:
                 (run_id, payload_json, estimated_tokens, source_count)
                 VALUES (?, ?, ?, ?)
             """, (
-                run_id, json.dumps(payload), payload.get("estimated_tokens", 0), len(sources)
+                run_id, self._compress(json.dumps(payload)), payload.get("estimated_tokens", 0), len(sources)
             ))
             conn.commit()
 

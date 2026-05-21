@@ -87,5 +87,99 @@ class TestStorage(unittest.TestCase):
             count = cur.fetchone()[0]
         self.assertEqual(count, 0)
 
+    def test_compression_and_transparency(self):
+        run_id = "test-run-comp"
+        run_data = {
+            "task_hash": "task-hash-comp",
+            "task": "test compression",
+            "token_budget": 1000,
+            "config_hash": "cfg-hash-comp",
+            "section_cards_hash": "sc-hash-comp",
+            "rtfm_index_fingerprint": "fingerprint-comp",
+        }
+        payload = {
+            "task": "test compression",
+            "estimated_tokens": 200,
+            "details": "This is a longer payload to verify compression details."
+        }
+        
+        # Store
+        self.store.store_pack(run_id, run_data, payload, [])
+        
+        # Verify it's actually compressed bytes in the DB
+        with self.store._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT payload_json FROM context_pack_payloads WHERE run_id = ?", (run_id,))
+            row = cur.fetchone()
+            self.assertIsNotNone(row)
+            db_payload = row["payload_json"]
+            self.assertIsInstance(db_payload, bytes)
+            
+            # Decompress manually to check level/correctness
+            import zlib
+            decompressed = zlib.decompress(db_payload).decode("utf-8")
+            import json
+            self.assertEqual(json.loads(decompressed), payload)
+            
+        # Retrieve through store interface (transparency)
+        cached = self.store.get_cached_pack(
+            task_hash="task-hash-comp",
+            config_hash="cfg-hash-comp",
+            section_cards_hash="sc-hash-comp",
+            index_fingerprint="fingerprint-comp"
+        )
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached, payload)
+
+    def test_backward_compatibility_uncompressed(self):
+        # Insert a legacy run & payload directly with plain text (TEXT) JSON
+        run_id = "test-run-legacy"
+        run_data = {
+            "run_id": run_id,
+            "task_hash": "task-hash-legacy",
+            "task": "legacy task",
+            "token_budget": 1000,
+            "config_hash": "cfg-hash-legacy",
+            "section_cards_hash": "sc-hash-legacy",
+            "rtfm_index_fingerprint": "fingerprint-legacy",
+        }
+        payload = {
+            "task": "legacy task",
+            "estimated_tokens": 100,
+            "legacy": True
+        }
+        
+        with self.store._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO context_pack_runs
+                (run_id, task_hash, task, token_budget, config_hash, section_cards_hash, rtfm_index_fingerprint)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                run_id, run_data["task_hash"], run_data["task"], run_data["token_budget"],
+                run_data["config_hash"], run_data["section_cards_hash"], run_data["rtfm_index_fingerprint"]
+            ))
+            
+            # Insert uncompressed TEXT payload (SQLite will accept a string here)
+            import json
+            cursor.execute("""
+                INSERT INTO context_pack_payloads
+                (run_id, payload_json, estimated_tokens, source_count)
+                VALUES (?, ?, ?, ?)
+            """, (
+                run_id, json.dumps(payload), payload.get("estimated_tokens", 0), 0
+            ))
+            conn.commit()
+
+        # Retrieve through the store interface
+        cached = self.store.get_cached_pack(
+            task_hash="task-hash-legacy",
+            config_hash="cfg-hash-legacy",
+            section_cards_hash="sc-hash-legacy",
+            index_fingerprint="fingerprint-legacy"
+        )
+        self.assertIsNotNone(cached)
+        self.assertEqual(cached, payload)
+
 if __name__ == '__main__':
     unittest.main()

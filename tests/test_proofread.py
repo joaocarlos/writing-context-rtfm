@@ -170,3 +170,60 @@ def test_proofread_adapter_search_exception(mock_config, mock_section_cards, moc
     assert pack.target.file_path == test_file
     assert len(pack.constraints.terminology) == 0
     assert any("RTFM search failed" in w for w in pack.warnings)
+
+
+def test_server_handle_proofread_latex_safety_status(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+    from writing_context_rtfm.server import handle_get_proofreading_context_pack
+    import json
+    from unittest.mock import patch
+
+    # Ensure that there is a LaTeX command in the target text (line 4 has \cite{ref})
+    # This will trigger a "LaTeX Safety: ..." warning.
+    with patch("writing_context_rtfm.server._load_runtime") as mock_load:
+        mock_load.return_value = (mock_config, mock_section_cards, [], mock_adapter, mock_store)
+        
+        args = {
+            "target_file": test_file,
+            "line_start": 4,
+            "line_end": 4,
+            "mode": "latex_safe",
+            "strictness": "moderate"
+        }
+        
+        resp = handle_get_proofreading_context_pack(args)
+        assert "content" in resp
+        payload = json.loads(resp["content"][0]["text"])
+        
+        # Check that the LaTeX Safety warning is present
+        assert any(w.startswith("LaTeX Safety:") for w in payload["warnings"])
+        # Check that status remains "complete" because the only warning is LaTeX Safety
+        assert payload["status"] == "complete"
+
+
+def test_server_handle_proofread_real_warning_status(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+    from writing_context_rtfm.server import handle_get_proofreading_context_pack
+    import json
+    from unittest.mock import patch
+
+    with patch("writing_context_rtfm.server._load_runtime") as mock_load:
+        # Pass a card warning "Invalid card structure"
+        mock_load.return_value = (mock_config, mock_section_cards, ["Invalid card structure"], mock_adapter, mock_store)
+        
+        args = {
+            "target_file": test_file,
+            "line_start": 4,
+            "line_end": 4,
+            "mode": "latex_safe",
+            "strictness": "moderate"
+        }
+        
+        resp = handle_get_proofreading_context_pack(args)
+        assert "content" in resp
+        payload = json.loads(resp["content"][0]["text"])
+        
+        # Check that the LaTeX Safety warning is present
+        assert any(w.startswith("LaTeX Safety:") for w in payload["warnings"])
+        # Check that the card warning is present
+        assert "Invalid card structure" in payload["warnings"]
+        # Check that status degrades to "degraded" due to the real card warning
+        assert payload["status"] == "degraded"

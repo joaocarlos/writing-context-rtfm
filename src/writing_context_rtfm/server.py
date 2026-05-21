@@ -616,7 +616,8 @@ def handle_get_proofreading_context_pack(args):
         all_warnings.extend(card_warnings)
     if all_warnings:
         payload["warnings"] = all_warnings
-        if payload.get("status") == "complete":
+        has_degrading_warning = any(not w.startswith("LaTeX Safety:") for w in all_warnings)
+        if has_degrading_warning and payload.get("status") == "complete":
             payload["status"] = "degraded"
     return _success_response(payload)
 

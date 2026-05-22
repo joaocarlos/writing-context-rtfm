@@ -17,6 +17,7 @@ import logging
 from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology, get_term_context
 from writing_context_rtfm.latex import build_reference_graph
 from writing_context_rtfm.utils import resolve_rtfm_db_path
+from writing_context_rtfm import __version__
 
 # --- Prompt formatters ------------------------------------------------------
 
@@ -758,7 +759,7 @@ def process_message(line):
                 result = {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "writing-context-rtfm", "version": "0.1.0"},
+                    "serverInfo": {"name": "writing-context-rtfm", "version": __version__},
                 }
             elif method.startswith("notifications/"):
                 return None  # notifications get no response, no error

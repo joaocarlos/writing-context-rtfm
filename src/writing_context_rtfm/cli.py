@@ -138,7 +138,39 @@ def init_command(args):
     config_file = wc / "config.yaml"
     sc_file = wc / "section_cards.yaml"
     if not config_file.exists():
-        config_file.write_text("version: 1\nrtfm:\n  corpus: manuscript\n")
+        template = (
+            "# writing-context-rtfm Configuration File\n"
+            "version: 1\n\n"
+            "# RTFM core indexing settings\n"
+            "rtfm:\n"
+            "  # The corpus name registered in RTFM for this manuscript project.\n"
+            "  corpus: manuscript\n"
+            "  # Enable auto-sync before generating a context pack to ensure the index is up-to-date.\n"
+            "  # sync_before_pack: true\n\n"
+            "# Context pack generation settings\n"
+            "# context:\n"
+            "  # The default input token budget for generating writing context packs.\n"
+            "  # default_token_budget: 12000\n"
+            "  # The margin (percentage as decimal) of the budget reserved for LLM response generation.\n"
+            "  # reserved_generation_margin: 0.10\n"
+            "  # Maximum number of source spans to include in a context pack.\n"
+            "  # max_source_spans: 35\n"
+            "  # Minimum similarity score required for a retrieved span to be considered.\n"
+            "  # min_score: 0.01\n"
+            "  # Distribution of the token budget among different types of context roles:\n"
+            "  # role_budgets:\n"
+            "  #   target_text: 0.35\n"
+            "  #   local_context: 0.15\n"
+            "  #   dependency: 0.30\n"
+            "  #   reference: 0.20\n\n"
+            "# Caching configuration\n"
+            "# cache:\n"
+            "  # Enable caching of generated context packs to reduce token and response overhead.\n"
+            "  # enabled: true\n"
+            "  # Invalidate cached context packs when the index is synced/refreshed.\n"
+            "  # invalidate_on_refresh: true\n"
+        )
+        config_file.write_text(template, encoding="utf-8")
         print(f"Created {config_file}")
     if not sc_file.exists():
         sc_file.write_text("version: 1\ndocument:\n  title: Example\nsections:\n")

@@ -31,6 +31,17 @@ def init_command(args):
         sc_file.write_text("version: 1\ndocument:\n  title: Example\nsections:\n")
         print(f"Created {sc_file}")
 
+def init_cards_command(args):
+    """Scans the workspace and generates or appends section cards."""
+    project_root = getattr(args, "project_root", ".")
+    try:
+        from writing_context_rtfm.features import initialize_section_cards
+        res = initialize_section_cards(project_root)
+        print(json.dumps(res, indent=2))
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
 def init_db_command(args):
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
@@ -41,7 +52,7 @@ def init_db_command(args):
 def sync_command(args):
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
-    adapter = RTFMAdapter()
+    adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
     sync_path = args.path if args.path != "." else project_root
     corpus = args.corpus or config.rtfm.corpus
     try:
@@ -95,7 +106,7 @@ def pack_command(args):
     sc_path = config.section_cards.path
     cards = load_section_cards(sc_path, required=config.section_cards.required)
 
-    adapter = RTFMAdapter()
+    adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
     store = ExtensionStore(config.cache.path)
     store.init_db()
     generator = ContextPackGenerator(config, cards, adapter, store)
@@ -131,7 +142,7 @@ def proofread_pack_command(args):
     config = load_config(project_root)
 
     cards = load_section_cards(config.section_cards.path, required=config.section_cards.required)
-    adapter = RTFMAdapter()
+    adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
     store = ExtensionStore(config.cache.path)
     store.init_db()
     generator = ProofreadPackGenerator(config, cards, adapter, store)
@@ -383,6 +394,10 @@ def main():
     p_init = subparsers.add_parser("init", help="Initialize configuration files")
     p_init.add_argument("--project-root", default=".", help="Project root path")
 
+    # init-cards
+    p_init_cards = subparsers.add_parser("init-cards", help="Scan project for .tex/.md files and auto-scaffold section cards")
+    p_init_cards.add_argument("--project-root", default=".", help="Project root path")
+
     # init-db
     p_idb = subparsers.add_parser("init-db", help="Initialize SQLite cache database")
     p_idb.add_argument("--project-root", default=".", help="Project root path")
@@ -447,6 +462,7 @@ def main():
 
     commands = {
         "init": init_command,
+        "init-cards": init_cards_command,
         "init-db": init_db_command,
         "sync": sync_command,
         "pack": pack_command,

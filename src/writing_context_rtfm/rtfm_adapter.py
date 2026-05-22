@@ -34,7 +34,13 @@ class RTFMAdapter:
             cmd[0] = self.resolved_rtfm
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.project_root
+            )
             return result.stdout
         except subprocess.CalledProcessError as e:
             raise RTFMAdapterError(f"Command '{' '.join(cmd)}' failed with error: {e.stderr}") from e

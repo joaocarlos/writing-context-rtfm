@@ -90,5 +90,39 @@ class TestMCPClientValidation(unittest.TestCase):
             refresh_payload = json.loads(res_refresh["result"]["content"][0]["text"])
             self.assertEqual(refresh_payload["status"], "ok")
 
+    def test_initialize_root_uri(self):
+        from pathlib import Path
+        import writing_context_rtfm.server as server
+
+        orig_root = server.WORKSPACE_ROOT
+        orig_cache = server._RUNTIME_CACHE
+        try:
+            req_init = {
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "initialize",
+                "params": {
+                    "rootUri": "file:///path/to/some/project"
+                }
+            }
+            res_init = json.loads(process_message(json.dumps(req_init)))
+            self.assertEqual(res_init["id"], 10)
+            self.assertEqual(server.WORKSPACE_ROOT, Path("/path/to/some/project").resolve())
+            self.assertIsNone(server._RUNTIME_CACHE)
+
+            req_escaped = {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "initialize",
+                "params": {
+                    "rootUri": "file:///path/to/my%20cool%20project"
+                }
+            }
+            process_message(json.dumps(req_escaped))
+            self.assertEqual(server.WORKSPACE_ROOT, Path("/path/to/my cool project").resolve())
+        finally:
+            server.WORKSPACE_ROOT = orig_root
+            server._RUNTIME_CACHE = orig_cache
+
 if __name__ == '__main__':
     unittest.main()

@@ -44,7 +44,7 @@ class TestRTFMAdapter(unittest.TestCase):
 
         mock_run.assert_called_once_with(
             ["rtfm", "search", "test query", "--corpus", "test_corpus", "--limit", "1", "--format", "json"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, cwd=None
         )
 
     @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
@@ -85,7 +85,7 @@ class TestRTFMAdapter(unittest.TestCase):
         
         mock_run.assert_called_once_with(
             ["rtfm", "sync", "/project", "--corpus", "test_corpus"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, cwd=None
         )
 
     @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
@@ -106,7 +106,7 @@ class TestRTFMAdapter(unittest.TestCase):
         
         mock_run.assert_called_once_with(
             ["rtfm", "context", "path/to/file.md", "--line-start", "1", "--line-end", "10"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, cwd=None
         )
 
     @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
@@ -120,7 +120,19 @@ class TestRTFMAdapter(unittest.TestCase):
         
         mock_run.assert_called_once_with(
             ["rtfm", "expand", "res_123"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True, check=True, cwd=None
+        )
+
+    @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
+    def test_custom_project_root(self, mock_run):
+        mock_run.return_value = MagicMock()
+        adapter = RTFMAdapter(project_root="/my/custom/root")
+        adapter.resolved_rtfm = "rtfm"
+        adapter.sync("/project", corpus="test_corpus")
+        
+        mock_run.assert_called_once_with(
+            ["rtfm", "sync", "/project", "--corpus", "test_corpus"],
+            capture_output=True, text=True, check=True, cwd="/my/custom/root"
         )
 
 if __name__ == "__main__":

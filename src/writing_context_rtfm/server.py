@@ -88,6 +88,8 @@ except OSError:
     logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger("mcp-server")
 
+WORKSPACE_ROOT = Path(".").resolve()
+
 # --- Error helpers ----------------------------------------------------------
 
 ERROR_INVALID_INPUT = "invalid_input"
@@ -445,7 +447,7 @@ def _load_runtime():
     """
     global _RUNTIME_CACHE
 
-    config_path = Path(".").resolve() / ".writing-context" / "config.yaml"
+    config_path = WORKSPACE_ROOT / ".writing-context" / "config.yaml"
     
     config_mtime = None
     config_size = None
@@ -457,13 +459,13 @@ def _load_runtime():
         except OSError:
             pass
 
-    sc_path = Path(".").resolve() / ".writing-context" / "section_cards.yaml"
+    sc_path = WORKSPACE_ROOT / ".writing-context" / "section_cards.yaml"
     if config_path.exists():
         if _RUNTIME_CACHE is not None:
             sc_path = Path(_RUNTIME_CACHE["config"].section_cards.path)
         else:
             try:
-                temp_config = load_config()
+                temp_config = load_config(str(WORKSPACE_ROOT))
                 sc_path = Path(temp_config.section_cards.path)
             except Exception:
                 pass
@@ -491,10 +493,10 @@ def _load_runtime():
             _RUNTIME_CACHE["store"]
         )
 
-    config = load_config()
+    config = load_config(str(WORKSPACE_ROOT))
     cards = load_section_cards(config.section_cards.path, required=config.section_cards.required)
     card_warnings = validate_section_cards(cards) if cards else []
-    adapter = RTFMAdapter()
+    adapter = RTFMAdapter(project_root=str(config.rtfm.project_root))
     store = ExtensionStore(config.cache.path)
     store.init_db()
 
@@ -624,14 +626,14 @@ def handle_get_proofreading_context_pack(args):
 
 def handle_refresh_index(args):
     try:
-        config = load_config()
+        config = load_config(str(WORKSPACE_ROOT))
     except Exception as e:
         logger.exception("Failed to load config for refresh_index")
         return _error_response(ERROR_CONFIG, "Failed to load configuration.", str(e))
 
-    adapter = RTFMAdapter()
     project_root = args.get("project_root", config.rtfm.project_root)
     corpus = args.get("corpus", config.rtfm.corpus)
+    adapter = RTFMAdapter(project_root=project_root)
 
     try:
         adapter.sync(project_root, corpus=corpus)
@@ -647,7 +649,7 @@ def handle_refresh_index(args):
     return _success_response({"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh})
 
 def handle_initialize_section_cards(args):
-    project_root = args.get("project_root")
+    project_root = args.get("project_root") or str(WORKSPACE_ROOT)
     try:
         res = initialize_section_cards(project_root)
         return _success_response(res)
@@ -661,7 +663,7 @@ def handle_request_more_context(args):
         return _error_response(ERROR_INVALID_INPUT, "Missing required argument: run_id")
     limit = args.get("limit", 5)
     try:
-        config = load_config()
+        config = load_config(str(WORKSPACE_ROOT))
         store = ExtensionStore(config.cache.path)
         store.init_db()
         results = store.get_more_context(run_id, limit)
@@ -678,7 +680,7 @@ def handle_submit_generation_feedback(args):
     if not run_id or not metric_name or metric_value is None:
         return _error_response(ERROR_INVALID_INPUT, "Missing required arguments: run_id, metric_name, and metric_value")
     try:
-        config = load_config()
+        config = load_config(str(WORKSPACE_ROOT))
         store = ExtensionStore(config.cache.path)
         store.init_db()
         store.submit_feedback(run_id, metric_name, float(metric_value), metric_text)
@@ -688,7 +690,7 @@ def handle_submit_generation_feedback(args):
         return _error_response(ERROR_INTERNAL, f"Failed to submit feedback: {e}", type(e).__name__)
 
 def handle_audit_manuscript_terminology(args):
-    project_root = args.get("project_root")
+    project_root = args.get("project_root") or str(WORKSPACE_ROOT)
     try:
         res = audit_manuscript_terminology(project_root)
         return _success_response(res)
@@ -703,7 +705,7 @@ def handle_get_term_context(args):
     project_root = args.get("project_root")
     try:
         if not project_root:
-            config = load_config()
+            config = load_config(str(WORKSPACE_ROOT))
             project_root = config.rtfm.project_root
         res = get_term_context(term, project_root)
         return _success_response(res)
@@ -715,8 +717,7 @@ def handle_get_manuscript_reference_graph(args):
     project_root = args.get("project_root")
     try:
         if not project_root:
-            config = load_config()
-            project_root = config.rtfm.project_root
+            project_root = str(WORKSPACE_ROOT)
         res = build_reference_graph(project_root)
         return _success_response(res)
     except Exception as e:
@@ -724,6 +725,7 @@ def handle_get_manuscript_reference_graph(args):
         return _error_response(ERROR_INTERNAL, f"Failed to build reference graph: {e}", type(e).__name__)
 
 def process_message(line):
+    global WORKSPACE_ROOT, _RUNTIME_CACHE
     try:
         logger.debug(f"Received: {line}")
         req = json.loads(line)
@@ -731,6 +733,24 @@ def process_message(line):
             method = req["method"]
             result = None
             if method == "initialize":
+                params = req.get("params", {})
+                root_uri = params.get("rootUri")
+                if root_uri:
+                    try:
+                        from urllib.parse import urlparse, unquote
+                        parsed = urlparse(root_uri)
+                        if parsed.scheme == "file":
+                            path_str = unquote(parsed.path)
+                            if os.name == 'nt' and path_str.startswith('/') and len(path_str) > 2 and path_str[2] == ':':
+                                path_str = path_str[1:]
+                            WORKSPACE_ROOT = Path(path_str).resolve()
+                        else:
+                            WORKSPACE_ROOT = Path(root_uri).resolve()
+                        logger.info(f"Initialized workspace root dynamically to: {WORKSPACE_ROOT}")
+                        # Invalidate runtime cache to force config reload on new workspace
+                        _RUNTIME_CACHE = None
+                    except Exception:
+                        logger.exception(f"Failed to parse rootUri: {root_uri}")
                 result = {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},

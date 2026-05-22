@@ -24,5 +24,109 @@ class TestContextPackGenerator(unittest.TestCase):
         self.assertEqual(len(pack.source_spans), 0)
         self.adapter.search.assert_called()
 
+    def test_resilient_target_resolution(self):
+        from writing_context_rtfm.section_cards import SectionCards, SectionCard, DocumentCard
+        
+        sections = {
+            "section_abstract": SectionCard(
+                id="section_abstract",
+                title="Abstract Section",
+                path="sections/abstract.tex"
+            ),
+            "introduction": SectionCard(
+                id="introduction",
+                title="Intro Section",
+                path="sections/intro.tex"
+            )
+        }
+        cards = SectionCards(
+            version=1,
+            document=DocumentCard(title="Test Doc"),
+            sections=sections
+        )
+        
+        generator = ContextPackGenerator(self.config, cards, self.adapter, self.store)
+        
+        # 1. Exact match
+        resolved_key, card, path = generator._resolve_target("section_abstract", ".")
+        self.assertEqual(resolved_key, "section_abstract")
+        self.assertEqual(path, "sections/abstract.tex")
+        
+        # 2. f"section_{target}" match
+        resolved_key, card, path = generator._resolve_target("abstract", ".")
+        self.assertEqual(resolved_key, "section_abstract")
+        self.assertEqual(path, "sections/abstract.tex")
+        
+        # 3. target[8:] prefix stripping match
+        resolved_key, card, path = generator._resolve_target("section_introduction", ".")
+        self.assertEqual(resolved_key, "introduction")
+        self.assertEqual(path, "sections/intro.tex")
+        
+        # 4. Case-insensitive title match
+        resolved_key, card, path = generator._resolve_target("abstract section", ".")
+        self.assertEqual(resolved_key, "section_abstract")
+        self.assertEqual(path, "sections/abstract.tex")
+        
+        # 5. Path stem match
+        resolved_key, card, path = generator._resolve_target("intro", ".")
+        self.assertEqual(resolved_key, "introduction")
+        self.assertEqual(path, "sections/intro.tex")
+        
+        # 6. Fallback path check
+        resolved_key, card, path = generator._resolve_target("sections/abstract.tex", ".")
+        self.assertEqual(resolved_key, "section_abstract")
+        
+        resolved_key, card, path = generator._resolve_target("nonexistent_file.tex", ".")
+        self.assertEqual(resolved_key, None)
+        self.assertEqual(path, "nonexistent_file.tex")
+
+    def test_latex_safety_does_not_degrade(self):
+        import tempfile
+        import os
+        from writing_context_rtfm.section_cards import SectionCards, SectionCard, DocumentCard
+        from writing_context_rtfm.context_pack import SourceSpan
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, "abstract.tex")
+            # Write a LaTeX content that has math environment/commands
+            with open(file_path, "w") as f:
+                f.write("This is a line with \\ref{eq1} and some \\begin{equation} x=y \\end{equation} LaTeX content.")
+                
+            sections = {
+                "section_abstract": SectionCard(
+                    id="section_abstract",
+                    title="Abstract Section",
+                    path="abstract.tex"
+                )
+            }
+            cards = SectionCards(
+                version=1,
+                document=DocumentCard(title="Test Doc"),
+                sections=sections
+            )
+            
+            generator = ContextPackGenerator(self.config, cards, self.adapter, self.store)
+            
+            # Request target pack using the resilient target name "abstract" and a line range
+            pack = generator.generate(
+                task="Write the abstract",
+                target="abstract",
+                token_budget=1000,
+                project_root=tmpdir,
+                line_start=1,
+                line_end=1
+            )
+            
+            # Assert target span is extracted successfully (not omitted)
+            self.assertEqual(pack.status, "complete")
+            target_spans = [s for s in pack.source_spans if s.source_role == "target_text"]
+            self.assertEqual(len(target_spans), 1)
+            self.assertEqual(target_spans[0].path, "abstract.tex")
+            self.assertIn("ref{eq1}", target_spans[0].metadata["snippet"])
+            
+            # Assert LaTeX Safety warning is present in warnings
+            latex_warnings = [w for w in pack.warnings if "LaTeX Safety:" in w]
+            self.assertTrue(len(latex_warnings) > 0)
+
 if __name__ == '__main__':
     unittest.main()

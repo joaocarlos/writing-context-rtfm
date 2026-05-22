@@ -577,10 +577,13 @@ def handle_get_writing_context_pack(args):
         return _error_response(ERROR_RETRIEVAL, "Context pack generation failed.", type(e).__name__)
 
     payload = asdict(pack)
+    all_warnings = list(pack.warnings or [])
     if card_warnings:
-        payload.setdefault("warnings", [])
-        payload["warnings"].extend(card_warnings)
-        if payload.get("status") == "complete":
+        all_warnings.extend(card_warnings)
+    if all_warnings:
+        payload["warnings"] = all_warnings
+        has_degrading_warning = any(not w.startswith("LaTeX Safety:") for w in all_warnings)
+        if has_degrading_warning and payload.get("status") == "complete":
             payload["status"] = "degraded"
     return _success_response(_sanitize_pack_for_output(payload))
 

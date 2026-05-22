@@ -87,6 +87,14 @@ class TestNewFeatures(unittest.TestCase):
         self.assertIn("section_methods", sections)
         self.assertEqual(sections["section_intro"]["path"], "intro.md")
 
+        self.assertIn("document", data)
+        self.assertIn("terminology", data["document"])
+        self.assertIn("sample_term", data["document"]["terminology"])
+        sample = data["document"]["terminology"]["sample_term"]
+        self.assertEqual(sample["definition"], "A sample technical term description.")
+        self.assertEqual(sample["variants"], ["alternate phrasing 1"])
+        self.assertEqual(sample["avoid"], ["deprecated variant"])
+
     def test_audit_manuscript_terminology(self):
         sc_dir = self.project_dir / ".writing-context"
         sc_dir.mkdir(exist_ok=True)

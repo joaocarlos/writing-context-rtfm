@@ -114,6 +114,54 @@ class ContextPackGenerator:
         except (OSError, IOError):
             return fallback_val
 
+    def _resolve_target(self, target: Optional[str], pr: str) -> Tuple[Optional[str], Optional[SectionCard], Optional[str]]:
+        """Resolves target string to (card_key, card, path)."""
+        if not target:
+            return None, None, None
+
+        if not self.section_cards or not self.section_cards.sections:
+            # Fallback path check if target is a path
+            test_path = Path(pr) / target
+            if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
+                return None, None, target
+            return None, None, None
+
+        # 1. Exact match in sections
+        if target in self.section_cards.sections:
+            card = self.section_cards.sections[target]
+            return target, card, card.path
+
+        # 2. Check f"section_{target}"
+        if f"section_{target}" in self.section_cards.sections:
+            card = self.section_cards.sections[f"section_{target}"]
+            return f"section_{target}", card, card.path
+
+        # 3. Check target[8:] if target starts with "section_"
+        if target.startswith("section_") and target[8:] in self.section_cards.sections:
+            card = self.section_cards.sections[target[8:]]
+            return target[8:], card, card.path
+
+        # 4. Case-insensitive title scan or path stem scan
+        target_lower = target.lower()
+        for key, card in self.section_cards.sections.items():
+            # Check card title (case-insensitive)
+            if card.title and card.title.lower() == target_lower:
+                return key, card, card.path
+            
+            # Check card path (stem or path matching)
+            if card.path:
+                card_path = Path(card.path)
+                # match stem (e.g. abstract to abstract.tex) or exact path or name
+                if card_path.stem.lower() == target_lower or card_path.name.lower() == target_lower or card.path.lower() == target_lower:
+                    return key, card, card.path
+
+        # 5. Check if target is a file path in the workspace
+        test_path = Path(pr) / target
+        if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
+            return None, None, target
+
+        return None, None, None
+
     # -----------------------------------------------------------------------
     # Fix 4: Query builder
     # -----------------------------------------------------------------------
@@ -479,16 +527,7 @@ class ContextPackGenerator:
                 )
 
         # --- Target Line Range Resolution ---
-        target_path = None
-        target_card: Optional[SectionCard] = None
-        if self.section_cards and target and target in self.section_cards.sections:
-            target_card = self.section_cards.sections[target]
-            target_path = target_card.path
-        elif target:
-            # Check if target is a file path
-            test_path = Path(pr) / target
-            if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
-                target_path = target
+        resolved_key, target_card, target_path = self._resolve_target(target, pr)
 
         all_candidates: List[SourceSpan] = []
         lines_prepended = False
@@ -567,7 +606,7 @@ class ContextPackGenerator:
 
         # --- Query expansion (Fix 4) ---
         queries, target_card, dep_cards, query_type_map = self._build_queries(
-            task, target, must_consider,
+            task, resolved_key or target, must_consider,
             task_type=task_type,
             pack_mode=pack_mode,
             has_line_range=lines_prepended
@@ -750,7 +789,8 @@ class ContextPackGenerator:
         quality.estimated_tokens = total_tokens
 
         run_id = str(uuid.uuid4())
-        status_str = "degraded" if (warnings or status == "degraded") else "complete"
+        has_degrading = any(not w.startswith("LaTeX Safety:") for w in warnings)
+        status_str = "degraded" if (has_degrading or status == "degraded") else "complete"
 
         pack = ContextPack(
             task=task,

@@ -38,6 +38,13 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
             "writing_style": {
                 "tone": "academic, formal",
                 "avoid": []
+            },
+            "terminology": {
+                "sample_term": {
+                    "definition": "A sample technical term description.",
+                    "variants": ["alternate phrasing 1"],
+                    "avoid": ["deprecated variant"]
+                }
             }
         },
         "sections": {}

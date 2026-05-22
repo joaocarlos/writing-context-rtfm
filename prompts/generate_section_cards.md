@@ -47,6 +47,15 @@ document:
     avoid:
       - "<global phrase or claim type to avoid across all sections>"
       # add more as needed
+  terminology:                     # Document-level glossary to standardize key terms
+    <term>: "<definition string>"
+    # OR:
+    <another_term>:
+      definition: "<definition string>"
+      variants:
+        - "<alternate phrase>"
+      avoid:
+        - "<incorrect/deprecated term to avoid>"
 
 sections:
   <section_id>:                     # snake_case identifier, used as --target in CLI
@@ -77,6 +86,7 @@ sections:
 | `thesis` | Always | Injected as `document_thesis` in the pack — the LLM sees it as the overarching goal |
 | `writing_style.tone` | Always | Informational only in v0.1; used by future style-enforcement pass |
 | `writing_style.avoid` | When global prohibitions exist | Not yet consumed by packer in v0.1; acts as human reminder |
+| `terminology` | For key technical terms and concepts | Defines a global glossary. Used by the `audit` command to verify consistency/drift and injected into the proofreading context pack. |
 | `key_terms` | Always for technical sections | Each term becomes its own RTFM search query |
 | `depends_on` | When a section cites work from another section | Adds +0.4 score boost to dependency file chunks |
 | `must_preserve` | For fixed claims, definitions, caveats | Injected verbatim into `constraints` in the context pack. In proofreading, ensures claims are not altered. |
@@ -100,6 +110,7 @@ sections:
 7. Use double-quoted strings for all YAML values that contain colons, commas, or
    special characters.
 8. Order sections in logical reading order.
+9. Define critical technical terms under `document.terminology` so that they can be audited for semantic drift and checked during proofreading. Use the dictionary format when you want to enforce specific avoids or variants.
 
 ## What I will provide
 
@@ -109,6 +120,7 @@ I will now give you:
 [B] The list of section files and their titles (required)
 [C] Any constraints, caveats, or fixed claims you already know must appear (optional)
 [D] The writing tone and any global avoidance rules (optional)
+[E] Key technical terms and definitions/glossary (optional)
 
 Generate the complete `section_cards.yaml` in a single fenced YAML code block.
 After the block, provide a brief bullet list explaining any assumptions you made
@@ -135,4 +147,8 @@ for fields you could not derive directly from my input.
 
 [D] Writing tone and global avoidance rules (optional):
 <tone description and any phrases to globally avoid>
+
+[E] Key technical terms and definitions/glossary (optional):
+<list any domain-specific terms, their definitions, variants, and deprecated variants to avoid>
 ```
+

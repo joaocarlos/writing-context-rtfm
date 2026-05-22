@@ -49,3 +49,6 @@ result_b.txt
 .rtfm/
 .writing-context/context_cache.sqlite
 *.log
+
+# Simulation Sandbox
+sandbox/

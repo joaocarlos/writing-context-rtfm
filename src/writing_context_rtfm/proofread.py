@@ -134,6 +134,12 @@ class ProofreadPackGenerator:
                 "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
                 f"and must not be modified or deleted: {', '.join(latex_commands)}"
             )
+
+        if est > max_tokens:
+            warnings.append(
+                f"Token budget exceeded: Estimated tokens ({est}) exceeds max_tokens ({max_tokens}). "
+                "The pack status is degraded. To resolve this, call the tool with a larger max_tokens value."
+            )
             
         return ProofreadingContextPack(
             target=target_info,

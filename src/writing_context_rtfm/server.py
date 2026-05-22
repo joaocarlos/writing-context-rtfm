@@ -16,6 +16,7 @@ from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 import logging
 from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology, get_term_context
 from writing_context_rtfm.latex import build_reference_graph
+from writing_context_rtfm.utils import resolve_rtfm_db_path
 
 # --- Prompt formatters ------------------------------------------------------
 
@@ -504,7 +505,7 @@ def _load_runtime():
         try:
             adapter.sync(config.rtfm.project_root, corpus=config.rtfm.corpus)
             if config.cache.invalidate_on_refresh:
-                rtfm_db = Path(config.rtfm.project_root) / ".rtfm" / "library.db"
+                rtfm_db = resolve_rtfm_db_path(Path(config.rtfm.project_root))
                 fingerprint = compute_rtfm_fingerprint(rtfm_db)
                 store.invalidate_for_fingerprint(fingerprint)
         except Exception as e:
@@ -643,7 +644,7 @@ def handle_refresh_index(args):
 
     if config.cache.invalidate_on_refresh:
         store = ExtensionStore(config.cache.path)
-        rtfm_db = Path(project_root) / ".rtfm" / "library.db"
+        rtfm_db = resolve_rtfm_db_path(Path(project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
         store.invalidate_for_fingerprint(fingerprint)
     return _success_response({"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh})

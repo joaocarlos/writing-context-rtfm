@@ -14,7 +14,7 @@ from writing_context_rtfm.hashing import compute_task_hash, stable_hash, compute
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
 
-from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands
+from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands, resolve_rtfm_db_path
 
 def _path_matches(path: str, card_path: Optional[str]) -> bool:
     """Helper to check if path matches a card's path case-insensitively."""
@@ -438,7 +438,7 @@ class ContextPackGenerator:
         sc_hash = self._get_file_hash(sc_path, sc_fallback)
 
         # Compute real RTFM database fingerprint based on mtime and size
-        rtfm_db = Path(self.config.rtfm.project_root) / ".rtfm" / "library.db"
+        rtfm_db = resolve_rtfm_db_path(Path(self.config.rtfm.project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
 
         if self.config.cache.enabled:

@@ -135,5 +135,64 @@ class TestRTFMAdapter(unittest.TestCase):
             capture_output=True, text=True, check=True, cwd="/my/custom/root"
         )
 
+
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from writing_context_rtfm.utils import resolve_rtfm_db_path
+
+class TestResolveRtfmDbPath(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_root = Path(self.temp_dir)
+        self.old_env = os.environ.get("RTFM_DB")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+        if self.old_env is not None:
+            os.environ["RTFM_DB"] = self.old_env
+        elif "RTFM_DB" in os.environ:
+            del os.environ["RTFM_DB"]
+
+    def test_priority_env_var_absolute(self):
+        os.environ["RTFM_DB"] = "/custom/path/library.db"
+        res = resolve_rtfm_db_path(self.project_root)
+        self.assertEqual(res, Path("/custom/path/library.db"))
+
+    def test_priority_env_var_relative(self):
+        os.environ["RTFM_DB"] = "custom/path/library.db"
+        res = resolve_rtfm_db_path(self.project_root)
+        self.assertEqual(res, self.project_root / "custom/path/library.db")
+
+    def test_priority_primary_exists(self):
+        if "RTFM_DB" in os.environ:
+            del os.environ["RTFM_DB"]
+        # Create primary .rtfm/library.db
+        rtfm_dir = self.project_root / ".rtfm"
+        rtfm_dir.mkdir()
+        db_file = rtfm_dir / "library.db"
+        db_file.touch()
+
+        res = resolve_rtfm_db_path(self.project_root)
+        self.assertEqual(res, db_file)
+
+    def test_priority_fallback_exists(self):
+        if "RTFM_DB" in os.environ:
+            del os.environ["RTFM_DB"]
+        # Create fallback library.db in root
+        db_file = self.project_root / "library.db"
+        db_file.touch()
+
+        res = resolve_rtfm_db_path(self.project_root)
+        self.assertEqual(res, db_file)
+
+    def test_priority_default_when_none_exists(self):
+        if "RTFM_DB" in os.environ:
+            del os.environ["RTFM_DB"]
+        res = resolve_rtfm_db_path(self.project_root)
+        self.assertEqual(res, self.project_root / ".rtfm" / "library.db")
+
+
 if __name__ == "__main__":
     unittest.main()

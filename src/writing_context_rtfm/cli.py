@@ -16,6 +16,7 @@ from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 from writing_context_rtfm.features import get_term_context
 from writing_context_rtfm.server import run_server
+from writing_context_rtfm.utils import resolve_rtfm_db_path
 
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
@@ -61,7 +62,7 @@ def sync_command(args):
         store.init_db()
         
         # Compute real library.db fingerprint after sync
-        rtfm_db = Path(project_root) / ".rtfm" / "library.db"
+        rtfm_db = resolve_rtfm_db_path(Path(project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
             
         store.invalidate_for_fingerprint(fingerprint)
@@ -219,11 +220,16 @@ def doctor_command(args):
         print("[*] Section Cards:    [WARN] section_cards.yaml not found")
 
     # 3. Database Check
-    db_path = project_root / ".rtfm" / "library.db"
+    db_path = resolve_rtfm_db_path(project_root)
+    try:
+        rel_db = db_path.relative_to(project_root)
+    except ValueError:
+        rel_db = db_path
+
     if db_path.exists():
-        print(f"[*] RTFM DB:          [OK] Found at {db_path.relative_to(project_root)}")
+        print(f"[*] RTFM DB:          [OK] Found at {rel_db}")
     else:
-        print(f"[*] RTFM DB:          [FAIL] No RTFM library database found at {db_path.relative_to(project_root)} (Needs sync)")
+        print(f"[*] RTFM DB:          [FAIL] No RTFM library database found at {rel_db} (Needs sync)")
 
     # 4. Cache Check
     if not config:

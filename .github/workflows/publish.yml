@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   test:
     name: Run Test Suite
@@ -17,6 +20,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,10 +36,8 @@ jobs:
     name: Publish to PyPI
     needs: test
     runs-on: ubuntu-latest
-    # This environment name should match the environment defined in your PyPI trusted publisher config (optional, but recommended)
     environment: release
     permissions:
-      # CRITICAL: This permission is required for Trusted Publishing (OIDC) authentication
       id-token: write
       contents: read
     steps:

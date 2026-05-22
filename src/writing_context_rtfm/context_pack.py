@@ -708,16 +708,24 @@ class ContextPackGenerator:
         if budget_dropped > 0:
             quality.dropped_for_budget = budget_dropped
             quality.truncated = True
+            margin = self.config.context.reserved_generation_margin
+            candidate_spans_within_cap = filtered[:max_spans]
+            needed_spans_tokens = sum(self._estimate_tokens(s) for s in candidate_spans_within_cap)
+            denominator = 1.0 - margin if margin < 1.0 else 0.9
+            required_budget = int(needed_spans_tokens / denominator) + 1
+            required_budget = max(required_budget, token_budget + 1000)
+            
             if cap_truncated:
                 warnings.append(
-                    f"{budget_dropped} candidate span(s) dropped: token budget or "
+                    f"Token budget exceeded: {budget_dropped} candidate span(s) dropped due to token budget or "
                     f"max_source_spans={max_spans} cap reached. "
-                    "Increase token_budget or refine `target`/`must_consider` for more coverage."
+                    f"To resolve this, call the tool with a larger token_budget of at least {required_budget}."
                 )
             else:
                 warnings.append(
-                    f"{budget_dropped} candidate span(s) dropped to stay within token budget "
-                    f"({usable_budget} usable of {token_budget}). Increase token_budget for more coverage."
+                    f"Token budget exceeded: {budget_dropped} candidate span(s) dropped to stay within token budget "
+                    f"({usable_budget} usable of {token_budget}). "
+                    f"To resolve this, call the tool with a larger token_budget of at least {required_budget}."
                 )
 
         quality.selected_count = len(selected)

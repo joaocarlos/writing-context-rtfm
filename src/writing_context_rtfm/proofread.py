@@ -138,7 +138,7 @@ class ProofreadPackGenerator:
         if est > max_tokens:
             warnings.append(
                 f"Token budget exceeded: Estimated tokens ({est}) exceeds max_tokens ({max_tokens}). "
-                "The pack status is degraded. To resolve this, call the tool with a larger max_tokens value."
+                f"The pack status is degraded. To resolve this, call the tool with a larger max_tokens value of at least {est}."
             )
             
         return ProofreadingContextPack(

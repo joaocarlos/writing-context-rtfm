@@ -84,7 +84,6 @@ class TestContextPackGenerator(unittest.TestCase):
         import tempfile
         import os
         from writing_context_rtfm.section_cards import SectionCards, SectionCard, DocumentCard
-        from writing_context_rtfm.context_pack import SourceSpan
         
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = os.path.join(tmpdir, "abstract.tex")
@@ -127,6 +126,46 @@ class TestContextPackGenerator(unittest.TestCase):
             # Assert LaTeX Safety warning is present in warnings
             latex_warnings = [w for w in pack.warnings if "LaTeX Safety:" in w]
             self.assertTrue(len(latex_warnings) > 0)
+
+    def test_token_budget_degraded_warning_contains_required_budget(self):
+        # Mock search results returning large snippets
+        mock_result1 = MagicMock()
+        mock_result1.path = "sections/abstract.tex"
+        mock_result1.line_start = 1
+        mock_result1.line_end = 20
+        mock_result1.score = 0.9
+        # 1000 'word ' tokens (approx 1000 tokens)
+        mock_result1.snippet = "word " * 1000
+        mock_result1.metadata = {}
+        
+        mock_result2 = MagicMock()
+        mock_result2.path = "sections/intro.tex"
+        mock_result2.line_start = 1
+        mock_result2.line_end = 20
+        mock_result2.score = 0.8
+        # 1000 'word ' tokens (approx 1000 tokens)
+        mock_result2.snippet = "word " * 1000
+        mock_result2.metadata = {}
+
+        self.adapter.search.return_value = [mock_result1, mock_result2]
+
+        # Use a small token budget so both cannot fit
+        pack = self.generator.generate(task="write intro", target=None, token_budget=1500)
+        
+        self.assertEqual(pack.status, "degraded")
+        self.assertTrue(len(pack.source_spans) < 2)
+        
+        # Check warning messages
+        budget_warnings = [w for w in pack.warnings if "Token budget exceeded:" in w]
+        self.assertTrue(len(budget_warnings) > 0)
+        warning_msg = budget_warnings[0]
+        self.assertIn("To resolve this, call the tool with a larger token_budget of at least", warning_msg)
+        
+        # Extract suggested budget from the warning message
+        parts = warning_msg.split("at least ")
+        self.assertEqual(len(parts), 2)
+        suggested_val = int(parts[1].rstrip("."))
+        self.assertTrue(suggested_val >= 2500)
 
 if __name__ == '__main__':
     unittest.main()

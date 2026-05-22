@@ -18,6 +18,118 @@ from writing_context_rtfm.features import get_term_context
 from writing_context_rtfm.server import run_server
 from writing_context_rtfm.utils import resolve_rtfm_db_path
 
+def _update_gitignore(root: Path) -> None:
+    gitignore_file = root / ".gitignore"
+    cache_path = ".writing-context/context_cache.sqlite"
+    
+    if not gitignore_file.exists():
+        gitignore_file.write_text(cache_path + "\n", encoding="utf-8")
+        print(f"Created {gitignore_file} with {cache_path} ignored.")
+        return
+
+    content = gitignore_file.read_text(encoding="utf-8")
+    lines = [line.strip() for line in content.splitlines()]
+    
+    ignored = False
+    for line in lines:
+        clean = line.split('#')[0].strip()
+        if clean in (cache_path, ".writing-context/*.sqlite", ".writing-context/", ".writing-context/*"):
+            ignored = True
+            break
+            
+    if not ignored:
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += cache_path + "\n"
+        gitignore_file.write_text(content, encoding="utf-8")
+        print(f"Appended {cache_path} to {gitignore_file}")
+
+def _update_mcp_json(root: Path) -> None:
+    mcp_file = root / ".mcp.json"
+    
+    if (root / "uv.lock").exists():
+        server_def = {
+            "command": "uv",
+            "args": ["run", "writing-context-rtfm", "serve"]
+        }
+    else:
+        server_def = {
+            "command": "writing-context-rtfm",
+            "args": ["serve"]
+        }
+        
+    mcp_data = {}
+    if mcp_file.exists():
+        try:
+            mcp_data = json.loads(mcp_file.read_text(encoding="utf-8"))
+            if not isinstance(mcp_data, dict):
+                mcp_data = {}
+        except Exception as e:
+            print(f"Warning: Failed to parse existing {mcp_file}: {e}. Overwriting/re-creating.")
+            mcp_data = {}
+            
+    mcp_data.setdefault("mcpServers", {})
+    mcp_data["mcpServers"]["writing-context-rtfm"] = server_def
+    
+    try:
+        mcp_file.write_text(json.dumps(mcp_data, indent=2) + "\n", encoding="utf-8")
+        print(f"Updated {mcp_file} with writing-context-rtfm MCP server configuration.")
+    except Exception as e:
+        print(f"Warning: Failed to write {mcp_file}: {e}")
+
+def _update_markdown_rules(root: Path, file_name: str, default_title: str) -> None:
+    md_file = root / file_name
+    
+    anchor_start = "<!-- writing-context-rtfm MCP tools -->"
+    anchor_end = "<!-- end writing-context-rtfm MCP tools -->"
+    
+    rules = (
+        f"{anchor_start}\n"
+        "## Agent Rules of Thumb for Writing Context\n\n"
+        "1. **Always retrieve context first**: Never read manuscript files raw. Use `get_writing_context_pack` or `get_proofreading_context_pack` before writing, rewriting, expanding, or proofreading text.\n"
+        "2. **Specify Task & Depth**: Use `task_type` and `pack_mode` parameters when calling `get_writing_context_pack` to optimize context weightings and token budgets.\n"
+        "3. **Respect LaTeX Safety Warnings**: Pay attention to safety warnings in the pack. Never edit/alter the detected LaTeX citations (`\\cite`), labels (`\\label`), references (`\\ref`), or math environments.\n"
+        "4. **Use Terminology Lookup**: Use the `get_term_context` tool to retrieve definitions, variants, and words to avoid for specific terms.\n"
+        "5. **Handle Pagination**: If you need more context, call `request_more_context` with the `run_id`. Do not guess or read files.\n"
+        "6. **Log Feedback**: Always evaluate retrieved context using `submit_generation_feedback` so subsequent caching is optimized.\n"
+        "7. **Initialize configurations**: Use `initialize_section_cards` to scaffold cards for untracked sections.\n"
+        f"{anchor_end}"
+    )
+
+    if not md_file.exists():
+        content = f"# {default_title}\n\n{rules}\n"
+        try:
+            md_file.write_text(content, encoding="utf-8")
+            print(f"Created {md_file} with Agent Rules of Thumb.")
+        except Exception as e:
+            print(f"Warning: Failed to write {md_file}: {e}")
+        return
+
+    try:
+        content = md_file.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: Failed to read existing {md_file}: {e}")
+        return
+
+    if anchor_start in content and anchor_end in content:
+        start_idx = content.find(anchor_start)
+        end_idx = content.find(anchor_end) + len(anchor_end)
+        new_content = content[:start_idx] + rules + content[end_idx:]
+        try:
+            md_file.write_text(new_content, encoding="utf-8")
+            print(f"Updated Agent Rules of Thumb in {md_file}")
+        except Exception as e:
+            print(f"Warning: Failed to update {md_file}: {e}")
+    else:
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += "\n" + rules + "\n"
+        try:
+            md_file.write_text(content, encoding="utf-8")
+            print(f"Appended Agent Rules of Thumb to {md_file}")
+        except Exception as e:
+            print(f"Warning: Failed to append to {md_file}: {e}")
+
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
     root = Path(getattr(args, "project_root", ".")).resolve()
@@ -31,6 +143,17 @@ def init_command(args):
     if not sc_file.exists():
         sc_file.write_text("version: 1\ndocument:\n  title: Example\nsections:\n")
         print(f"Created {sc_file}")
+
+    # 1. Update .gitignore
+    _update_gitignore(root)
+
+    # 2. Update .mcp.json
+    _update_mcp_json(root)
+
+    # 3. Update markdown rule files
+    _update_markdown_rules(root, "CLAUDE.md", "Developer & Agent Guidelines (CLAUDE.md)")
+    _update_markdown_rules(root, "AGENTS.md", "Agent Guidelines (AGENTS.md)")
+    _update_markdown_rules(root, "GEMINI.md", "Gemini Agent Guidelines (GEMINI.md)")
 
 def init_cards_command(args):
     """Scans the workspace and generates or appends section cards."""

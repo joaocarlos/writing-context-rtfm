@@ -113,6 +113,7 @@ def test_token_budget_degraded(mock_config, mock_section_cards, mock_adapter, mo
     assert pack.status == "degraded"
     assert pack.estimated_tokens > 10
     assert any("Token budget exceeded" in w for w in pack.warnings)
+    assert any(f"To resolve this, call the tool with a larger max_tokens value of at least {pack.estimated_tokens}" in w for w in pack.warnings)
 
 def test_exclusion_rules(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
     generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)

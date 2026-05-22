@@ -3,10 +3,13 @@ import json
 import os
 import sys
 
+from pathlib import Path
+
 def test_mcp_server():
+    project_root = Path(__file__).resolve().parent.parent
     env = os.environ.copy()
-    env["PYTHONPATH"] = "/Users/joaocarlos/Developer/Projects/writing-context-rtfm/src"
-    cmd = ["/Users/joaocarlos/Developer/Projects/writing-context-rtfm/.venv/bin/writing-context-rtfm", "serve"]
+    env["PYTHONPATH"] = str(project_root / "src")
+    cmd = [sys.executable, "-m", "writing_context_rtfm.cli", "serve"]
     
     print(f"Starting server: {' '.join(cmd)}")
     proc = subprocess.Popen(

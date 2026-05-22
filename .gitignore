@@ -52,3 +52,7 @@ result_b.txt
 
 # Simulation Sandbox
 sandbox/
+
+# Local configuration and guidelines
+.claude/
+GEMINI.md

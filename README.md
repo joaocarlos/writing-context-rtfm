@@ -74,6 +74,17 @@ writing-context-rtfm init-cards
 ```
 This scans your workspace for LaTeX files, parses `\input` structures and references, and scaffolds your manuscript sections and dependency mappings in `.writing-context/section_cards.yaml`.
 
+#### Step C: Initialize and Sync the RTFM Index
+Because `writing-context-rtfm` relies on `rtfm-ai` as the backend database, you must initialize and perform the initial sync for the RTFM index inside your repository:
+```bash
+# 1. Initialize RTFM configuration
+rtfm init
+
+# 2. Run the initial sync to build the index database
+rtfm sync
+```
+*(Note: `writing-context-rtfm init` only configures the writing-context settings, cards, and agent rules; it does not automatically initialize or sync the underlying RTFM database).*
+
 ---
 
 ## MCP Server Integration

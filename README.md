@@ -9,7 +9,7 @@ Stop giving your AI agent the entire manuscript to write one section. Give it th
 
 <br>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/) [![MCP](https://img.shields.io/badge/MCP-2026-green.svg)](https://modelcontextprotocol.io/) [![Powered by RTFM](https://img.shields.io/badge/Powered%20by-RTFM-purple.svg)](https://github.com/roomi-fields/rtfm)
+[![PyPI Version](https://img.shields.io/pypi/v/writing-context-rtfm.svg)](https://pypi.org/project/writing-context-rtfm/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/) [![MCP](https://img.shields.io/badge/MCP-2026-green.svg)](https://modelcontextprotocol.io/) [![Powered by RTFM](https://img.shields.io/badge/Powered%20by-RTFM-purple.svg)](https://github.com/roomi-fields/rtfm)
 
 </div>
 
@@ -26,38 +26,57 @@ The bottleneck isn't the model's writing ability — it's the **noise**.
 **`writing-context-rtfm` fixes the noise.** It is a lightweight MCP extension built on top of `rtfm-ai`. Instead of letting the agent grep freely, it acts as a gatekeeper. It takes the agent's task, queries the underlying RTFM index, aggressively filters out background noise, and packs only the *essential* and *supporting* source chunks into a tight, highly-focused prompt.
 
 ```bash
-python3 src/writing_context_rtfm/cli.py pack \
+writing-context-rtfm pack \
   --task "Write the methodology section detailing dataset and quantization" \
-  --target section_approach
+  --target sections/methodology.tex \
+  --budget 4000
 ```
 
-3 seconds later, the agent receives an 800-token context pack containing exactly the 3 paragraphs about the dataset, the 1 paragraph about quantization, and the stylistic constraints for the section. The agent writes perfectly.
+3 seconds later, the agent receives a compact context pack containing exactly the paragraphs and key terms needed, alongside stylistic constraints for the target section. The agent writes perfectly.
 
 > **Token budgets respected. Constraints enforced. Progressive disclosure over context dumps.**
 
 ---
 
-## Installation & MCP Integration
+## Installation & Onboarding
 
-`writing-context-rtfm` functions as an MCP (Model Context Protocol) server. You can run it dynamically using `uvx` (recommended) or install it globally on your system.
+`writing-context-rtfm` is published on PyPI and runs as a Model Context Protocol (MCP) server.
 
-### Option A: Dynamic Run (Recommended)
-You do not need to install the package manually. You can prefix commands with `uvx` (or `npx` equivalent) to run the server on demand.
-
-### Option B: Global Installation
-If you prefer a static global installation:
+### 1. Install the CLI & Server
+You can install the package globally or in your virtual environment:
 
 ```bash
-# Using uv
+# Using uv (recommended)
 uv tool install writing-context-rtfm
 
 # Using pipx
 pipx install writing-context-rtfm
 ```
 
-Once installed, use `writing-context-rtfm serve` as the server command instead of `uvx writing-context-rtfm serve`.
+---
+
+### 2. Quick Project Onboarding
+To integrate the server into your manuscript repository, run the following two commands:
+
+#### Step A: Initialize configuration and editor rules
+```bash
+writing-context-rtfm init
+```
+This command non-destructively:
+* Creates a self-documenting `.writing-context/config.yaml` file template showing how to tune token budgets and role weights.
+* Appends the cache database path to your `.gitignore`.
+* Updates your local `.mcp.json` to register the MCP server automatically.
+* Adds **Agent Rules of Thumb** blocks into `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` to guide AI agents on retrieving context first and respecting LaTeX boundaries.
+
+#### Step B: Auto-scaffold your section cards
+```bash
+writing-context-rtfm init-cards
+```
+This scans your workspace for LaTeX files, parses `\input` structures and references, and scaffolds your manuscript sections and dependency mappings in `.writing-context/section_cards.yaml`.
 
 ---
+
+## MCP Server Integration
 
 ### 1. Claude Desktop
 Add this to your `claude_desktop_config.json` (on macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
@@ -66,9 +85,8 @@ Add this to your `claude_desktop_config.json` (on macOS: `~/Library/Application 
 {
   "mcpServers": {
     "writing-context-rtfm": {
-      "command": "uvx",
+      "command": "writing-context-rtfm",
       "args": [
-        "writing-context-rtfm",
         "serve"
       ]
     }
@@ -81,7 +99,7 @@ Add this to your `claude_desktop_config.json` (on macOS: `~/Library/Application 
 2. Navigate to **Features** > **MCP** and click **+ Add New MCP Server**.
 3. **Name:** `writing-context-rtfm`
 4. **Type:** `command`
-5. **Command:** `uvx writing-context-rtfm serve`
+5. **Command:** `writing-context-rtfm serve`
 
 ### 3. VS Code Extensions (Cline, Roo Code)
 Update your MCP settings file (e.g., `cline_mcp_settings.json`):
@@ -90,9 +108,8 @@ Update your MCP settings file (e.g., `cline_mcp_settings.json`):
 {
   "mcpServers": {
     "writing-context-rtfm": {
-      "command": "uvx",
+      "command": "writing-context-rtfm",
       "args": [
-        "writing-context-rtfm",
         "serve"
       ]
     }
@@ -101,35 +118,13 @@ Update your MCP settings file (e.g., `cline_mcp_settings.json`):
 ```
 
 ### 4. Claude Code (Anthropic CLI Agent)
-You can configure the server globally for Claude Code using:
-
 ```bash
-claude mcp add --scope user --transport stdio writing-context-rtfm -- uvx writing-context-rtfm serve
+# Global configuration
+claude mcp add --scope user --transport stdio writing-context-rtfm -- writing-context-rtfm serve
+
+# Repository-local configuration
+claude mcp add --scope local --transport stdio writing-context-rtfm -- writing-context-rtfm serve
 ```
-
-Or for a specific project/repository:
-
-```bash
-claude mcp add --scope local --transport stdio writing-context-rtfm -- uvx writing-context-rtfm serve
-```
-
-### 5. Codex (CLI & Desktop)
-To add the server using the Codex CLI:
-
-```bash
-codex mcp add writing-context-rtfm -- uvx writing-context-rtfm serve
-```
-
-Alternatively, you can manually append it to your Codex configuration file (`~/.codex/config.toml`):
-
-```toml
-[mcp_servers.writing-context-rtfm]
-command = "uvx"
-args = ["writing-context-rtfm", "serve"]
-enabled = true
-```
-
-*(If testing locally before publishing, you can use `uvx --from /absolute/path/to/writing-context-rtfm writing-context-rtfm serve` or `uv run python -m writing_context_rtfm.cli serve` instead).*
 
 ---
 
@@ -143,6 +138,23 @@ enabled = true
 | `writing-context-rtfm` | The Curation Layer | Filters noise, applies constraints, ranks by structural priority. | 4 essential chunks |
 
 We do **not** replace or fork RTFM. We wrap it. RTFM is built to fetch memory. `writing-context-rtfm` is built to decide *what is enough memory to write a specific section*. 
+
+---
+
+## Features
+
+### 1. Agent Self-Correction Loop
+If the requested token budget is too small to fit the necessary target context, the packer returns a `"status": "degraded"` and appends a warning to the `warnings` list recommending a specific minimum budget:
+* **Writing Packs (`pack`)**: `To resolve this, call the tool with a larger token_budget of at least X.`
+* **Proofreading Packs (`proofread-pack`)**: `To resolve this, call the tool with a larger max_tokens value of at least X.`
+
+AI client agents are instructed via the auto-injected guidelines to parse this warning, extract the recommended value `X`, and automatically retry the call with the new budget to get the missing context.
+
+### 2. LaTeX Safety Checks
+The extension automatically parses the target text and detects LaTeX math environments, macro calls, and cross-references (e.g., `\ref{...}`, `\begin{equation} ... \end{equation}`). It issues safety warnings to the AI writing agent containing the exact code patterns that must not be deleted or broken during edits, maintaining compilation safety.
+
+### 3. SQLite Local Caching
+To optimize token and response latency, generated context packs are hashed and cached locally in `.writing-context/context_cache.sqlite`. Cache keys are dynamically invalidated whenever the project configuration, section cards, or underlying RTFM indexes are updated.
 
 ---
 
@@ -174,43 +186,29 @@ When the agent asks for context to write `section_approach`, we:
 
 ---
 
-## What we measured: A/B Testing
+## CLI Reference
 
-We tested a Gemini 2.5 agent trying to write a methodology section using two context strategies:
-
-| Strategy | Context Size | Result Quality |
-|----------|--------------|----------------|
-| **Agent A (Full Repo Context)** | 3,000+ tokens | Wrote a generic paper summary. Hallucinated an introduction. Skipped hyperparameters entirely because it lost focus. |
-| **Agent B (MCP Context Pack)** | **~600 tokens** | Jumped straight to the methodology. Correctly documented the CNN architecture, Adam optimizer, and learning rates. Followed all constraints. |
-
-When you restrict an agent's vision to exactly what matters, its writing becomes sharper, more structured, and deeply accurate.
-
----
-
-<!-- ─────────── TIER 3 — Technical depth ─────────── -->
-
-### Intelligent Scoring & Priority
-Raw search scores aren't enough for structural writing. We combine semantic relevance with manuscript structure:
-- **RTFM Score**: Baseline semantic/FTS relevance.
-- **Target Boost**: Chunks coming from the file the agent is supposed to be writing (`03_approach.tex`) get an automatic +0.8 boost.
-- **Key-Term Scoping**: If a chunk matches a key term (e.g., "CNN") but comes from the *Conclusion* file, it receives a severe 75% score penalty to prevent background noise from polluting the context.
-
-Chunks are finally classified as `[Priority: essential]`, `supporting`, or `background` so the LLM knows what to focus on.
-
-### CLI Reference
 ```bash
-# Initialize project config and SQLite cache
+# Initialize project config, gitignore, and editor rules
 writing-context-rtfm init
-writing-context-rtfm init-db
+
+# Scan workspace to scaffold section cards from LaTeX inputs and labels
+writing-context-rtfm init-cards
+
+# Run diagnostics health checks on databases and configuration files
+writing-context-rtfm doctor
 
 # Sync the underlying RTFM index
-writing-context-rtfm sync --corpus manuscript
+writing-context-rtfm sync
 
 # Generate a context pack directly in the terminal
 writing-context-rtfm pack \
   --task "Update the introduction" \
-  --target section_intro \
+  --target sections/introduction.tex \
   --budget 4000
+
+# Generate a proofreading context pack
+writing-context-rtfm proofread-pack sections/abstract.tex --line-start 1 --line-end 10 --max-tokens 3000
 
 # Start MCP Server
 writing-context-rtfm serve

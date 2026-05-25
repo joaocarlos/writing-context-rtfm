@@ -271,8 +271,14 @@ def sync_command(args):
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
-    sync_path = args.path if args.path != "." else project_root
-    corpus = args.corpus or config.rtfm.corpus
+    
+    if args.path == "." and args.corpus is None:
+        sync_path = None
+        corpus = None
+    else:
+        sync_path = args.path
+        corpus = args.corpus
+
     try:
         adapter.sync(sync_path, corpus=corpus)
         store = ExtensionStore(config.cache.path)

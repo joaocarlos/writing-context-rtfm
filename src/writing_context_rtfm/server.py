@@ -504,7 +504,7 @@ def _load_runtime():
 
     if config.rtfm.sync_before_pack:
         try:
-            adapter.sync(config.rtfm.project_root, corpus=config.rtfm.corpus)
+            adapter.sync()
             if config.cache.invalidate_on_refresh:
                 rtfm_db = resolve_rtfm_db_path(Path(config.rtfm.project_root))
                 fingerprint = compute_rtfm_fingerprint(rtfm_db)
@@ -640,8 +640,11 @@ def handle_refresh_index(args):
     corpus = args.get("corpus", config.rtfm.corpus)
     adapter = RTFMAdapter(project_root=project_root)
 
+    sync_path = args.get("project_root")
+    sync_corpus = args.get("corpus")
+
     try:
-        adapter.sync(project_root, corpus=corpus)
+        adapter.sync(sync_path, corpus=sync_corpus)
     except Exception as e:
         logger.exception("RTFM sync raised")
         return _error_response(ERROR_RETRIEVAL, f"RTFM sync failed: {e}", type(e).__name__)

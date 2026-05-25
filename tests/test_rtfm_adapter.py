@@ -135,6 +135,16 @@ class TestRTFMAdapter(unittest.TestCase):
             capture_output=True, text=True, check=True, cwd="/my/custom/root"
         )
 
+    @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
+    def test_sync_no_arguments(self, mock_run):
+        mock_run.return_value = MagicMock()
+        self.adapter.sync()
+        
+        mock_run.assert_called_once_with(
+            ["rtfm", "sync"],
+            capture_output=True, text=True, check=True, cwd=None
+        )
+
 
 import os
 import shutil

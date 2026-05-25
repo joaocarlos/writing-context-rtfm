@@ -82,8 +82,16 @@ class RTFMAdapter:
         cmd = ["rtfm", "expand", result_id]
         return self._run_command(cmd)
 
-    def sync(self, project_root: str, *, corpus: str) -> None:
-        """Trigger RTFM sync."""
-        cmd = ["rtfm", "sync", project_root, "--corpus", corpus]
+    def sync(self, path: Optional[str] = None, *, corpus: Optional[str] = None) -> None:
+        """Trigger RTFM sync.
+
+        If path and corpus are not provided, runs `rtfm sync` without arguments
+        to let RTFM use configurations defined in .rtfm/config.json.
+        """
+        cmd = ["rtfm", "sync"]
+        if path:
+            cmd.append(path)
+        if corpus:
+            cmd.extend(["--corpus", corpus])
         self._run_command(cmd)
 

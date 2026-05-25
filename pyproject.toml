@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "writing-context-rtfm"
-version = "0.5.1"
+version = "0.5.2"
 description = "MCP extension for writing-context retrieval relying on RTFM"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
 dependencies = [
-    "rtfm-ai",
+    "rtfm-ai[embeddings]",
     "pyyaml",
     "pylatexenc"
 ]

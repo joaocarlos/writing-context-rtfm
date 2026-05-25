@@ -17,6 +17,7 @@ from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 from writing_context_rtfm.features import get_term_context
 from writing_context_rtfm.server import run_server
 from writing_context_rtfm.utils import resolve_rtfm_db_path
+from writing_context_rtfm import __version__
 
 def _update_gitignore(root: Path) -> None:
     gitignore_file = root / ".gitignore"
@@ -617,6 +618,7 @@ def show_graph_command(args):
 
 def main():
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # init

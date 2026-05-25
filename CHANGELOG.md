@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.3] - 2026-05-25
+
+### Added
+- **CLI Version Option**: Added `-V`/`--version` option to the command-line interface to easily print the installed package version.
+
 ## [0.5.2] - 2026-05-25
 
 ### Changed

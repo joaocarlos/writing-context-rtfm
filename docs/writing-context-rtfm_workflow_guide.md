@@ -55,7 +55,7 @@ This scans all `.tex` and `.md` files, parses LaTeX `\input` structures and labe
 Since this extension uses RTFM to search and index files, ensure you install `rtfm-ai` globally or in your virtual environment:
 ```bash
 # Global installation (recommended)
-uv tool install rtfm-ai
+uv tool install "rtfm-ai[embeddings]"
 
 # Or in a local project environment
 uv pip install "rtfm-ai[embeddings]"

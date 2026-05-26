@@ -126,7 +126,7 @@ Typical setup:
 
 ```bash
 # 1. Install the RTFM CLI
-uv tool install rtfm-ai
+uv tool install "rtfm-ai[embeddings]"
 
 # 2. Go to your paper repository and initialize RTFM
 cd my-paper

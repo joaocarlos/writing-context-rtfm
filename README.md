@@ -58,10 +58,10 @@ Since `writing-context-rtfm` queries and relies on the `rtfm-ai` database, you m
 
 ```bash
 # Using uv (recommended)
-uv tool install rtfm-ai
+uv tool install "rtfm-ai[embeddings]"
 
 # Using pipx
-pipx install rtfm-ai
+pipx install "rtfm-ai[embeddings]"
 ```
 *(Note: If you are setting up inside a local virtual environment, running `uv pip install "writing-context-rtfm[tiktoken]"` will automatically pull in `rtfm-ai[embeddings]` as a library dependency, but installing it globally ensures the `rtfm` binary is available on your PATH).*
 

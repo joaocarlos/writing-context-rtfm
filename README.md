@@ -95,7 +95,7 @@ rtfm init
 # 2. Run the initial sync to build the index database
 rtfm sync
 ```
-*(Note: `writing-context-rtfm init` only configures the writing-context settings, cards, and agent rules; it does not automatically initialize or sync the underlying RTFM database).*
+*(Note: `writing-context-rtfm init` only configures the writing-context settings, cards, and agent rules; it does not automatically initialize or sync the underlying RTFM database. This setup assumes you already have at least part of the `.tex` files in your repository—if starting from an empty repository or using Overleaf, ensure your files are placed locally first).*
 
 ##### Baseline Model Embeddings
 * **Default Local Model**: By default, RTFM automatically generates embeddings for all document chunks. It uses a fast, lightweight multilingual model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) which runs completely locally on your CPU/GPU and downloads automatically from Hugging Face on the first sync. No external API keys are required.
@@ -226,6 +226,9 @@ writing-context-rtfm init
 # Scan workspace to scaffold section cards from LaTeX inputs and labels
 writing-context-rtfm init-cards
 
+# Initialize the local SQLite cache database (.writing-context/context_cache.sqlite)
+writing-context-rtfm init-db
+
 # Run diagnostics health checks on databases and configuration files
 writing-context-rtfm doctor
 
@@ -240,6 +243,21 @@ writing-context-rtfm pack \
 
 # Generate a proofreading context pack
 writing-context-rtfm proofread-pack sections/abstract.tex --line-start 1 --line-end 10 --max-tokens 3000
+
+# Inspect configured rules and details for a specific section card
+writing-context-rtfm inspect-target --target section_abstract
+
+# Look up a term in the document glossary config
+writing-context-rtfm get-term "Context Pack"
+
+# Show the LaTeX reference graph and section dependencies
+writing-context-rtfm show-graph
+
+# Clear the cached context packs
+writing-context-rtfm cache clear
+
+# Show cache database size and run statistics
+writing-context-rtfm cache stats
 
 # Start MCP Server
 writing-context-rtfm serve

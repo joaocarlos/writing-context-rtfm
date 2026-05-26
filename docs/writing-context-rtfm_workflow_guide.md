@@ -77,6 +77,27 @@ rtfm sync
   rtfm embed --embed-model balanced
   ```
 
+### 2.1 Empty Repositories and Overleaf Workflows
+
+Because `writing-context-rtfm` analyzes the LaTeX file structure of your project, onboarding requires files to exist locally:
+
+#### A. Starting a New Project (Empty Repository)
+If your repository is empty:
+1. `writing-context-rtfm init` will run successfully, but `init-cards` won't find any LaTeX files to parse.
+2. Create your root LaTeX file (e.g., `main.tex`) and any modular sections (e.g., `sections/01_introduction.tex`).
+3. Run `writing-context-rtfm init-cards` to automatically build your `.writing-context/section_cards.yaml`.
+
+#### B. Working with Overleaf Manuscripts
+If your manuscript is hosted on Overleaf, you must bridge it to your local environment for the local MCP server:
+1. **Clone the Overleaf Project**:
+   - *Direct Git Integration (Premium)*: Run `git clone https://git.overleaf.com/your-project-id`
+   - *GitHub Sync (Free)*: Enable GitHub Sync inside Overleaf and clone the target GitHub repository locally.
+   - *Manual Download*: Download the project ZIP from Overleaf, extract it, and run `git init` locally.
+2. **Setup the extension**:
+   - Run the onboarding sequence (`writing-context-rtfm init`, `init-cards`, `rtfm init`, and `rtfm sync`) inside the local folder.
+3. **Synchronize Changes**:
+   - Let your AI agent write files locally. Commit and push the changes back to Overleaf or GitHub to automatically sync your Overleaf project.
+
 ---
 
 ## 3. Command Reference

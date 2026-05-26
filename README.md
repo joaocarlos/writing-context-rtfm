@@ -42,7 +42,7 @@ writing-context-rtfm pack \
 
 `writing-context-rtfm` is published on PyPI and runs as a Model Context Protocol (MCP) server.
 
-### 1. Install the CLI & Server
+### 1. Install writing-context-rtfm
 You can install the package globally or in your virtual environment:
 
 ```bash
@@ -53,10 +53,22 @@ uv tool install writing-context-rtfm
 pipx install writing-context-rtfm
 ```
 
+### 2. Install the RTFM CLI (Retrieval Engine)
+Since `writing-context-rtfm` queries and relies on the `rtfm-ai` database, you must install the `rtfm-ai` command-line tool to initialize and synchronize your manuscript's retrieval index:
+
+```bash
+# Using uv (recommended)
+uv tool install rtfm-ai
+
+# Using pipx
+pipx install rtfm-ai
+```
+*(Note: If you are setting up inside a local virtual environment, running `uv pip install "writing-context-rtfm[tiktoken]"` will automatically pull in `rtfm-ai[embeddings]` as a library dependency, but installing it globally ensures the `rtfm` binary is available on your PATH).*
+
 ---
 
-### 2. Quick Project Onboarding
-To integrate the server into your manuscript repository, run the following two commands:
+### 3. Quick Project Onboarding
+To integrate the server into your manuscript repository, run the following commands:
 
 #### Step A: Initialize configuration and editor rules
 ```bash
@@ -74,8 +86,8 @@ writing-context-rtfm init-cards
 ```
 This scans your workspace for LaTeX files, parses `\input` structures and references, and scaffolds your manuscript sections and dependency mappings in `.writing-context/section_cards.yaml`.
 
-#### Step C: Initialize and Sync the RTFM Index
-Because `writing-context-rtfm` relies on `rtfm-ai` as the backend database, you must initialize and perform the initial sync for the RTFM index inside your repository:
+#### Step C: Initialize, Sync and Setup Embeddings
+Initialize the RTFM index inside your repository and generate the semantic search embeddings:
 ```bash
 # 1. Initialize RTFM configuration
 rtfm init
@@ -84,6 +96,14 @@ rtfm init
 rtfm sync
 ```
 *(Note: `writing-context-rtfm init` only configures the writing-context settings, cards, and agent rules; it does not automatically initialize or sync the underlying RTFM database).*
+
+##### Baseline Model Embeddings
+* **Default Local Model**: By default, RTFM automatically generates embeddings for all document chunks. It uses a fast, lightweight multilingual model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) which runs completely locally on your CPU/GPU and downloads automatically from Hugging Face on the first sync. No external API keys are required.
+* **Customizing Models**: If you want to use a larger or different model, you can run the embedding step explicitly:
+  ```bash
+  # Options: fast (default), balanced (BAAI/bge-base-en-v1.5), quality (mixedbread-ai/mxbai-embed-large-v1)
+  rtfm embed --embed-model balanced
+  ```
 
 ---
 

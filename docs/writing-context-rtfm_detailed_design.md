@@ -118,17 +118,36 @@ my-paper/
 
 ## 4. Installation and Initialization
 
-## 4.1 RTFM Installation
+## 4.1 RTFM Installation and Embeddings Setup
 
 RTFM must be installed and able to index the target project before the extension can return useful context packs.
 
 Typical setup:
 
 ```bash
+# 1. Install the RTFM CLI
 uv tool install rtfm-ai
+
+# 2. Go to your paper repository and initialize RTFM
 cd my-paper
-rtfm sync . --corpus manuscript
-rtfm search "introduction" --corpus manuscript
+rtfm init
+
+# 3. Synchronize files and generate local embeddings
+rtfm sync
+```
+
+### Baseline Embeddings Setup
+
+By default, RTFM uses a fast, multilingual local embedding model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`). This model runs locally on the user's CPU/GPU and does not require external API keys. It is automatically downloaded from Hugging Face during the first sync or embedding step.
+
+Users can check active embedding models and switch to higher-quality models using the `rtfm embed-models` and `rtfm embed` commands:
+
+```bash
+# List available models
+rtfm embed-models
+
+# Force regenerate embeddings with a balanced English-optimized model (BAAI/bge-base-en-v1.5)
+rtfm embed --embed-model balanced
 ```
 
 ## 4.2 Extension Installation

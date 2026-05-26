@@ -51,6 +51,32 @@ writing-context-rtfm init-cards
 ```
 This scans all `.tex` and `.md` files, parses LaTeX `\input` structures and label references, and registers sections with their automatic `depends_on` links inside `.writing-context/section_cards.yaml`.
 
+### Step 4: Install the RTFM CLI (Retrieval Engine)
+Since this extension uses RTFM to search and index files, ensure you install `rtfm-ai` globally or in your virtual environment:
+```bash
+# Global installation (recommended)
+uv tool install rtfm-ai
+
+# Or in a local project environment
+uv pip install "rtfm-ai[embeddings]"
+```
+
+### Step 5: Initialize and Sync the RTFM Index
+To enable semantic and keyword retrieval, initialize the RTFM configuration and perform the initial file synchronization:
+```bash
+# 1. Initialize the RTFM directory (.rtfm/)
+rtfm init
+
+# 2. Sync the project files to generate the local chunk database and embeddings
+rtfm sync
+```
+* **Embedding Model**: By default, RTFM automatically generates embeddings for all document chunks. It uses a fast, lightweight multilingual model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) which runs completely locally on your CPU/GPU and downloads automatically from Hugging Face on the first sync. No external API keys are required.
+* **Customizing Models**: You can customize the model by running the embedding step explicitly with a model alias (e.g., `fast`, `balanced`, or `quality`) or any Hugging Face model path:
+  ```bash
+  # Generate embeddings using the balanced model (BAAI/bge-base-en-v1.5)
+  rtfm embed --embed-model balanced
+  ```
+
 ---
 
 ## 3. Command Reference

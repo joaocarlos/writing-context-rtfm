@@ -281,7 +281,8 @@ def sync_command(args):
         corpus = args.corpus
 
     try:
-        adapter.sync(sync_path, corpus=corpus)
+        print("[*] Synchronizing RTFM database and generating embeddings...")
+        adapter.sync(sync_path, corpus=corpus, capture_output=False)
         store = ExtensionStore(config.cache.path)
         store.init_db()
         

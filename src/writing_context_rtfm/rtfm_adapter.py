@@ -28,22 +28,32 @@ class RTFMAdapter:
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 self.resolved_rtfm = candidate
 
-    def _run_command(self, cmd: List[str]) -> str:
+    def _run_command(self, cmd: List[str], capture_output: bool = True) -> str:
         """Run a CLI command and return its standard output."""
         if cmd[0] == "rtfm":
             cmd[0] = self.resolved_rtfm
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                cwd=self.project_root
-            )
-            return result.stdout
+            if capture_output:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    cwd=self.project_root
+                )
+                return result.stdout
+            else:
+                subprocess.run(
+                    cmd,
+                    text=True,
+                    check=True,
+                    cwd=self.project_root
+                )
+                return ""
         except subprocess.CalledProcessError as e:
-            raise RTFMAdapterError(f"Command '{' '.join(cmd)}' failed with error: {e.stderr}") from e
+            err_msg = e.stderr if e.stderr else "See console output above."
+            raise RTFMAdapterError(f"Command '{' '.join(cmd)}' failed with error: {err_msg}") from e
         except FileNotFoundError as e:
             raise RTFMAdapterError(f"RTFM CLI not found (tried to run {cmd[0]}). Is it installed?") from e
 
@@ -82,7 +92,7 @@ class RTFMAdapter:
         cmd = ["rtfm", "expand", result_id]
         return self._run_command(cmd)
 
-    def sync(self, path: Optional[str] = None, *, corpus: Optional[str] = None) -> None:
+    def sync(self, path: Optional[str] = None, *, corpus: Optional[str] = None, capture_output: bool = True) -> None:
         """Trigger RTFM sync.
 
         If path and corpus are not provided, runs `rtfm sync` without arguments
@@ -93,5 +103,5 @@ class RTFMAdapter:
             cmd.append(path)
         if corpus:
             cmd.extend(["--corpus", corpus])
-        self._run_command(cmd)
+        self._run_command(cmd, capture_output=capture_output)
 

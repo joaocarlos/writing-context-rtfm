@@ -13,6 +13,10 @@ EXCLUDED_SOURCE_PATTERNS = [
     ".rtfm/",
     ".git/",
     "__pycache__/",
+    ".codex/",
+    ".claude/",
+    ".github/",
+    ".vscode/",
 ]
 EXCLUDED_SOURCE_EXTENSIONS = {".sqlite", ".db", ".lock"}
 

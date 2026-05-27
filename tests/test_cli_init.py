@@ -141,5 +141,62 @@ class TestCliInit(unittest.TestCase):
             self.assertIn("1. **Always retrieve context first**", new_content)
             self.assertNotIn("1. **MODIFIED RULE**", new_content)
 
+    def test_init_creates_claude_settings_with_hooks(self):
+        args = MockArgs(project_root=str(self.project_root))
+        
+        # 1. Run init on empty project
+        init_command(args)
+        
+        settings_file = self.project_root / ".claude" / "settings.json"
+        self.assertTrue(settings_file.exists())
+        
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertIn("hooks", data)
+        self.assertIn("PostToolUse", data["hooks"])
+        
+        hooks_list = data["hooks"]["PostToolUse"]
+        self.assertEqual(len(hooks_list), 1)
+        self.assertIn("write_to_file", hooks_list[0]["matcher"])
+        
+        inner_hook = hooks_list[0]["hooks"][0]
+        self.assertEqual(inner_hook["type"], "mcp_tool")
+        self.assertEqual(inner_hook["server"], "writing-context-rtfm")
+        self.assertEqual(inner_hook["tool"], "refresh_index")
+        
+        # 2. Run again to test idempotency
+        init_command(args)
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        self.assertEqual(len(data["hooks"]["PostToolUse"]), 1)
+        
+        # 3. Test preservation of pre-existing hooks/keys
+        settings_file.unlink() # reset
+        pre_existing = {
+            "permissions": {"allow": ["bash"]},
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "git_commit",
+                        "hooks": [{"type": "command", "command": "echo hello"}]
+                    }
+                ]
+            }
+        }
+        (self.project_root / ".claude").mkdir(exist_ok=True)
+        settings_file.write_text(json.dumps(pre_existing), encoding="utf-8")
+        
+        init_command(args)
+        data = json.loads(settings_file.read_text(encoding="utf-8"))
+        
+        # Permissions should be preserved
+        self.assertIn("permissions", data)
+        self.assertEqual(data["permissions"]["allow"], ["bash"])
+        
+        # Both hooks should exist
+        post_hooks = data["hooks"]["PostToolUse"]
+        self.assertEqual(len(post_hooks), 2)
+        matchers = [h["matcher"] for h in post_hooks]
+        self.assertIn("git_commit", matchers)
+        self.assertTrue(any("write_to_file" in m for m in matchers))
+
 if __name__ == '__main__':
     unittest.main()

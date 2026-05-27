@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.5] - 2026-05-27
+
+### Added
+- **Automated Hook Installation**: Integrated client-side lifecycle hook configuration into the `init` command. When initializing the project, it automatically registers a `PostToolUse` hook in `.claude/settings.json` that calls `refresh_index` on the MCP server upon successful agent writes/edits, ensuring the index and cache remain perfectly fresh.
+
 ## [0.5.4] - 2026-05-26
 
 ### Added

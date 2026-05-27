@@ -131,6 +131,70 @@ def _update_markdown_rules(root: Path, file_name: str, default_title: str) -> No
         except Exception as e:
             print(f"Warning: Failed to append to {md_file}: {e}")
 
+def _update_claude_settings(root: Path) -> None:
+    claude_dir = root / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings_file = claude_dir / "settings.json"
+    
+    settings_data = {}
+    if settings_file.exists():
+        try:
+            settings_data = json.loads(settings_file.read_text(encoding="utf-8"))
+            if not isinstance(settings_data, dict):
+                settings_data = {}
+        except Exception as e:
+            print(f"Warning: Failed to parse existing {settings_file}: {e}. Overwriting/re-creating.")
+            settings_data = {}
+            
+    hooks = settings_data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = {}
+        settings_data["hooks"] = hooks
+        
+    post_tool_use = hooks.setdefault("PostToolUse", [])
+    if not isinstance(post_tool_use, list):
+        post_tool_use = []
+        hooks["PostToolUse"] = post_tool_use
+        
+    # Check if our hook already exists
+    hook_exists = False
+    for hook_entry in post_tool_use:
+        if not isinstance(hook_entry, dict):
+            continue
+        inner_hooks = hook_entry.get("hooks", [])
+        if not isinstance(inner_hooks, list):
+            continue
+        for inner in inner_hooks:
+            if not isinstance(inner, dict):
+                continue
+            if inner.get("type") == "mcp_tool" and inner.get("server") == "writing-context-rtfm" and inner.get("tool") == "refresh_index":
+                hook_exists = True
+                break
+        if hook_exists:
+            break
+            
+    if not hook_exists:
+        new_hook = {
+            "matcher": "write_to_file|replace_file_content|multi_replace_file_content|write_file|edit_file|edit_file_content|save_file|create_file",
+            "hooks": [
+                {
+                    "type": "mcp_tool",
+                    "server": "writing-context-rtfm",
+                    "tool": "refresh_index",
+                    "arguments": {
+                        "project_root": "$CLAUDE_PROJECT_DIR"
+                    }
+                }
+            ]
+        }
+        post_tool_use.append(new_hook)
+        
+    try:
+        settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
+        print(f"Updated {settings_file} with writing-context-rtfm PostToolUse hooks.")
+    except Exception as e:
+        print(f"Warning: Failed to write {settings_file}: {e}")
+
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
     root = Path(getattr(args, "project_root", ".")).resolve()
@@ -249,6 +313,9 @@ def init_command(args):
     _update_markdown_rules(root, "CLAUDE.md", "Developer & Agent Guidelines (CLAUDE.md)")
     _update_markdown_rules(root, "AGENTS.md", "Agent Guidelines (AGENTS.md)")
     _update_markdown_rules(root, "GEMINI.md", "Gemini Agent Guidelines (GEMINI.md)")
+
+    # 4. Update Claude/Codex hooks configuration
+    _update_claude_settings(root)
 
 def init_cards_command(args):
     """Scans the workspace and generates or appends section cards."""

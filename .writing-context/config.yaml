@@ -1,0 +1,66 @@
+# writing-context-rtfm Configuration File
+version: 1
+
+# RTFM core indexing settings
+rtfm:
+  # The corpus name registered in RTFM for this manuscript project.
+  corpus: manuscript
+  # Enable auto-sync before generating a context pack to ensure the index is up-to-date.
+  # sync_before_pack: true
+
+# Context pack generation settings
+# context:
+  # The default input token budget for generating writing context packs.
+  # default_token_budget: 12000
+  # The margin (percentage as decimal) of the budget reserved for LLM response generation.
+  # reserved_generation_margin: 0.10
+  # Maximum number of source spans to include in a context pack.
+  # max_source_spans: 35
+  # Minimum similarity score required for a retrieved span to be considered.
+  # min_score: 0.01
+  # Distribution of the token budget among different types of context roles:
+  # role_budgets:
+  #   target_text: 0.35
+  #   local_context: 0.15
+  #   dependency: 0.30
+  #   reference: 0.20
+
+# Caching configuration
+# cache:
+  # Enable caching of generated context packs to reduce token and response overhead.
+  # enabled: true
+  # Invalidate cached context packs when the index is synced/refreshed.
+  # invalidate_on_refresh: true
+
+# External context providers configuration (Zotero, NotebookLM, Scite, Consensus)
+# providers:
+  # zotero:
+    # enabled: false
+    # mcp_server:
+      # command: npx
+      # args: ["-y", "zotero-mcp"]
+  # notebooklm:
+    # enabled: false
+    # mcp_server:
+      # command: python
+      # args: ["-m", "notebooklm_mcp"]
+  # scite:
+    # enabled: false
+    # sse_url: "https://api.scite.ai/mcp"
+    # # Individual/OAuth auth tokens can be configured as headers.
+    # # To retrieve your token: sign in to scite.ai on your browser,
+    # # open DevTools (F12) -> Network tab, run a search, and look
+    # # for requests to api.scite.ai. Copy the value of the "Authorization"
+    # # header and paste it here.
+    # headers:
+      # Authorization: "Bearer <YOUR_TOKEN_HERE>"
+  # consensus:
+    # enabled: false
+    # sse_url: "https://mcp.consensus.app/mcp"
+    # # Individual/OAuth auth tokens can be configured as headers.
+    # # To retrieve your token: sign in to consensus.app on your browser,
+    # # open DevTools (F12) -> Network tab, run a search, and look
+    # # for requests to mcp.consensus.app. Copy the value of the "Authorization"
+    # # header and paste it here.
+    # headers:
+      # Authorization: "Bearer <YOUR_TOKEN_HERE>"

@@ -56,11 +56,9 @@ class TestProjectRootResolution(unittest.TestCase):
         assert "section_approach" in cards.sections
 
     def test_section_cards_not_loaded_from_wrong_root(self):
-        config = load_config(".")  # project root without section_cards
+        config = load_config("tests")  # project root without section_cards
         cards = load_section_cards(config.section_cards.path)
-        # The stub created by `init` has no thesis
-        if cards is not None:
-            assert cards.document.thesis is None
+        assert cards is None
 
     def test_degraded_status_when_no_section_cards(self):
         gen, config, _ = make_generator(project_root=".")

@@ -1,8 +1,9 @@
 """Configuration schema and loading."""
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional
 import yaml
 from dataclasses import dataclass, field
+from writing_context_rtfm.schemas import ProviderConfig, MCPServerConfig
 
 @dataclass(frozen=True)
 class RTFMConfig:
@@ -44,17 +45,26 @@ class AppConfig:
     context: ContextConfig
     cache: CacheConfig
     section_cards: SectionCardsConfig
+    providers: Dict[str, ProviderConfig] = field(default_factory=dict)
 
 def load_config(project_root: str = ".") -> AppConfig:
     root = Path(project_root).resolve()
     config_path = root / ".writing-context" / "config.yaml"
+
+    default_providers = {
+        "zotero": ProviderConfig(enabled=False),
+        "notebooklm": ProviderConfig(enabled=False),
+        "scite": ProviderConfig(enabled=False),
+        "consensus": ProviderConfig(enabled=False)
+    }
 
     defaults = AppConfig(
         version=1,
         rtfm=RTFMConfig(project_root=str(root)),
         context=ContextConfig(),
         cache=CacheConfig(path=str(root / ".writing-context" / "context_cache.sqlite")),
-        section_cards=SectionCardsConfig(path=str(root / ".writing-context" / "section_cards.yaml"))
+        section_cards=SectionCardsConfig(path=str(root / ".writing-context" / "section_cards.yaml")),
+        providers=default_providers
     )
 
     if not config_path.exists():
@@ -64,7 +74,7 @@ def load_config(project_root: str = ".") -> AppConfig:
         data = yaml.safe_load(f) or {}
 
     # Ensure sections are dictionaries if present
-    for key in ("cache", "section_cards", "rtfm", "context"):
+    for key in ("cache", "section_cards", "rtfm", "context", "providers"):
         val = data.get(key)
         if val is not None and not isinstance(val, dict):
             raise TypeError(f"'{key}' section in config must be a dictionary, got {type(val).__name__}")
@@ -94,10 +104,56 @@ def load_config(project_root: str = ".") -> AppConfig:
             merged_budgets = {**defaults_budgets, **user_budgets}
             context_data["role_budgets"] = merged_budgets
 
+    # Parse and validate providers
+    raw_providers = data.get("providers") or {}
+    parsed_providers = dict(default_providers)
+
+    for name, p_data in raw_providers.items():
+        if not isinstance(p_data, dict):
+            raise TypeError(f"Provider '{name}' configuration must be a dictionary, got {type(p_data).__name__}")
+
+        enabled = p_data.get("enabled", False)
+
+        mcp_server_data = p_data.get("mcp_server")
+        mcp_server = None
+        if mcp_server_data is not None:
+            if not isinstance(mcp_server_data, dict):
+                raise TypeError(f"Provider '{name}' 'mcp_server' must be a dictionary, got {type(mcp_server_data).__name__}")
+            if "command" not in mcp_server_data:
+                raise ValueError(f"Provider '{name}' 'mcp_server' must specify 'command'")
+            mcp_server = MCPServerConfig(
+                command=mcp_server_data["command"],
+                args=mcp_server_data.get("args") or []
+            )
+
+        sse_url = p_data.get("sse_url")
+
+        headers = p_data.get("headers")
+        if headers is not None:
+            if not isinstance(headers, dict):
+                raise TypeError(f"Provider '{name}' 'headers' must be a dictionary, got {type(headers).__name__}")
+            # Ensure headers has string keys and string values
+            for k, v in headers.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise TypeError(f"Provider '{name}' 'headers' keys and values must be strings")
+
+        if enabled:
+            if not mcp_server and not sse_url:
+                raise ValueError(f"Provider '{name}' must configure either 'mcp_server' or 'sse_url' if enabled.")
+
+        parsed_providers[name] = ProviderConfig(
+            enabled=enabled,
+            mcp_server=mcp_server,
+            sse_url=sse_url,
+            headers=headers
+        )
+
     return AppConfig(
         version=data.get("version", 1),
         rtfm=RTFMConfig(**rtfm_data),
         context=ContextConfig(**context_data),
         cache=CacheConfig(**cache_data) if cache_data else defaults.cache,
-        section_cards=SectionCardsConfig(**sc_data) if sc_data else defaults.section_cards
+        section_cards=SectionCardsConfig(**sc_data) if sc_data else defaults.section_cards,
+        providers=parsed_providers
     )
+

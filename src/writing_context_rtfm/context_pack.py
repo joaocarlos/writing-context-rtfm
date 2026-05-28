@@ -8,13 +8,20 @@ from collections import defaultdict
 
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.section_cards import SectionCards, SectionCard
-from writing_context_rtfm.schemas import RTFMResult
+from writing_context_rtfm.schemas import (
+    RTFMResult,
+    SourceSpan,
+    CacheDiagnostics,
+    PackQuality,
+    ContextPack,
+)
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.hashing import compute_task_hash, stable_hash, compute_rtfm_fingerprint
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
 
 from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands, resolve_rtfm_db_path
+from writing_context_rtfm.providers.base import BaseContextProvider
 
 def _path_matches(path: str, card_path: Optional[str]) -> bool:
     """Helper to check if path matches a card's path case-insensitively."""
@@ -27,61 +34,8 @@ def _path_matches(path: str, card_path: Optional[str]) -> bool:
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
-@dataclass(frozen=True)
-class SourceSpan:
-    path: str
-    line_start: Optional[int]
-    line_end: Optional[int]
-    reason: str
-    score: float
-    priority: str = "background"     # "essential" | "supporting" | "background"
-    query: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    source_role: str = "reference"   # "target_text" | "local_context" | "dependency" | "reference"
+# Imported from writing_context_rtfm.schemas
 
-@dataclass(frozen=True)
-class CacheDiagnostics:
-    enabled: bool
-    hit: bool
-    task_hash: Optional[str] = None
-    config_hash: Optional[str] = None
-    section_cards_hash: Optional[str] = None
-    rtfm_index_fingerprint: Optional[str] = None
-
-@dataclass
-class PackQuality:
-    section_cards_loaded: bool = False
-    section_cards_path: Optional[str] = None
-    config_loaded: bool = False
-    project_root: Optional[str] = None
-    queries_issued: int = 0
-    candidate_count: int = 0
-    selected_count: int = 0
-    discarded_low_score: int = 0
-    discarded_excluded_path: int = 0
-    discarded_avoid_match: int = 0
-    dropped_for_budget: int = 0
-    truncated: bool = False
-    estimated_tokens: int = 0
-
-@dataclass(frozen=True)
-class ContextPack:
-    task: str
-    target: Optional[str]
-    document_thesis: Optional[str]
-    prior_claims: List[str]
-    terminology: Dict[str, str]
-    constraints: List[str]
-    source_spans: List[SourceSpan]
-    estimated_tokens: int
-    status: str = "complete"           # "complete" | "degraded"
-    warnings: List[str] = field(default_factory=list)
-    quality: Optional[Dict[str, Any]] = None
-    summary: Optional[str] = None
-    run_id: Optional[str] = None
-    cache: Optional[CacheDiagnostics] = None
-    task_type: Optional[str] = None
-    pack_mode: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -89,12 +43,15 @@ class ContextPack:
 # ---------------------------------------------------------------------------
 class ContextPackGenerator:
     def __init__(self, config: AppConfig, section_cards: Optional[SectionCards],
-                 adapter: RTFMAdapter, store: ExtensionStore):
+                 adapter: RTFMAdapter, store: ExtensionStore,
+                 providers: Optional[List[BaseContextProvider]] = None):
         self.config = config
         self.section_cards = section_cards
         self.adapter = adapter
         self.store = store
+        self.providers = providers or []
         self._hash_cache: Dict[Path, Tuple[float, int, str]] = {}
+
 
     def _get_file_hash(self, path: Path, fallback_val: str) -> str:
         if not path.exists():
@@ -640,6 +597,16 @@ class ContextPackGenerator:
                     all_candidates.append(span)
             except Exception as e:
                 warnings.append(f"Search failed for query '{q}': {e}")
+
+        # --- Providers Context Retrieval ---
+        for provider in self.providers:
+            if provider.is_available(self.config):
+                try:
+                    p_spans = provider.fetch_context(queries, target, limit=max_spans)
+                    all_candidates.extend(p_spans)
+                except Exception as e:
+                    warnings.append(f"Provider '{provider.provider_id}' failed: {e}")
+                    status = "degraded"
 
         quality.candidate_count = len(all_candidates)
 

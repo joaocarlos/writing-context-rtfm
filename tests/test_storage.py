@@ -181,5 +181,21 @@ class TestStorage(unittest.TestCase):
         self.assertIsNotNone(cached)
         self.assertEqual(cached, payload)
 
+    def test_provider_tokens(self):
+        # Initial is None
+        self.assertIsNone(self.store.get_provider_token("scite"))
+        self.assertIsNone(self.store.get_provider_token("consensus"))
+
+        # Save and retrieve
+        self.store.set_provider_token("scite", "scite_token_abc")
+        self.store.set_provider_token("consensus", "consensus_token_123")
+
+        self.assertEqual(self.store.get_provider_token("scite"), "scite_token_abc")
+        self.assertEqual(self.store.get_provider_token("consensus"), "consensus_token_123")
+
+        # Update
+        self.store.set_provider_token("scite", "new_scite_token")
+        self.assertEqual(self.store.get_provider_token("scite"), "new_scite_token")
+
 if __name__ == '__main__':
     unittest.main()

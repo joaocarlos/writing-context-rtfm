@@ -183,9 +183,21 @@ class SciteProvider(BaseContextProvider):
         if not provider_cfg or not provider_cfg.enabled or not provider_cfg.sse_url:
             return []
         
+        headers = dict(provider_cfg.headers) if provider_cfg.headers else {}
+        if "Authorization" not in headers:
+            from writing_context_rtfm.storage import ExtensionStore
+            try:
+                store = ExtensionStore(self.config.cache.path)
+                store.init_db()
+                cached_token = store.get_provider_token("scite")
+                if cached_token:
+                    headers["Authorization"] = f"Bearer {cached_token}"
+            except Exception:
+                pass
+
         return run_async(fetch_all_queries(
             provider_cfg.sse_url,
-            provider_cfg.headers,
+            headers,
             queries,
             limit,
             "scite"
@@ -208,9 +220,21 @@ class ConsensusProvider(BaseContextProvider):
         if not provider_cfg or not provider_cfg.enabled or not provider_cfg.sse_url:
             return []
         
+        headers = dict(provider_cfg.headers) if provider_cfg.headers else {}
+        if "Authorization" not in headers:
+            from writing_context_rtfm.storage import ExtensionStore
+            try:
+                store = ExtensionStore(self.config.cache.path)
+                store.init_db()
+                cached_token = store.get_provider_token("consensus")
+                if cached_token:
+                    headers["Authorization"] = f"Bearer {cached_token}"
+            except Exception:
+                pass
+
         return run_async(fetch_all_queries(
             provider_cfg.sse_url,
-            provider_cfg.headers,
+            headers,
             queries,
             limit,
             "consensus"

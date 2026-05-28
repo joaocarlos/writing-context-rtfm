@@ -494,6 +494,180 @@ def get_term_command(args):
 def serve_command(args):
     run_server()
 
+def auth_command(args):
+    import http.server
+    import socketserver
+    import webbrowser
+    import json
+    
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+    provider = args.provider
+    
+    token_received = None
+    
+    class TokenHandler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def do_OPTIONS(self):
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.end_headers()
+
+        def do_POST(self):
+            nonlocal token_received
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            
+            try:
+                data = json.loads(body)
+                token_received = data
+                
+                self.send_response(200)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(str(e).encode("utf-8"))
+                
+    port = 8989
+    server = None
+    for p in range(8989, 9000):
+        try:
+            server = socketserver.TCPServer(("localhost", p), TokenHandler)
+            port = p
+            break
+        except OSError:
+            continue
+            
+    if not server:
+        print("Error: Could not start local authentication server on ports 8989-9000.", file=sys.stderr)
+        sys.exit(1)
+        
+    url = "https://scite.ai" if provider == "scite" else "https://consensus.app"
+    print(f"\n[*] Starting local token collector on port {port}...")
+    print(f"[*] Opening browser to {url}...")
+    webbrowser.open(url)
+    
+    print("\n" + "=" * 80)
+    print("[AUTHENTICATION INSTRUCTIONS]")
+    print(f"1. Log in to your {provider.capitalize()} account in the browser.")
+    print("2. Open Developer Tools Console (F12 or Cmd+Option+J -> Console).")
+    print("3. Paste the following JavaScript snippet and press Enter:")
+    print("-" * 80)
+    
+    if provider == "consensus":
+        js_code = f"""
+(function() {{
+    const supabaseToken = localStorage.getItem("supabase.auth.token");
+    let token = null;
+    if (supabaseToken) {{
+        try {{
+            const parsed = JSON.parse(supabaseToken);
+            token = parsed.currentSession?.access_token;
+        }} catch(e) {{}}
+    }}
+    if (!token) {{
+        for (let i = 0; i < localStorage.length; i++) {{
+            const k = localStorage.key(i);
+            if (k.includes("supabase.auth.token")) {{
+                try {{
+                    const parsed = JSON.parse(localStorage.getItem(k));
+                    token = parsed.currentSession?.access_token;
+                    break;
+                }} catch(e) {{}}
+            }}
+        }}
+    }}
+    if (!token) {{
+        console.error("Could not find auth token in local storage. Are you logged in?");
+        alert("Could not find auth token in local storage. Make sure you are logged in!");
+        return;
+    }}
+    fetch("http://localhost:{port}/token", {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{token: token}})
+    }}).then(res => res.json()).then(data => {{
+        console.log("Token sent successfully!", data);
+        alert("Authentication successful! You can close this tab and return to the terminal.");
+    }}).catch(err => {{
+        console.error("Failed to send token:", err);
+        alert("Failed to send token: " + err);
+    }});
+}})();
+"""
+    else:  # scite
+        js_code = f"""
+(function() {{
+    let token = localStorage.getItem("token") || localStorage.getItem("access_token") || localStorage.getItem("jwt");
+    if (!token) {{
+        for (let i = 0; i < localStorage.length; i++) {{
+            const k = localStorage.key(i);
+            const v = localStorage.getItem(k);
+            if (typeof v === "string" && v.startsWith("ey") && v.split(".").length === 3) {{
+                token = v;
+                break;
+            }}
+        }}
+    }}
+    if (!token) {{
+        const cookies = document.cookie.split(";");
+        for (let cookie of cookies) {{
+            const [name, val] = cookie.trim().split("=");
+            if (val && val.trim().startsWith("ey") && val.trim().split(".").length === 3) {{
+                token = val.trim();
+                break;
+            }}
+        }}
+    }}
+    if (!token) {{
+        console.error("Could not find JWT token in LocalStorage/Cookies.");
+        alert("Could not find token automatically. Make sure you are logged in!");
+        return;
+    }}
+    fetch("http://localhost:{port}/token", {{
+        method: "POST",
+        headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{token: token}})
+    }}).then(res => res.json()).then(data => {{
+        console.log("Token sent successfully!", data);
+        alert("Authentication successful! You can close this tab and return to the terminal.");
+    }}).catch(err => {{
+        console.error("Failed to send token:", err);
+        alert("Failed to send token: " + err);
+    }});
+}})();
+"""
+    print(js_code.strip())
+    print("-" * 80)
+    print("[*] Waiting for authentication from browser (Press Ctrl+C to cancel)...")
+    
+    try:
+        while token_received is None:
+            server.handle_request()
+    except KeyboardInterrupt:
+        print("\n[!] Authentication cancelled.")
+        sys.exit(1)
+    finally:
+        server.server_close()
+        
+    token = token_received.get("token")
+    if token:
+        store = ExtensionStore(config.cache.path)
+        store.init_db()
+        store.set_provider_token(provider, token)
+        print(f"\n[OK] Authentication token for {provider.capitalize()} successfully saved to cache database!")
+    else:
+        print("\n[FAIL] Authentication failed: received empty token.", file=sys.stderr)
+        sys.exit(1)
+
 def doctor_command(args):
     project_root = Path(getattr(args, "project_root", ".")).resolve()
     
@@ -787,6 +961,11 @@ def main():
     parser_show_graph.add_argument("--project-root", default=".", help="Project root path")
     parser_show_graph.add_argument("--format", default="text", choices=["text", "json"], help="Output format")
 
+    # auth
+    parser_auth = subparsers.add_parser("auth", help="Authenticate with Scite or Consensus cloud providers")
+    parser_auth.add_argument("provider", choices=["scite", "consensus"], help="Provider to authenticate with")
+    parser_auth.add_argument("--project-root", default=".", help="Project root path")
+
     subparsers.add_parser("serve", help="Start the MCP server")
 
     args = parser.parse_args()
@@ -800,6 +979,7 @@ def main():
         "proofread-pack": proofread_pack_command,
         "serve": serve_command,
         "cache": cache_command,
+        "auth": auth_command,
         "doctor": doctor_command,
         "inspect-target": inspect_target_command,
         "get-term": get_term_command,

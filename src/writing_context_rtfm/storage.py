@@ -127,6 +127,14 @@ class ExtensionStore:
                 FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
             );
             """)
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS provider_tokens (
+                provider_id TEXT PRIMARY KEY,
+                token TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
             conn.commit()
 
     def _compress(self, data: str) -> bytes:
@@ -256,3 +264,23 @@ class ExtensionStore:
                 VALUES (?, ?, ?, ?)
             """, (run_id, metric_name, metric_value, metric_text))
             conn.commit()
+
+    def get_provider_token(self, provider_id: str) -> Optional[str]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT token FROM provider_tokens WHERE provider_id = ?", (provider_id,))
+            row = cursor.fetchone()
+            if row:
+                return row["token"]
+        return None
+
+    def set_provider_token(self, provider_id: str, token: str) -> None:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO provider_tokens (provider_id, token, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(provider_id) DO UPDATE SET token=excluded.token, updated_at=CURRENT_TIMESTAMP
+            """, (provider_id, token))
+            conn.commit()
+

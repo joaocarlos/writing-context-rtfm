@@ -527,51 +527,11 @@ def auth_command(args):
     store = ExtensionStore(config.cache.path)
     store.init_db()
     
-    # 1. Dynamic Client Registration (DCR)
-    oauth_data = store.get_provider_oauth(provider)
-    client_id = oauth_data.get("client_id") if oauth_data else None
-    
-    port = 8989
-    redirect_uri = f"http://localhost:{port}/callback"
-    
-    if not client_id:
-        print(f"[*] Registering dynamic client with {provider.capitalize()}...")
-        reg_payload = {
-            "client_name": "writing-context-rtfm",
-            "redirect_uris": [redirect_uri],
-            "grant_types": ["authorization_code", "refresh_token"],
-            "response_types": ["code"],
-            "token_endpoint_auth_method": "none",
-            "scope": scope
-        }
-        try:
-            req = urllib.request.Request(
-                reg_url,
-                data=json.dumps(reg_payload).encode("utf-8"),
-                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
-                method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                reg_resp = json.loads(resp.read().decode())
-                client_id = reg_resp.get("client_id")
-                if not client_id:
-                    raise ValueError("Registration response did not return a client_id")
-                store.set_provider_oauth(provider, client_id=client_id)
-                print(f"[OK] Dynamically registered! Client ID: {client_id}")
-        except Exception as e:
-            print(f"Error: Dynamic registration failed: {e}", file=sys.stderr)
-            sys.exit(1)
-            
-    # 2. PKCE Setup
-    code_verifier = secrets.token_urlsafe(64)
-    sha256_hash = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    code_challenge = base64.urlsafe_b64encode(sha256_hash).decode("ascii").replace("=", "")
-    
-    state = secrets.token_urlsafe(16)
     auth_code = None
     auth_error = None
+    state = secrets.token_urlsafe(16)
     
-    # 3. Setup local callback server
+    # 1. Setup local callback server handler
     class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             return
@@ -621,13 +581,14 @@ def auth_command(args):
                 """
             self.wfile.write(html.encode("utf-8"))
 
-    # Bind port
+    # 2. Bind port first to find a free port
+    socketserver.TCPServer.allow_reuse_address = True
     server = None
+    port = 8989
     for p in range(8989, 9000):
         try:
             server = socketserver.TCPServer(("localhost", p), OAuthCallbackHandler)
             port = p
-            redirect_uri = f"http://localhost:{port}/callback"
             break
         except OSError:
             continue
@@ -636,7 +597,43 @@ def auth_command(args):
         print("Error: Could not start local callback server on ports 8989-9000.", file=sys.stderr)
         sys.exit(1)
         
-    # 4. Construct Authorization URL
+    redirect_uri = f"http://localhost:{port}/callback"
+    
+    # 3. Dynamic Client Registration (DCR) using the exact bound port's redirect URI
+    print(f"[*] Registering dynamic client with {provider.capitalize()} on port {port}...")
+    reg_payload = {
+        "client_name": "writing-context-rtfm",
+        "redirect_uris": [redirect_uri],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+        "scope": scope
+    }
+    try:
+        req = urllib.request.Request(
+            reg_url,
+            data=json.dumps(reg_payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            reg_resp = json.loads(resp.read().decode())
+            client_id = reg_resp.get("client_id")
+            if not client_id:
+                raise ValueError("Registration response did not return a client_id")
+            store.set_provider_oauth(provider, client_id=client_id)
+            print(f"[OK] Dynamically registered! Client ID: {client_id}")
+    except Exception as e:
+        print(f"Error: Dynamic registration failed: {e}", file=sys.stderr)
+        server.server_close()
+        sys.exit(1)
+            
+    # 4. PKCE Setup
+    code_verifier = secrets.token_urlsafe(64)
+    sha256_hash = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(sha256_hash).decode("ascii").replace("=", "")
+    
+    # 5. Construct Authorization URL
     auth_params = {
         "response_type": "code",
         "client_id": client_id,
@@ -666,7 +663,7 @@ def auth_command(args):
         print(f"\n[FAIL] Authentication failed: {auth_error}", file=sys.stderr)
         sys.exit(1)
         
-    # 5. Exchange Authorization Code for Access & Refresh Tokens
+    # 6. Exchange Authorization Code for Access & Refresh Tokens
     print("[*] Exchanging authorization code for access token...")
     token_payload = {
         "grant_type": "authorization_code",

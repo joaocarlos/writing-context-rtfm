@@ -163,5 +163,45 @@ class TestProvidersCloud(unittest.TestCase):
         self.assertEqual(len(spans), 0)
         mock_sse_client.assert_not_called()
 
+    @patch("urllib.request.urlopen")
+    def test_get_valid_oauth_token_refreshes_when_expired(self, mock_urlopen):
+        import time
+        from writing_context_rtfm.storage import ExtensionStore
+        from writing_context_rtfm.providers.cloud import get_valid_oauth_token
+        
+        store = ExtensionStore(self.config.cache.path)
+        store.init_db()
+        
+        # 1. Insert expired token
+        store.set_provider_oauth(
+            "scite",
+            client_id="client_abc",
+            access_token="old_access",
+            refresh_token="refresh_123",
+            expires_at=time.time() - 100
+        )
+        
+        # 2. Mock urlopen response for refreshing
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "access_token": "new_access_token",
+            "refresh_token": "new_refresh_token",
+            "expires_in": 3600
+        }).encode("utf-8")
+        mock_urlopen.return_value = mock_response
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+        
+        # 3. Call get_valid_oauth_token
+        token = get_valid_oauth_token(self.config, "scite")
+        
+        # Assertions
+        self.assertEqual(token, "new_access_token")
+        
+        # Verify db updated
+        oauth = store.get_provider_oauth("scite")
+        self.assertEqual(oauth["access_token"], "new_access_token")
+        self.assertEqual(oauth["refresh_token"], "new_refresh_token")
+        self.assertTrue(oauth["expires_at"] > time.time() + 3500)
+
 if __name__ == '__main__':
     unittest.main()

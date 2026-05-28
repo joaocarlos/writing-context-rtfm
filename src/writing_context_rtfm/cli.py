@@ -493,164 +493,168 @@ def get_term_command(args):
 
 def serve_command(args):
     run_server()
-
 def auth_command(args):
     import http.server
     import socketserver
     import webbrowser
     import json
+    import secrets
+    import hashlib
+    import base64
+    import urllib.parse
+    import urllib.request
+    import time
+    from writing_context_rtfm.storage import ExtensionStore
     
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
     provider = args.provider
     
-    token_received = None
+    if provider == "scite":
+        reg_url = "https://api.scite.ai/mcp/oauth/register"
+        auth_url = "https://api.scite.ai/mcp/oauth/authorize"
+        token_url = "https://api.scite.ai/mcp/oauth/token"
+        scope = "mcp"
+    elif provider == "consensus":
+        reg_url = "https://consensus.app/oauth/register/"
+        auth_url = "https://consensus.app/oauth/authorize/"
+        token_url = "https://consensus.app/oauth/token/"
+        scope = "search"
+    else:
+        print(f"Error: Unsupported provider '{provider}'", file=sys.stderr)
+        sys.exit(1)
+        
+    store = ExtensionStore(config.cache.path)
+    store.init_db()
     
-    class TokenHandler(http.server.BaseHTTPRequestHandler):
+    # 1. Dynamic Client Registration (DCR)
+    oauth_data = store.get_provider_oauth(provider)
+    client_id = oauth_data.get("client_id") if oauth_data else None
+    
+    port = 8989
+    redirect_uri = f"http://localhost:{port}/callback"
+    
+    if not client_id:
+        print(f"[*] Registering dynamic client with {provider.capitalize()}...")
+        reg_payload = {
+            "client_name": "writing-context-rtfm",
+            "redirect_uris": [redirect_uri],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "scope": scope
+        }
+        try:
+            req = urllib.request.Request(
+                reg_url,
+                data=json.dumps(reg_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                reg_resp = json.loads(resp.read().decode())
+                client_id = reg_resp.get("client_id")
+                if not client_id:
+                    raise ValueError("Registration response did not return a client_id")
+                store.set_provider_oauth(provider, client_id=client_id)
+                print(f"[OK] Dynamically registered! Client ID: {client_id}")
+        except Exception as e:
+            print(f"Error: Dynamic registration failed: {e}", file=sys.stderr)
+            sys.exit(1)
+            
+    # 2. PKCE Setup
+    code_verifier = secrets.token_urlsafe(64)
+    sha256_hash = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(sha256_hash).decode("ascii").replace("=", "")
+    
+    state = secrets.token_urlsafe(16)
+    auth_code = None
+    auth_error = None
+    
+    # 3. Setup local callback server
+    class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             return
 
-        def do_OPTIONS(self):
-            self.send_response(200)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.end_headers()
-
-        def do_POST(self):
-            nonlocal token_received
-            content_length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(content_length).decode("utf-8")
+        def do_GET(self):
+            nonlocal auth_code, auth_error
+            parsed_url = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed_url.query)
             
-            try:
-                data = json.loads(body)
-                token_received = data
-                
-                self.send_response(200)
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Content-Type", "application/json")
+            if parsed_url.path != "/callback":
+                self.send_response(404)
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
-            except Exception as e:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(str(e).encode("utf-8"))
+                self.wfile.write(b"Not Found")
+                return
                 
-    port = 8989
+            incoming_state = query.get("state", [None])[0]
+            if incoming_state != state:
+                auth_error = "State mismatch. Possible CSRF attack."
+            else:
+                auth_code = query.get("code", [None])[0]
+                if not auth_code:
+                    auth_error = query.get("error_description", [query.get("error", ["Unknown error"])])[0]
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            
+            if auth_error:
+                html = f"""
+                <html>
+                <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #fafafa;">
+                    <h2 style="color: #d9534f;">Authentication Failed</h2>
+                    <p style="color: #666;">{auth_error}</p>
+                    <p>You can close this tab and try again in the terminal.</p>
+                </body>
+                </html>
+                """
+            else:
+                html = """
+                <html>
+                <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #fafafa;">
+                    <h2 style="color: #5cb85c;">Authorization Successful!</h2>
+                    <p style="color: #666;">You have successfully authorized writing-context-rtfm.</p>
+                    <p>You can close this tab now and return to your terminal.</p>
+                </body>
+                </html>
+                """
+            self.wfile.write(html.encode("utf-8"))
+
+    # Bind port
     server = None
     for p in range(8989, 9000):
         try:
-            server = socketserver.TCPServer(("localhost", p), TokenHandler)
+            server = socketserver.TCPServer(("localhost", p), OAuthCallbackHandler)
             port = p
+            redirect_uri = f"http://localhost:{port}/callback"
             break
         except OSError:
             continue
             
     if not server:
-        print("Error: Could not start local authentication server on ports 8989-9000.", file=sys.stderr)
+        print("Error: Could not start local callback server on ports 8989-9000.", file=sys.stderr)
         sys.exit(1)
         
-    url = "https://scite.ai" if provider == "scite" else "https://consensus.app"
-    print(f"\n[*] Starting local token collector on port {port}...")
-    print(f"[*] Opening browser to {url}...")
-    webbrowser.open(url)
+    # 4. Construct Authorization URL
+    auth_params = {
+        "response_type": "code",
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+        "state": state
+    }
+    authorize_url = f"{auth_url}?{urllib.parse.urlencode(auth_params)}"
     
-    print("\n" + "=" * 80)
-    print("[AUTHENTICATION INSTRUCTIONS]")
-    print(f"1. Log in to your {provider.capitalize()} account in the browser.")
-    print("2. Open Developer Tools Console (F12 or Cmd+Option+J -> Console).")
-    print("3. Paste the following JavaScript snippet and press Enter:")
-    print("-" * 80)
+    print(f"\n[*] Opening browser to authorize writing-context-rtfm...")
+    print(f"[*] URL: {authorize_url}\n")
+    webbrowser.open(authorize_url)
     
-    if provider == "consensus":
-        js_code = f"""
-(function() {{
-    const supabaseToken = localStorage.getItem("supabase.auth.token");
-    let token = null;
-    if (supabaseToken) {{
-        try {{
-            const parsed = JSON.parse(supabaseToken);
-            token = parsed.currentSession?.access_token;
-        }} catch(e) {{}}
-    }}
-    if (!token) {{
-        for (let i = 0; i < localStorage.length; i++) {{
-            const k = localStorage.key(i);
-            if (k.includes("supabase.auth.token")) {{
-                try {{
-                    const parsed = JSON.parse(localStorage.getItem(k));
-                    token = parsed.currentSession?.access_token;
-                    break;
-                }} catch(e) {{}}
-            }}
-        }}
-    }}
-    if (!token) {{
-        console.error("Could not find auth token in local storage. Are you logged in?");
-        alert("Could not find auth token in local storage. Make sure you are logged in!");
-        return;
-    }}
-    fetch("http://localhost:{port}/token", {{
-        method: "POST",
-        headers: {{"Content-Type": "application/json"}},
-        body: JSON.stringify({{token: token}})
-    }}).then(res => res.json()).then(data => {{
-        console.log("Token sent successfully!", data);
-        alert("Authentication successful! You can close this tab and return to the terminal.");
-    }}).catch(err => {{
-        console.error("Failed to send token:", err);
-        alert("Failed to send token: " + err);
-    }});
-}})();
-"""
-    else:  # scite
-        js_code = f"""
-(function() {{
-    let token = localStorage.getItem("token") || localStorage.getItem("access_token") || localStorage.getItem("jwt");
-    if (!token) {{
-        for (let i = 0; i < localStorage.length; i++) {{
-            const k = localStorage.key(i);
-            const v = localStorage.getItem(k);
-            if (typeof v === "string" && v.startsWith("ey") && v.split(".").length === 3) {{
-                token = v;
-                break;
-            }}
-        }}
-    }}
-    if (!token) {{
-        const cookies = document.cookie.split(";");
-        for (let cookie of cookies) {{
-            const [name, val] = cookie.trim().split("=");
-            if (val && val.trim().startsWith("ey") && val.trim().split(".").length === 3) {{
-                token = val.trim();
-                break;
-            }}
-        }}
-    }}
-    if (!token) {{
-        console.error("Could not find JWT token in LocalStorage/Cookies.");
-        alert("Could not find token automatically. Make sure you are logged in!");
-        return;
-    }}
-    fetch("http://localhost:{port}/token", {{
-        method: "POST",
-        headers: {{"Content-Type": "application/json"}},
-        body: JSON.stringify({{token: token}})
-    }}).then(res => res.json()).then(data => {{
-        console.log("Token sent successfully!", data);
-        alert("Authentication successful! You can close this tab and return to the terminal.");
-    }}).catch(err => {{
-        console.error("Failed to send token:", err);
-        alert("Failed to send token: " + err);
-    }});
-}})();
-"""
-    print(js_code.strip())
-    print("-" * 80)
-    print("[*] Waiting for authentication from browser (Press Ctrl+C to cancel)...")
-    
+    print("[*] Waiting for authorization callback in browser (Press Ctrl+C to cancel)...")
     try:
-        while token_received is None:
+        while auth_code is None and auth_error is None:
             server.handle_request()
     except KeyboardInterrupt:
         print("\n[!] Authentication cancelled.")
@@ -658,14 +662,54 @@ def auth_command(args):
     finally:
         server.server_close()
         
-    token = token_received.get("token")
-    if token:
-        store = ExtensionStore(config.cache.path)
-        store.init_db()
-        store.set_provider_token(provider, token)
-        print(f"\n[OK] Authentication token for {provider.capitalize()} successfully saved to cache database!")
-    else:
-        print("\n[FAIL] Authentication failed: received empty token.", file=sys.stderr)
+    if auth_error:
+        print(f"\n[FAIL] Authentication failed: {auth_error}", file=sys.stderr)
+        sys.exit(1)
+        
+    # 5. Exchange Authorization Code for Access & Refresh Tokens
+    print("[*] Exchanging authorization code for access token...")
+    token_payload = {
+        "grant_type": "authorization_code",
+        "code": auth_code,
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "code_verifier": code_verifier
+    }
+    
+    try:
+        token_data = urllib.parse.urlencode(token_payload).encode("utf-8")
+        req = urllib.request.Request(
+            token_url,
+            data=token_data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_resp = json.loads(resp.read().decode())
+            access_token = token_resp.get("access_token")
+            refresh_token = token_resp.get("refresh_token")
+            expires_in = token_resp.get("expires_in", 3600)
+            
+            if not access_token:
+                raise ValueError("Token response did not return an access_token")
+                
+            expires_at = time.time() + float(expires_in)
+            store.set_provider_oauth(
+                provider,
+                client_id=client_id,
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_at=expires_at
+            )
+            print(f"\n[OK] Successfully authenticated with {provider.capitalize()}!")
+            print(f"[*] Access token expires in {expires_in} seconds.")
+            if refresh_token:
+                print("[*] Refresh token saved for automatic token rotation.")
+    except Exception as e:
+        print(f"\n[FAIL] Token exchange failed: {e}", file=sys.stderr)
         sys.exit(1)
 
 def doctor_command(args):

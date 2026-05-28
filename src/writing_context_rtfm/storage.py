@@ -135,6 +135,17 @@ class ExtensionStore:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS provider_oauth (
+                provider_id TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL,
+                access_token TEXT,
+                refresh_token TEXT,
+                expires_at REAL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
             conn.commit()
 
     def _compress(self, data: str) -> bytes:
@@ -283,4 +294,39 @@ class ExtensionStore:
                 ON CONFLICT(provider_id) DO UPDATE SET token=excluded.token, updated_at=CURRENT_TIMESTAMP
             """, (provider_id, token))
             conn.commit()
+
+    def get_provider_oauth(self, provider_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT client_id, access_token, refresh_token, expires_at 
+                FROM provider_oauth 
+                WHERE provider_id = ?
+            """, (provider_id,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "client_id": row["client_id"],
+                    "access_token": row["access_token"],
+                    "refresh_token": row["refresh_token"],
+                    "expires_at": row["expires_at"]
+                }
+        return None
+
+    def set_provider_oauth(self, provider_id: str, client_id: str, access_token: Optional[str] = None, 
+                           refresh_token: Optional[str] = None, expires_at: Optional[float] = None) -> None:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO provider_oauth (provider_id, client_id, access_token, refresh_token, expires_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(provider_id) DO UPDATE SET 
+                    client_id=excluded.client_id, 
+                    access_token=COALESCE(excluded.access_token, provider_oauth.access_token),
+                    refresh_token=COALESCE(excluded.refresh_token, provider_oauth.refresh_token),
+                    expires_at=COALESCE(excluded.expires_at, provider_oauth.expires_at),
+                    updated_at=CURRENT_TIMESTAMP
+            """, (provider_id, client_id, access_token, refresh_token, expires_at))
+            conn.commit()
+
 

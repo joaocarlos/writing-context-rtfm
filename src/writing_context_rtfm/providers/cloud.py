@@ -1,6 +1,9 @@
 import json
 import logging
 import asyncio
+import time
+import urllib.parse
+import urllib.request
 from typing import List, Optional, Dict, Any
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -10,6 +13,71 @@ from writing_context_rtfm.schemas import SourceSpan
 from writing_context_rtfm.providers.base import BaseContextProvider
 
 logger = logging.getLogger("mcp-server")
+
+def get_valid_oauth_token(config: AppConfig, provider_id: str) -> Optional[str]:
+    """Retrieve or refresh the OAuth access token dynamically."""
+    from writing_context_rtfm.storage import ExtensionStore
+    try:
+        store = ExtensionStore(config.cache.path)
+        store.init_db()
+        oauth = store.get_provider_oauth(provider_id)
+        if not oauth:
+            return None
+            
+        client_id = oauth.get("client_id")
+        access_token = oauth.get("access_token")
+        refresh_token = oauth.get("refresh_token")
+        expires_at = oauth.get("expires_at")
+        
+        if not access_token:
+            return None
+            
+        # Check if the token is still valid (with a 5-minute safety margin)
+        if expires_at and expires_at > time.time() + 300:
+            return access_token
+            
+        # Token is expired/expiring. Try to refresh if we have a refresh token
+        if not refresh_token:
+            return access_token  # Fallback to stale token
+            
+        token_url = "https://api.scite.ai/mcp/oauth/token" if provider_id == "scite" else "https://consensus.app/oauth/token/"
+        
+        refresh_payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id
+        }
+        
+        token_data = urllib.parse.urlencode(refresh_payload).encode("utf-8")
+        req = urllib.request.Request(
+            token_url,
+            data=token_data,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "Mozilla/5.0"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_resp = json.loads(resp.read().decode())
+            new_access_token = token_resp.get("access_token")
+            new_refresh_token = token_resp.get("refresh_token") or refresh_token
+            expires_in = token_resp.get("expires_in", 3600)
+            
+            if new_access_token:
+                new_expires_at = time.time() + float(expires_in)
+                store.set_provider_oauth(
+                    provider_id,
+                    client_id=client_id,
+                    access_token=new_access_token,
+                    refresh_token=new_refresh_token,
+                    expires_at=new_expires_at
+                )
+                return new_access_token
+    except Exception as e:
+        logger.warning(f"Failed to refresh OAuth token for {provider_id}: {e}")
+        
+    return oauth.get("access_token") if oauth else None
 
 def run_async(coro):
     """Run an async coroutine, handling active event loop context if any."""
@@ -185,15 +253,19 @@ class SciteProvider(BaseContextProvider):
         
         headers = dict(provider_cfg.headers) if provider_cfg.headers else {}
         if "Authorization" not in headers:
-            from writing_context_rtfm.storage import ExtensionStore
-            try:
-                store = ExtensionStore(self.config.cache.path)
-                store.init_db()
-                cached_token = store.get_provider_token("scite")
-                if cached_token:
-                    headers["Authorization"] = f"Bearer {cached_token}"
-            except Exception:
-                pass
+            oauth_token = get_valid_oauth_token(self.config, "scite")
+            if oauth_token:
+                headers["Authorization"] = f"Bearer {oauth_token}"
+            else:
+                from writing_context_rtfm.storage import ExtensionStore
+                try:
+                    store = ExtensionStore(self.config.cache.path)
+                    store.init_db()
+                    cached_token = store.get_provider_token("scite")
+                    if cached_token:
+                        headers["Authorization"] = f"Bearer {cached_token}"
+                except Exception:
+                    pass
 
         return run_async(fetch_all_queries(
             provider_cfg.sse_url,
@@ -222,15 +294,19 @@ class ConsensusProvider(BaseContextProvider):
         
         headers = dict(provider_cfg.headers) if provider_cfg.headers else {}
         if "Authorization" not in headers:
-            from writing_context_rtfm.storage import ExtensionStore
-            try:
-                store = ExtensionStore(self.config.cache.path)
-                store.init_db()
-                cached_token = store.get_provider_token("consensus")
-                if cached_token:
-                    headers["Authorization"] = f"Bearer {cached_token}"
-            except Exception:
-                pass
+            oauth_token = get_valid_oauth_token(self.config, "consensus")
+            if oauth_token:
+                headers["Authorization"] = f"Bearer {oauth_token}"
+            else:
+                from writing_context_rtfm.storage import ExtensionStore
+                try:
+                    store = ExtensionStore(self.config.cache.path)
+                    store.init_db()
+                    cached_token = store.get_provider_token("consensus")
+                    if cached_token:
+                        headers["Authorization"] = f"Bearer {cached_token}"
+                except Exception:
+                    pass
 
         return run_async(fetch_all_queries(
             provider_cfg.sse_url,

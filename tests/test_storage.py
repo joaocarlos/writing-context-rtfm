@@ -197,5 +197,43 @@ class TestStorage(unittest.TestCase):
         self.store.set_provider_token("scite", "new_scite_token")
         self.assertEqual(self.store.get_provider_token("scite"), "new_scite_token")
 
+    def test_provider_oauth(self):
+        # Initial is None
+        self.assertIsNone(self.store.get_provider_oauth("scite"))
+
+        # Save registration client_id only
+        self.store.set_provider_oauth("scite", client_id="client123")
+        oauth = self.store.get_provider_oauth("scite")
+        self.assertIsNotNone(oauth)
+        self.assertEqual(oauth["client_id"], "client123")
+        self.assertIsNone(oauth["access_token"])
+        self.assertIsNone(oauth["refresh_token"])
+        self.assertIsNone(oauth["expires_at"])
+
+        # Update access tokens (simulate code exchange)
+        self.store.set_provider_oauth(
+            "scite", 
+            client_id="client123", 
+            access_token="access_tok", 
+            refresh_token="refresh_tok", 
+            expires_at=1234567.8
+        )
+        oauth = self.store.get_provider_oauth("scite")
+        self.assertEqual(oauth["access_token"], "access_tok")
+        self.assertEqual(oauth["refresh_token"], "refresh_tok")
+        self.assertEqual(oauth["expires_at"], 1234567.8)
+
+        # Update access token only (simulate refresh)
+        self.store.set_provider_oauth(
+            "scite", 
+            client_id="client123", 
+            access_token="new_access_tok",
+            expires_at=999999.0
+        )
+        oauth = self.store.get_provider_oauth("scite")
+        self.assertEqual(oauth["access_token"], "new_access_tok")
+        self.assertEqual(oauth["refresh_token"], "refresh_tok") # preserved
+        self.assertEqual(oauth["expires_at"], 999999.0)
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,0 +1,265 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow} 
+\usepackage{url}
+% \usepackage[raggedrightboxes]{ragged2e}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Context-aware Sensor Active Prioritization for Emergency Management in Smart Cities
+\thanks{This work was financially supported by UID/00147 of SYSTEC – Research Center for Systems and Technologies, and by the Associate Laboratory ARISE – Advanced Production and Intelligent Systems (LA/P/0112/2020, DOI 10.54499/LA/P/0112/2020), both funded by Fundação para a Ciência e a Tecnologia, I.P. (FCT) / MCTES through national funds, and by FCT through the PhD scholarship (2024.02446.BD).}
+
+
+}
+
+\author{
+\IEEEauthorblockN{
+João Carlos N. Bittencourt\IEEEauthorrefmark{1}\IEEEauthorrefmark{2}, %
+Daniel G. Costa\IEEEauthorrefmark{3}, %
+Paulo Portugal\IEEEauthorrefmark{3} %
+} 
+\IEEEauthorblockA{\IEEEauthorrefmark{1}CETEC, Federal University of Recôncavo da Bahia, Brazil}%
+\IEEEauthorblockA{\IEEEauthorrefmark{2}PDEEC, Faculty of Engineering, University of Porto, Portugal}%
+\IEEEauthorblockA{\IEEEauthorrefmark{3}SYSTEC-ARISE, Faculty of Engineering, University of Porto, Portugal}%
+\\Email: joaocarlos@ufrb.edu.br, danielgcosta@fe.up.pt, pportugal@fe.up.pt
+}
+
+\maketitle
+
+\begin{abstract}
+The increasing adoption of smart city technologies has led to a large-scale deployment of sensor-based solutions aimed at enhancing urban resilience through improved emergency response capabilities. However, traditional monitoring systems are not designed to respond efficiently to simultaneous data requests or adapt to changing risk levels in dynamic urban environments. This lack of flexibility can result in suboptimal resource allocation and delayed threat detection. This paper introduces a context-aware sensor prioritization mechanism based on a spatiotemporal Contextual Priority (CP) classification score. This CP-index integrates cloud-derived risk and vulnerability information with a locally computed Hazard Perception, allowing the sensor to adjust its priorities regarding other nodes. The prioritization approach employs a fuzzy logic controller to determine the current CP, which informs the definition of the priority constraints. This allows the emergency management system to operate according to contextual priorities, optimizing data collection by focusing on potential threats. Experimental results confirm the method's efficiency in an air quality management use case using the Porto Digital sensor network. The results show an overall latency below 5~ms and RAM usage between 7\%\textemdash16\% across selected low-power platforms.
+% validating its suitability for adaptable, multi-hazard monitoring.
+%The experimental results validate the platform's efficiency, scalability, and adaptability, demonstrating its suitability for adaptable, multi-hazard monitoring.
+\end{abstract}
+
+\begin{IEEEkeywords}
+IoT-based monitoring, Edge intelligence, Fuzzy logic, Situation-aware computing, Emergency response systems.
+\end{IEEEkeywords}
+
+\section{Introduction}
+% [0.5 pages]
+% In recent years, the expansion of smart cities worldwide has led to the pervasive integration of technologies aimed at enhancing urban living through optimized public services. These advancements are built around sensor networks, crowdsourced data, and various other information sources, making real-time, data-driven urban management both feasible and efficient \cite{costaAchievingSustainableSmart2024}. Emergency management systems, in particular, have been transformed by this technological integration, allowing for quicker, more informed responses to urban crises and natural disasters \cite{costaSurveyEmergenciesManagement2022}. Indeed, cities can greatly enhance their resilience by employing real-time data analytics and predictive modeling.
+%
+% Despite the benefits of sensor-based emergency management technologies, several challenges remain. 
+
+In recent years, the expansion of smart cities worldwide has led to the pervasive integration of technologies aimed at enhancing urban living. Urban environments are marked by high levels of dynamism, with varying degrees of vulnerability shaped by factors such as infrastructure density, demographic patterns, and socioeconomic characteristics \cite{fischerSusceptibilityVulnerabilityAveraged2016}. Nevertheless, traditional emergency monitoring solutions often rely on static data collection routines, which may not accurately reflect the complex and daily fluctuating vulnerability levels inherent in densely populated urban areas \cite{bittencourtSurveyAdaptiveSmart2024}. As a result, these static emergency detection platforms can lead to inefficient resource allocation and delayed responses to emerging threats. 
+
+Emergency management systems, in particular, have been transformed by this technological integration, allowing for quicker, more informed responses to urban crises and natural disasters \cite{costaSurveyEmergenciesManagement2022}. Indeed, cities can greatly enhance their resilience by employing real-time data analytics and predictive modeling. As cities expand, the demand for more sensors transmitting real-time data increasingly underscores the need for adaptable monitoring methods.
+%
+The adoption of prioritized monitoring technologies presents a unique opportunity for cities to enhance their emergency response capabilities \cite{pognonAdaptivePriorityScheduling2024}. Furthermore, integrating spatial and temporal data would enable these systems to react appropriately to the assessed level of potential impact during an emergency. For instance, during periods of heightened risk, such as extreme weather events or elevated pollution levels, a sensor unit positioned in a densely populated area could dynamically raise its priority, facilitating a faster response. However, achieving this level of adaptability depends on data-driven mechanisms capable of processing multi-domain inputs while providing effective insights for emergency responders.  
+
+This paper presents an innovative context-aware sensing mechanism that employs a fuzzy logic-based framework to improve emergency monitoring systems. The proposed fuzzy controller calculates a Contextual Priority (CP) index, which integrates dynamically updated urban indicators related to emergency risk assessments (the likelihood of an emergency occurring), spatiotemporal vulnerability (the potential impact on the population), and a real-time Hazard Perception (HP) index derived from actual sensor readings. Consequently, this CP-index allows the system to modify prioritization parameters, ensuring that high-priority data is collected and processed effectively. The system's adaptable nature promotes efficient multi-hazard monitoring, representing a viable solution for complex and ever-changing urban environments.
+
+%To achieve this, we implement a publish-subscribe, priority-enabled MQTT protocol that can be utilized by an emergency event messaging engine. 
+
+The remainder of this paper is structured as follows: Section~\ref{sec:fuzzy} reviews current literature on enabling adaptability and priority mechanisms in urban monitoring. Section~\ref{sec:proposed} outlines the proposed solution. In Section~\ref{sec:results}, we present the experimental results to assessing the proposed adaptation mechanism. Finally, conclusions and references are presented.
+
+\section{Related Works}
+\label{sec:fuzzy}
+% [0.5 page]
+Urban monitoring systems typically employ on-demand detection routines, processing data as it arrives, which limits their responsiveness to the specific priorities of metropolitan areas. Consequently, the concept of adaptable sensing platforms\textemdash where systems adjust based on external events\textemdash has recently been integrated into urban applications. A study conducted by \cite{faverjonChoosingBestAlgorithm2018} demonstrated the selection of event detection routines tailored to the specific requirements of the application. The work of \cite{yangAnomalyDetectionAlgorithm2021} introduces a method for choosing anomaly detection algorithms in IoT data streams through feature selection. The authors of \cite{hashmyModularAirQuality2023} have enhanced the reliability of IoT devices by implementing an adjustable air quality calibration scheme. Additionally, adjustable sensing parameters have been proposed to improve energy efficiency, as supported by \cite{yiModularPlugAndPlaySensor2018}. However, optimized sensor patterns and data-driven constraint techniques could further boost monitoring efficiency. 
+
+The emergence of powerful, affordable hardware platforms has also facilitated technological advancements in sensor capabilities. As noted in \cite{costaPrioritizationApproachOptimization2020}, while resource constraints limited the initial generations of sensor networks, recent developments have resulted in more capable platforms that can handle complex data types, such as images and videos, which are vital for comprehensive urban monitoring. In that work, the authors present an initial step towards contextual prioritization to optimize resource usage, establishing a priority framework for the sensor network. This adaptability is essential in crowded urban areas where critical events like traffic accidents or public safety incidents demand prioritized responses \cite{costaSurveyEmergenciesManagement2022}. For example, during working hours, a hazardous air quality alert in a densely populated commercial district may prompt immediate response actions, while the same alert in a sparsely populated area may receive a lower urgency ranking.
+
+Despite advancements that emphasize flexible sensing mechanisms, these solutions do not address the uncertainties of spatiotemporal urban multi-domains. In this context, fuzzy logic systems have proven valuable in addressing the intricate nature of the city landscape towards efficient emergency detection. The multi-sensor unit for fire detection proposed in \cite{Vaegae2024} demonstrates the advantages of the fuzzy approach for fire detection that incorporates sensor parameters adapted to different infrastructures to reduce the likelihood of false alarms. Dynamic fuzzy-based applications have also demonstrated their potential in adjusting system parameters based on urban contextual information. The work of \cite{Pau2018} proposes a fuzzy controller capable of altering the traffic lights' phases, considering the time of the day and the number of pedestrians. Finally, the authors of \cite{costaFuzzyBasedApproachSensing2017} demonstrated the potential of fuzzy logic in sensor configuration by proposing an approach to dynamically adjust how visual sensors operate, exploiting the sensor constraints. Indeed, the capacity to process imprecise and ambiguous data allows for more robust decision-making in situations where traditional solutions may struggle to provide accurate insights. 
+
+\section{Proposed System Design}
+\label{sec:proposed}
+% [0.75 pages]
+% 
+The proposed approach utilizes a Fuzzy Logic Controller (FLC) to adjust sensor priority according to the dynamic characteristics of urban environments. The architectural configuration shown in Fig.~\ref{fig:overall-flow} integrates three primary sources of information: (a) spatiotemporal vulnerability and (b) risk levels for each hazard factor \( f \), both obtained from a cloud-based service, and (c) real-time raw data from sensors. The urban assessment data provide insights into the vulnerability and risk profiles in the area where the sensor is located, establishing a foundational pre-computed emergency detection context. When combined, these indices create a weighted Contextual Risk Index (CRI). On the other hand, the Hazard Perception (HP) index captures situational data directly from the environment, reflecting the immediate urban conditions. The FLC then processes these inputs, synthesizing them into a Contextual Priority (CP) that guides the data prioritization.
+
+\begin{figure*}[htp]
+    \centering
+    \includegraphics[width=0.72\linewidth]{figs/fuzzy-flow.pdf}
+    \caption{Overview of the processing flow and framework application components.}
+    \label{fig:overall-flow}
+\end{figure*}
+
+It is important to note that each CP is associated with a hazard factor (e.g., fire, flood, gas leak), which helps assess the level of risk involved and enables the implementation of appropriate safety measures. As a result, data transmission can be modularized so that only information related to the hazardous situation is transmitted (e.g., temperature, humidity, and gas for fire threats). Conversely, to ensure data reliability, all sensor data can be prioritized, regardless of which factor needs higher prioritization within a given location.
+
+The assessment of risk and vulnerability within cities relies on a systematic organization of urban areas. This study conceptualizes a city as an abstract set of zones \( z \), each with clearly delineated boundaries and contextual profiles \cite{bittencourtDatadrivenClusteringApproach2024}. Accordingly, each sensor within the proposed framework is located within a particular zone, representing a spatially delineated area employed to ascertain both risk and spatiotemporal vulnerability indexes. %This methodology enables the system to discern localized variations in risk perception, allowing the adaptation of sensor monitoring priority to the specific dynamics within each urban area. 
+In such a spatial organization, context-aware adjustments are derived based on the unique characteristics of each zone, including population density, critical infrastructure, and time-sensitive factors.
+
+\subsection{Contextual Risk Index Computation}
+
+Data-driven assessments are paramount for developing sustainable and resilient urban environments \cite{costaAchievingSustainableSmart2024}. To this end, incorporating pre-computed data, including risk probabilities and their potential impacts, enables urban monitoring systems to adapt dynamically to the evolving complexities of cities. This approach enhances situational awareness and ensures targeted resource allocation, thereby increasing the efficiency of emergency detection and response strategies. The proposed framework embodies this principle in Stage 1 of Fig.~\ref{fig:overall-flow} by integrating multi-domain data-driven risk assessments and a vulnerability profile sourced from a cloud service, facilitating context-aware urban monitoring that aligns with the dynamic conditions of cities.
+
+Urban risk assessment methods provide the probability of various critical events based on data-driven approaches, and numerous studies in the literature have computed these indices for floods, fires, and air quality \cite{urbinaSpatialVulnerabilityAssessment2023,idirMappingUrbanAir2021}, to name a few. Given this context, a set \( F \) consists of various risk factors \( f_i \in F \). Consequently, we define a general Risk Level (RL) for a given hazard factor \( f_i \) in a zone \( z \) as \( RL(z, f_i) \in [0,1] \), where \( RL(z, f_i) = 0 \) represents no risk, and \( RL(z, f_i) = 1 \) denotes the highest possible likelihood of an emergency occurring within that zone.
+
+To incorporate a spatiotemporal perspective on the potential impacts of hazards on human safety and urban infrastructure, we adopt the Vulnerability Level (VL) approach proposed in \cite{bittencourtDatadrivenClusteringApproach2024}. This method provides a time-sensitive index for each urban zone, enabling a vulnerability assessment of the form \( VL(z, t) \in [0, 1] \), where \( VL(z, t) = 0 \) represents minimal impact and \( VL(z, t) = 1 \) indicates the highest possible impact at a given evaluation time \( t \). This approach reflects real-world patterns by capturing temporal variations, such as increased vulnerability during rush hours near schools and commercial centers, or seasonal high-activity events (e.g., music festivals and football games) near specific zones. Furthermore, the spatiotemporal nature of this data ensures that the system accounts for fluctuating vulnerabilities at different times.
+
+The spatiotemporal nature of the solution requires updating the local storage data to reflect changes in risk and vulnerability dynamics. Therefore, to ensure the accuracy and relevance of these pre-computed data over time, they must be regularly updated through an Over-the-Air (OTA) system such as \cite{chienNovelMQTT0Based2022}. Such mechanisms allow the sensor unit to synchronize with cloud-based sources to obtain the latest pre-computed \( RL \) and \( VL \) values. This approach ensures that the device consistently operates with the most current contextual data. For example, a zone may display a low risk of flooding but a higher risk of fire during the summer. However, seasonal weather forecasts, such as thunderstorms, may alter these probabilities. Additionally, the spatiotemporal dynamics of a city may imply changes in vulnerability profiles.
+
+By merging these two urban dimensions, we define the Contextual Risk Index (CRI) as a unified metric that assesses the likelihood of hazard occurrence along with its potential impact, thereby reflecting the priority of the data generated by the sensor. The CRI for a specific hazard factor \( f_i \) in a zone \( z \) at time \( t \) is expressed by Equation~\ref{eq:cri}.
+
+\begin{equation}
+    \label{eq:cri}
+    CRI(z, f_i, t) = w_{R} \cdot RL(z, f_i) + w_{V} \cdot VL(z, t) \in [0, 1]
+\end{equation}
+
+\noindent where \( w_{R} \) and \( w_{V} \) are weights that meet the condition \( w_{R} + w_{V} = 1 \). This ensures flexibility to reflect their relative importance, allowing the system to adapt to the specific requirements of cities regarding hazard and vulnerability priorities. Furthermore, this unified approach simplifies the computational complexity of the FLC while maintaining the granularity needed to address the dynamics of urban scenarios.
+
+\subsection{Hazard Perception}
+
+To enable the dynamic assessment of environmental parameters that reflect the immediate conditions signaling the emergence of a hazard, we propose a Hazard Perception (HP) model. This metric computation, which comprises Stage 2 of Fig.~\ref{fig:overall-flow}, is designed to continuously monitor sensor data by comparing it to predefined thresholds relevant to each hazard factor, such as \( \text{CO} \) concentration above \( 5000 \mu g/m^3 \), potentially indicating an imminent fire risk or poor air quality. This model, defined by Equation~\ref{eq:hazard_perception}, aggregates sensors \( E(f_i, d) \) (e.g., temperature, gas concentration, wind speed) embedded in a device \( d \), associated with each \( f_i \), to compute \( HP(f_i, d) \).
+
+\begin{equation}
+    \label{eq:hazard_perception}
+    HP(f_i, d) = \sum_{n=1}^{|E(f_i,d)|} ws_n \cdot \tau(\epsilon_n),
+\end{equation}
+
+\noindent where \( ws_n \) represents the weight assigned to each sensor for a given hazard factor \( f_i \). The function \( \tau(.) \), as shown in Equation~\ref{eq:tau_func}, serves as a Gaussian-based evaluator that determines the degree to which a sensor data \( \epsilon \) meets a threshold condition. This evaluation degree, which ranges from \( 0 \) to \( 1 \), is defined by the threshold value (\( th \)) and a standard deviation (\( \sigma \)), facilitating smooth transitions during assessments. The condition can be assessed for either \( \epsilon \geq th \) or \( \epsilon \leq th \), depending on the nature of the measured environmental parameter.
+
+\begin{equation}
+    \label{eq:tau_func}
+    % \tau(\epsilon, th, \sigma, d) =
+    \tau(.) =
+    \begin{cases}
+        1, & \text{if } \epsilon \geq th \text{, or } \epsilon \leq th, \\
+        \exp{\left(-\frac{(\epsilon - th)^2}{2 \sigma^2}\right)}, & \text{if } \text{d = ``up''} \text{ and } \epsilon < th, \\
+        \exp{\left(-\frac{(th - \epsilon)^2}{2 \sigma^2}\right)}, & \text{if } \text{d = ``down''}  \text{ and } \epsilon > th,
+    \end{cases}
+\end{equation}
+
+\subsection{Fuzzy Logic Controller}
+
+The CP index produced by the FLC (Stage 3 of Fig.~\ref{fig:overall-flow}) results from the combined effects of CRI and HP, ultimately offering a quantitative measure for the context-aware sensor priority adaptation. The FLC utilizes membership functions for each input, configured with linguistic values -- Very Low (VL), Low (L), Medium (M), High (H), and Very High (VH) -- to accommodate nuanced responses to common urban scenarios. The membership functions were designed using trapezoidal shapes for the outer classes (VL and VH) and triangular shapes for the intermediate ones (L, M, H). %These shapes ensure smooth transitions among the linguistic values, allowing the FLC to effectively handle boundary cases. Additionally, it reduces computational complexity when implementing such an algorithm into high-constrained devices.
+These shapes ensure computational simplicity, low memory footprint, and ease of implementation in resource-constrained hardware. Triangular functions provide precise peak responses for mid-range values, while trapezoidal counterparts ensure stable output at extremes, reducing sensitivity to noise. 
+
+Both inputs span a normalized range of \( [0, 1] \), with VL and VH defining the boundary ranges (\( < 0.3 \) for VL and \( > 0.7 \) for VH), while L, M, and H are evenly distributed across the mid-range. This overlap allows the system to handle uncertainty while remaining responsive to changes in contextual risk and environmental conditions. However, these membership functions, shown in Fig.~\ref{fig:membership_functions}, can be adjusted to reflect the unique characteristics of each input based on specific targets.
+
+\begin{figure}[htp]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figs/membership-functions.png}
+    \caption{Membership degrees evaluation for both inputs.}
+    \label{fig:membership_functions}
+\end{figure}
+
+As shown in Table~\ref{tab:rule_set}, the rules outlined for the FLC specify how the CP is calculated based on combinations of CRI and HP values. The proposed methodology comprises four classes of CP that reflect the influence of the combined perception, where Low (L) indicates a safe scenario, Moderate (M) suggests a cautious situation, High (H) corresponds to an alert profile, and Critical (C) denotes a potentially critical situation. The CP output membership function also spans a similar boundary classification, as shown in Fig.~\ref{fig:membership_functions}. %normalized range of \( [0, 1] \), with boundary classifications L (\( < 0.3 \)) and C (\( > 0.7 \)), while the intermediate classes M and H are evenly distributed within the mid-range.
+
+\begin{table}[htp]
+\centering
+% \renewcommand{\arraystretch}{1.2}
+\caption{The Fuzzy Rule Set Employed to Compute the CP.}
+\label{tab:rule_set}
+\begin{tabular*}{\columnwidth}
+{l@{\extracolsep{\fill}}l@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c}
+\toprule
+\multicolumn{2}{c}{\multirow{2}{*}{}} & \multicolumn{5}{c}{\textbf{Contextual Risk Index}} \\ \cmidrule{3-7} 
+\multicolumn{2}{c}{} & \multicolumn{1}{l}{\textbf{VL}} & \multicolumn{1}{c}{\textbf{L}} & \multicolumn{1}{c}{\textbf{M}} & \multicolumn{1}{c}{\textbf{H}} & \multicolumn{1}{c}{\textbf{VH}} \\ \midrule
+\multirow{5}{*}{\textbf{\begin{tabular}[c]{@{}l@{}}Hazard\\ Perception\end{tabular}}} & 
+   \textbf{VL} & L & L & L & M & C \\
+ & \textbf{L}  & L & L & M & H & C \\
+ & \textbf{M}  & L & M & M & H & C \\
+ & \textbf{H}  & M & M & H & C & C \\
+ & \textbf{VH} & H & H & C & C & C \\
+\bottomrule
+\end{tabular*}
+\end{table}
+
+The fuzzy rule set prioritizes the sensors' responsiveness by focusing on the environmental perception provided by the HP metric. Consequently, when both RL and VL are high, even a moderate HP score will lead to a higher CP, prompting the sensor to adjust its priority and enhance localized assessment. Conversely, lower values for RL, VL, and HP values result in safer classes, indicating that the emergency management system can handle that data on demand. As illustrated in Fig.~\ref{fig:fuzzy-surface}, this rule-based approach ensures continuous operational shifts, allowing the sensor to adapt smoothly to changes in priority.
+
+\begin{figure}[htp]
+    \centering
+    \includegraphics[width=0.86\linewidth]{figs/fuzzy-surface.png}
+    \caption{Contextual priority distribution.}
+    \label{fig:fuzzy-surface}
+\end{figure}
+
+The proposed method introduces a lightweight mechanism for urban emergency monitoring systems that enables sensors to adjust their priorities in response to urban changes. Unlike conventional methods that capture and process information without considering their sources and potential conditions, this mechanism optimizes sensor data processing based on real-time environmental and data-driven assessments. For example, high CP scenarios, such as a commercial district during peak hours with elevated air quality risks, could impact a larger number of people. By implicitly incorporating this knowledge, the emergency detection system can implement intensive monitoring to identify threats and prepare response actions. 
+
+Finally, in Stages 4 and 5 of Fig.~\ref{fig:overall-flow}, the adaptation process utilizes a mapping function \( \mathcal{A}: CP \rightarrow \mathcal{P} \), where the CP class \( c \) determines the corresponding set of priorities \( \mathcal{P}(c, f_i) \) for a specific hazard factor \( f \) (e.g., flood, fire, air quality). These priorities \( \mathcal{P}(c, f_i) = \{ p_1, p_2, \dots, p_n \} \in [0,1] \) reflect the relative significance of data generated by hazard-specific sensors used in the monitoring functions. This real-time input data can vary from static gas concentration sensors to image processing systems. As previously stated, the sensor data can be transmitted regardless of the hazard factor (i.e., incorporating all sensor readings within the payload) or prioritizing only data that pertains to a specific risk factor \( (E(f_i, d)) \).
+
+\section{Results and Discussion}
+\label{sec:results}
+% [1.25] pages
+This section presents the results of experimental tests to evaluate the proposed sensor adaptation mechanism. First, we provide a simulation process of air quality risk to validate the implementation with real data from urban environments. Finally, a proof-of-concept implementation demonstrates the solution's feasibility and adaptability using commercially available off-the-shelf hardware.% in resource-constrained environments.
+The codebase for these results can be found on GitHub (\url{https://github.com/les2feup/capsense}).
+
+\subsection{Configuration and Experimental Setup}
+
+% The experimental setup was implemented on an Arduino Nano BLE 33 Sense platform to assess the efficacy of the proposed framework. 
+The simulation setup utilizes real-time data collected from the air quality records of the Porto Digital sensor network infrastructure \cite{dadosPorto2025}. This dataset represents the observations of air quality parameters recorded by sensors over time from a network of devices distributed throughout the city. The collected parameters include NO2, O3, Ox, CO, PM1, PM10, and PM25. Data is gathered every 15 minutes per sensor; however, we deliberately sampled data with a one-hour interval.
+
+For both the simulation and experimental configurations, we incorporate the pre-computed risk index using the CityZones tool \cite{peixotoCityZonesGeospatialMultitier2023} and the vulnerability level from \cite{bittencourtDatadrivenClusteringApproach2024}. Additionally, we filtered the data to reflect a complete workday based on the location defined by the coordinates (41.1626,-8.5908), which is the location of the considered sensor. This hourly selection effectively captures periods of low-intensity commuting and high activity in people movement.
+
+The employed risk assessment methodology evaluates the concept of risk based on the distance of an area from response centers (e.g., fire departments, police stations, hospitals). This metric effectively generalizes the risk factors within a single global index. This supports the analysis in demonstrating the proposed method's efficacy since its implementation is inherently scalable. Then, from the dataset, we could identify that the selected sensor has \( RL = 0.65 \), which was replicated for the experimental phase.
+
+The vulnerability level was defined for the same location, and trials were conducted to obtain low, medium, and high vulnerability levels within the selected zone. This enabled us to evaluate the system's behavior across varying CP levels. The vulnerability assessment was structured around a typical weekday, consisting of three time-based vulnerability windows for a city zone: 6:00-10:00 (peak activity at educational facilities and transportation hubs), 10:00-15:00 (notable activity during lunchtime), and 16:00-20:00 (corresponding with evening peak hours). The pre-computed vulnerability levels were assigned to each time window to reflect realistic urban patterns.
+
+\subsection{Simulation}
+
+Fig.~\ref{fig:simulation-results} illustrates the relationship between the normalized values of the Air Quality Index (AQI), Contextual Priority (CP), and the Contextual Risk Index (CRI) across the predefined time windows. For the simulation purpose, we used the AQI to replace the Hazard Perception metric. The AQI values are categorized into Good, Moderate, and Unhealthy thresholds, normalized to align with the CRI scale \( ([0,1]) \) for comparative analysis. This normalization enables a unified interpretation of environmental risk and contextual vulnerability.
+
+\begin{figure}[htp]
+    \centering
+    \includegraphics[width=\linewidth]{figs/simulation-results.png}
+    \caption{Contextual priority simulation for air quality risk factor.}
+    \label{fig:simulation-results}
+\end{figure}
+
+During high-vulnerability periods, elevated CRI values strongly correlate with unhealthy AQI levels (e.g., PM\textsubscript{10} and NO\textsubscript{2} exceeding WHO thresholds). The system's CP component amplified its effectiveness during these windows, triggering the prioritization of high-risk data streams. In time windows with average activity levels, CRI stabilized, aligning with moderate AQI levels. Meanwhile, the CP maintained a balance between urban knowledge sensitivity and real-time data variability, validating its context-aware decision logic. Finally, during low commuting periods (e.g., 2:00 PM – 5:00 PM), CRI decreased alongside predominantly good AQI levels, allowing the system to lower data priority without compromising baseline monitoring efficiency.
+
+The inverse correlation between AQI improvement and CRI reduction underscores the framework’s capability to prioritize sensor data in relation to environmental conditions. Notably, the CP module promptly detected transient AQI spikes during low-vulnerability periods (e.g., 6:00 PM - 7:00 PM), demonstrating resilience against false negatives. The simulation showed that aligning HP and CRI with a unified priority scale prevents the system from overreacting to temporary fluctuations while staying responsive to sustained air quality deterioration. This balance is crucial for deployment in dense urban settings, where the data volume can escalate rapidly, potentially impacting response times.
+
+\subsection{Performance Assessment}
+
+The proposed adaptation algorithm was evaluated on three platforms that balance computational efficiency and real-time responsiveness in resource-constrained environments: Raspberry Pi Pico W, Arduino Nano BLE 33 Sense, and ESP32. Metrics such as algorithm execution latency (the time required to process sensor data and compute the CP index) and memory footprint were measured to determine the suitability of the proposed approach for emergency monitoring. Table~\ref{tab:hardware-results} summarizes these results.  
+
+\begin{table}[htp]
+\centering
+% \renewcommand{\arraystretch}{1.2}
+\caption{Performance metrics across hardware platforms.}
+\label{tab:hardware-results}
+\begin{tabular*}{\columnwidth}
+{p{1.7cm}@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}c@{\extracolsep{\fill}}}
+\toprule
+\multicolumn{1}{c}{\textbf{Device}} &
+\multicolumn{1}{c}{\textbf{\begin{tabular}[c]{@{}c@{}}Latency\\ 2-F (ms)\end{tabular}}} &
+\multicolumn{1}{c}{\textbf{\begin{tabular}[c]{@{}c@{}}Latency\\ 10-F (ms)\end{tabular}}} &
+\multicolumn{1}{c}{\textbf{\begin{tabular}[c]{@{}c@{}}RAM\\ (KB)\end{tabular}}} &
+\multicolumn{1}{c}{\textbf{\begin{tabular}[c]{@{}c@{}}Flash\\ (KB)\end{tabular}}} &
+\multicolumn{1}{c}{\textbf{\begin{tabular}[c]{@{}c@{}}Frequency\\ (MHz)\end{tabular}}} \\ 
+\midrule
+Raspberry Pi Pico W     & 1.3 & 3.8 & 42.5 & 4.4 &  133 \\ 
+Arduino Nano BLE Sense  & 1.0 & 4.4 & 44.9 & 105.1 & 64 \\
+ESP32                   & 0.2 & 0.7 & 22.5 & 294.3 & 240 \\ 
+% ESP8266                 &  &  &  & \\
+\bottomrule
+\end{tabular*}%
+\end{table}
+
+% RPi W - 1.3 -> 3.8 ms ~ 3x
+% BLE - 1.0 -> 4.4 ms
+% ESP32 - 0.2 -> 0.7 ms
+
+The first experiment involved three physical sensors (i.e., DHT11, MQ-9, and Air Quality) connected to the microcontroller via a Groove Shield. These sensors were combined to evaluate the CP for two factors (2-F). The ESP32 achieved the lowest latency at 0.2~ms by leveraging its higher clock speed to accelerate the FLC-based adaptation mechanism. This setup ensures near-real-time prioritization of emergency data streams, which is crucial for rapid risk escalation. In contrast, the Arduino Nano exhibited higher latency at 1 ms due to its 64~MHz Cortex-M4 core. %Nevertheless, all platforms remain below a 2 ms threshold, which is fundamental for emergency systems as it allows flexible data scheduling, ranging from strict short latency to longer sampling periods.  
+
+The program size remained compact, fitting within the constraints of all platforms. Overall, the footprint accounts for less than 10\% of the devices' flash memory, which includes the baseline components for the platform. The exception is the Pico W, which has low base memory requirements. In this case, the design only occupied 0.2\% of the available memory. Similarly, RAM usage remained low across the evaluated platforms, with costs ranging from 16\% on the Pico W and Arduino Nano to only 7\% of the ESP32 memory.
+
+Finally, the second experiment assesses the algorithm scalability by increasing the number of hazard factors to simulate a monitoring platform associated with several simultaneous emergency assessments (e.g., heating, freezing, gas, smoke, fire). In this case, the platform must perform the CRI computation as many times as the number of factors in \( F \). For this particular experiment, we define \( |F| = 10\).  Overall, the platforms exhibited an average of three to four times in latency degradation under high computational loads, underscoring the proposed method suitability for such monitoring scenarios requiring real-time assessment across multiple risk factors.
+
+\section{Conclusion}
+\label{sec:conclusion}
+% [0.25 pages]  
+The proposed prioritization mechanism represents significant advancements over traditional emergency monitoring systems. Its lightweight computational design ensures efficient operation and a low memory footprint while maintaining real-time responsiveness. The system balances timely data delivery by dynamically adjusting emergency data priorities in response to contextual urban multi-tiered perception, demonstrating the potential to outperform static configurations. These features position the proposed method as a reliable solution for emergency monitoring and a versatile tool for smart cities, capable of adapting to changing urban dynamics while maintaining operational efficiency. Nevertheless, we acknowledge that the current validation was constrained to a specific hazard type and metropolitan area, under fixed parameter settings and single-node deployments. These factors may limit the generalizability of the results across different contexts and emergency scenarios. %Future work will focus on expanding the scope of hazard types and enabling distributed coordination among sensors to further enhance the system's adaptability and resilience.
+Future work will focus on expanding the scope of hazard types, enabling distributed coordination among sensors, and conducting more elaborate experiments with diverse sensor configurations to further enhance the system's adaptability.
+
+%Future work will focus on multi-node coordination and real-time risk updates, further enhancing its applicability in large-scale, heterogeneous deployments.
+
+\bibliographystyle{IEEEtran}
+% argument is your BibTeX string definitions and bibliography database(s)
+\bibliography{IEEEabrv,references}
+
+\end{document}

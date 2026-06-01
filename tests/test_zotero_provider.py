@@ -1,0 +1,158 @@
+import pytest
+from unittest.mock import MagicMock, patch
+from typing import List
+
+from writing_context_rtfm.config import AppConfig, RTFMConfig, ContextConfig, CacheConfig, SectionCardsConfig
+from writing_context_rtfm.schemas import ProviderConfig, MCPServerConfig
+from writing_context_rtfm.providers.local import ZoteroProvider
+
+@pytest.fixture
+def base_config():
+    return AppConfig(
+        version=1,
+        rtfm=RTFMConfig(project_root="."),
+        context=ContextConfig(),
+        cache=CacheConfig(enabled=False),
+        section_cards=SectionCardsConfig(path="dummy.yaml"),
+        providers={
+            "zotero": ProviderConfig(
+                enabled=True,
+                mcp_server=MCPServerConfig(
+                    command="zotero-mcp",
+                    args=["serve"]
+                )
+            )
+        }
+    )
+
+@pytest.fixture
+def mock_manager():
+    with patch("writing_context_rtfm.providers.local.get_shared_manager") as mock_get:
+        manager = MagicMock()
+        mock_get.return_value = manager
+        yield manager
+
+def test_semantic_routing(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+    
+    # Mock the semantic search tool response
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "## 1. Test Paper\n**Citation Key:** testKey2023\n**Matched Content:** Semantic match text."
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+    
+    queries = ["Explain the architecture"]
+    query_type_map = {"Explain the architecture": "intent"}
+    
+    spans = provider.fetch_context(queries, target=None, limit=5, query_type_map=query_type_map)
+    
+    # Verify manager was called with semantic_search tool
+    mock_manager.call_tool.assert_called_with(
+        command="zotero-mcp",
+        args=["serve"],
+        tool_name="zotero_semantic_search",
+        arguments={"query": "Explain the architecture", "limit": 5},
+        env=None
+    )
+    
+    assert len(spans) == 1
+    assert spans[0].path == "zotero:testKey2023"
+    assert "Semantic match text" in spans[0].metadata["snippet"]
+
+def test_keyword_routing(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+    
+    # Mock the keyword search tool response
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "## 1. Test Paper\n**Citation Key:** keywordKey2023\n**Matched Content:** Keyword match text."
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+    
+    queries = ["architecture"]
+    query_type_map = {"architecture": "key_term"}
+    
+    spans = provider.fetch_context(queries, target=None, limit=5, query_type_map=query_type_map)
+    
+    # Verify manager was called with search_items tool
+    mock_manager.call_tool.assert_called_with(
+        command="zotero-mcp",
+        args=["serve"],
+        tool_name="zotero_search_items",
+        arguments={"query": "architecture", "limit": 5},
+        env=None
+    )
+    
+    assert len(spans) == 1
+    assert spans[0].path == "zotero:keywordKey2023"
+
+def test_proofread_context_protection(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+    
+    queries = ["Explain the architecture", "architecture"]
+    query_type_map = {"Explain the architecture": "intent", "architecture": "key_term"}
+    
+    spans = provider.fetch_context(
+        queries, target=None, limit=5, 
+        query_type_map=query_type_map, 
+        task_type="proofread"
+    )
+    
+    # Verify no searches were executed because it's a proofread task
+    mock_manager.call_tool.assert_not_called()
+    assert len(spans) == 0
+
+def test_abstract_stripping(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+    
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = (
+        "## 1. Test Paper\n"
+        "**Citation Key:** testKey2023\n"
+        "**Matched Content:** Semantic match text.\n"
+        "**Abstract:**\nThis is a long abstract that we want to strip out to save tokens.\n\n"
+        "## 2. Another Paper"
+    )
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+    
+    spans = provider.fetch_context(["intent"], target=None, limit=5, query_type_map={"intent": "intent"})
+    
+    assert len(spans) == 2
+    snippet = spans[0].metadata["snippet"]
+    assert "Semantic match text" in snippet
+    assert "This is a long abstract" not in snippet
+
+def test_include_abstract_config(base_config, mock_manager):
+    # Enable include_abstract
+    base_config.providers["zotero"] = ProviderConfig(
+        enabled=True,
+        mcp_server=MCPServerConfig(command="zotero-mcp", args=["serve"]),
+        extra={"include_abstract": True}
+    )
+    
+    provider = ZoteroProvider(base_config)
+    
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = (
+        "## 1. Test Paper\n"
+        "**Citation Key:** testKey2023\n"
+        "**Matched Content:** Semantic match text.\n"
+        "**Abstract:**\nThis is a long abstract that we want to KEEP.\n\n"
+        "## 2. Another Paper"
+    )
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+    
+    spans = provider.fetch_context(["intent"], target=None, limit=5, query_type_map={"intent": "intent"})
+    
+    assert len(spans) == 2
+    snippet = spans[0].metadata["snippet"]
+    assert "This is a long abstract that we want to KEEP" in snippet

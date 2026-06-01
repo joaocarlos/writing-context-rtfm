@@ -1,8 +1,8 @@
 """Context pack schemas and generation."""
 import uuid
 import hashlib
-from dataclasses import dataclass, asdict, field
-from typing import List, Optional, Dict, Any, Tuple
+from dataclasses import asdict
+from typing import List, Optional, Dict, Tuple
 from pathlib import Path
 from collections import defaultdict
 
@@ -157,8 +157,10 @@ class ContextPackGenerator:
         if self.section_cards and target and target in self.section_cards.sections:
             target_card = self.section_cards.sections[target]
 
-            # 3. Target section title and key terms (skip key terms if minimal or line range exists)
+            # 3. Target section intent, title, and key terms (skip key terms if minimal or line range exists)
             if not has_line_range and pack_mode != "minimal":
+                if target_card.role:
+                    _add(target_card.role, "intent")
                 if target_card.title:
                     _add(target_card.title, "title")
                 
@@ -173,14 +175,18 @@ class ContextPackGenerator:
                 for kt in (target_card.key_terms or [])[:max_kt]:
                     _add(kt, "key_term")
             elif not has_line_range and pack_mode == "minimal":
+                if target_card.role:
+                    _add(target_card.role, "intent")
                 if target_card.title:
                     _add(target_card.title, "title")
 
-            # 4. Dependency section titles and key terms (skip key terms if minimal)
+            # 4. Dependency section intents, titles and key terms (skip key terms if minimal)
             for dep_id in (target_card.depends_on or []):
                 if dep_id in self.section_cards.sections:
                     dep_card = self.section_cards.sections[dep_id]
                     dep_cards.append(dep_card)
+                    if dep_card.role:
+                        _add(dep_card.role, "dep_intent")
                     if dep_card.title:
                         _add(dep_card.title, "dep_title")
                     
@@ -602,7 +608,11 @@ class ContextPackGenerator:
         for provider in self.providers:
             if provider.is_available(self.config):
                 try:
-                    p_spans = provider.fetch_context(queries, target, limit=max_spans)
+                    p_spans = provider.fetch_context(
+                        queries, target, limit=max_spans, 
+                        query_type_map=query_type_map, 
+                        task_type=task_type
+                    )
                     all_candidates.extend(p_spans)
                 except Exception as e:
                     warnings.append(f"Provider '{provider.provider_id}' failed: {e}")
@@ -640,60 +650,38 @@ class ContextPackGenerator:
         current_tokens = 0
         tokens_by_role = {r: 0 for r in resolved_budgets}
 
-        # Pass 1: Strict allocation based on role fractions
+        # Pass 1: Strict allocation based on role fractions (soft guidance)
         pass2_candidates: List[SourceSpan] = []
         for span in filtered:
             role = span.source_role
             est = self._estimate_tokens(span)
             role_limit = int(resolved_budgets.get(role, 0.0) * usable_budget)
 
-            if len(selected) < max_spans and tokens_by_role.get(role, 0) + est <= role_limit and current_tokens + est <= usable_budget:
+            if len(selected) < max_spans and tokens_by_role.get(role, 0) + est <= role_limit:
                 selected.append(span)
                 tokens_by_role[role] = tokens_by_role.get(role, 0) + est
                 current_tokens += est
             else:
                 pass2_candidates.append(span)
 
-        # Pass 2: Redistribution of remaining budget
+        # Pass 2: Fill remaining spans up to max_spans, ignoring token budget
         budget_dropped = 0
         cap_truncated = False
-        unselected: List[SourceSpan] = []
         for span in pass2_candidates:
-            est = self._estimate_tokens(span)
             if len(selected) >= max_spans:
                 cap_truncated = True
                 budget_dropped += 1
-                unselected.append(span)
                 continue
-            if current_tokens + est <= usable_budget:
-                selected.append(span)
-                current_tokens += est
-            else:
-                budget_dropped += 1
-                unselected.append(span)
-
-        if budget_dropped > 0:
-            quality.dropped_for_budget = budget_dropped
-            quality.truncated = True
-            margin = self.config.context.reserved_generation_margin
-            candidate_spans_within_cap = filtered[:max_spans]
-            needed_spans_tokens = sum(self._estimate_tokens(s) for s in candidate_spans_within_cap)
-            denominator = 1.0 - margin if margin < 1.0 else 0.9
-            required_budget = int(needed_spans_tokens / denominator) + 1
-            required_budget = max(required_budget, token_budget + 1000)
             
+            est = self._estimate_tokens(span)
+            selected.append(span)
+            current_tokens += est
+
+        if current_tokens > token_budget or cap_truncated:
+            msg = f"Note: The retrieved context ({current_tokens} tokens) exceeded the requested budget ({token_budget}). All highly-relevant spans up to max_spans were included to prevent context bloat."
             if cap_truncated:
-                warnings.append(
-                    f"Token budget exceeded: {budget_dropped} candidate span(s) dropped due to token budget or "
-                    f"max_source_spans={max_spans} cap reached. "
-                    f"To resolve this, call the tool with a larger token_budget of at least {required_budget}."
-                )
-            else:
-                warnings.append(
-                    f"Token budget exceeded: {budget_dropped} candidate span(s) dropped to stay within token budget "
-                    f"({usable_budget} usable of {token_budget}). "
-                    f"To resolve this, call the tool with a larger token_budget of at least {required_budget}."
-                )
+                msg += f" {budget_dropped} candidate span(s) were dropped because the max_source_spans={max_spans} cap was reached."
+            warnings.append(msg)
 
         quality.selected_count = len(selected)
 
@@ -764,7 +752,7 @@ class ContextPackGenerator:
         quality.estimated_tokens = total_tokens
 
         run_id = str(uuid.uuid4())
-        has_degrading = any(not w.startswith("LaTeX Safety:") for w in warnings)
+        has_degrading = any(not w.startswith("LaTeX Safety:") and not w.startswith("Note: The retrieved context") for w in warnings)
         status_str = "degraded" if (has_degrading or status == "degraded") else "complete"
 
         pack = ContextPack(
@@ -812,6 +800,7 @@ class ContextPackGenerator:
                 d = asdict(s)
                 d["selected"] = 1
                 sources_to_store.append(d)
+            unselected = [s for s in filtered if s not in selected]
             for s in unselected:
                 d = asdict(s)
                 d["selected"] = 0

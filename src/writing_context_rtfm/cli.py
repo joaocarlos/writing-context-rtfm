@@ -188,10 +188,33 @@ def _update_claude_settings(root: Path) -> None:
             ]
         }
         post_tool_use.append(new_hook)
+
+    # SessionEnd hooks
+    cleanup_cmd = "writing-context-rtfm cleanup"
+    if (root / "uv.lock").exists():
+        cleanup_cmd = "uv run writing-context-rtfm cleanup"
+
+    session_end = hooks.setdefault("SessionEnd", [])
+    if not isinstance(session_end, list):
+        session_end = []
+        hooks["SessionEnd"] = session_end
+
+    session_hook_exists = False
+    for entry in session_end:
+        if isinstance(entry, dict) and entry.get("type") == "command" and entry.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup"):
+            entry["command"] = cleanup_cmd
+            session_hook_exists = True
+            break
+            
+    if not session_hook_exists:
+        session_end.append({
+            "type": "command",
+            "command": cleanup_cmd
+        })
         
     try:
         settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
-        print(f"Updated {settings_file} with writing-context-rtfm PostToolUse hooks.")
+        print(f"Updated {settings_file} with writing-context-rtfm PostToolUse and SessionEnd hooks.")
     except Exception as e:
         print(f"Warning: Failed to write {settings_file}: {e}")
 
@@ -203,13 +226,52 @@ def init_command(args):
     config_file = wc / "config.yaml"
     sc_file = wc / "section_cards.yaml"
     if not config_file.exists():
+        from writing_context_rtfm.providers.discovery import autodiscover_local_mcps
+        discovered = autodiscover_local_mcps(str(root))
+
+        def _format_mcp_server_config(mcp_server: dict) -> str:
+            cmd = mcp_server.get("command", "")
+            args = mcp_server.get("args") or []
+            env = mcp_server.get("env")
+            lines = [
+                "    mcp_server:",
+                f"      command: {cmd}",
+                f"      args: {json.dumps(args)}"
+            ]
+            if env:
+                lines.append("      env:")
+                for k, v in env.items():
+                    lines.append(f"        {k}: {json.dumps(v)}")
+            return "\n".join(lines)
+
+        zotero_cfg = discovered.get("zotero")
+        if zotero_cfg:
+            zotero_block = (
+                "  zotero:\n"
+                "    enabled: true\n"
+                f"{_format_mcp_server_config(zotero_cfg['mcp_server'])}"
+            )
+        else:
+            zotero_block = (
+                "  zotero:\n"
+                "    enabled: false\n"
+                "    mcp_server:\n"
+                "      command: npx\n"
+                '      args: ["-y", "zotero-mcp"]'
+            )
+            
+        providers_block = (
+            "providers:\n"
+            f"{zotero_block}"
+        )
+
         template = (
             "# writing-context-rtfm Configuration File\n"
             "version: 1\n\n"
             "# RTFM core indexing settings\n"
             "rtfm:\n"
             "  # The corpus name registered in RTFM for this manuscript project.\n"
-            "  corpus: manuscript\n"
+            "  corpus: default\n"
             "  # Enable auto-sync before generating a context pack to ensure the index is up-to-date.\n"
             "  # sync_before_pack: true\n\n"
             "# Context pack generation settings\n"
@@ -234,38 +296,8 @@ def init_command(args):
             "  # enabled: true\n"
             "  # Invalidate cached context packs when the index is synced/refreshed.\n"
             "  # invalidate_on_refresh: true\n\n"
-            "# External context providers configuration (Zotero, NotebookLM, Scite, Consensus)\n"
-            "# providers:\n"
-            "  # zotero:\n"
-            "    # enabled: false\n"
-            "    # mcp_server:\n"
-            "      # command: npx\n"
-            "      # args: [\"-y\", \"zotero-mcp\"]\n"
-            "  # notebooklm:\n"
-            "    # enabled: false\n"
-            "    # mcp_server:\n"
-            "      # command: python\n"
-            "      # args: [\"-m\", \"notebooklm_mcp\"]\n"
-            "  # scite:\n"
-            "    # enabled: false\n"
-            "    # sse_url: \"https://api.scite.ai/mcp\"\n"
-            "    # # Individual/OAuth auth tokens can be configured as headers.\n"
-            "    # # To retrieve your token: sign in to scite.ai on your browser,\n"
-            "    # # open DevTools (F12) -> Network tab, run a search, and look\n"
-            "    # # for requests to api.scite.ai. Copy the value of the \"Authorization\"\n"
-            "    # # header and paste it here.\n"
-            "    # headers:\n"
-            "      # Authorization: \"Bearer <YOUR_TOKEN_HERE>\"\n"
-            "  # consensus:\n"
-            "    # enabled: false\n"
-            "    # sse_url: \"https://mcp.consensus.app/mcp\"\n"
-            "    # # Individual/OAuth auth tokens can be configured as headers.\n"
-            "    # # To retrieve your token: sign in to consensus.app on your browser,\n"
-            "    # # open DevTools (F12) -> Network tab, run a search, and look\n"
-            "    # # for requests to mcp.consensus.app. Copy the value of the \"Authorization\"\n"
-            "    # # header and paste it here.\n"
-            "    # headers:\n"
-            "      # Authorization: \"Bearer <YOUR_TOKEN_HERE>\"\n"
+            "# External context providers configuration (Zotero)\n"
+            f"{providers_block}\n"
         )
         config_file.write_text(template, encoding="utf-8")
         print(f"Created {config_file}")
@@ -434,7 +466,9 @@ def pack_command(args):
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
     store = ExtensionStore(config.cache.path)
     store.init_db()
-    generator = ContextPackGenerator(config, cards, adapter, store)
+    from writing_context_rtfm.providers import get_active_providers
+    providers = get_active_providers(config)
+    generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
 
     role_budgets = None
     if getattr(args, "role_budgets", None):
@@ -493,221 +527,6 @@ def get_term_command(args):
 
 def serve_command(args):
     run_server()
-def auth_command(args):
-    import http.server
-    import socketserver
-    import webbrowser
-    import json
-    import secrets
-    import hashlib
-    import base64
-    import urllib.parse
-    import urllib.request
-    import time
-    from writing_context_rtfm.storage import ExtensionStore
-    
-    project_root = getattr(args, "project_root", ".")
-    config = load_config(project_root)
-    provider = args.provider
-    
-    if provider == "scite":
-        reg_url = "https://api.scite.ai/mcp/oauth/register"
-        auth_url = "https://api.scite.ai/mcp/oauth/authorize"
-        token_url = "https://api.scite.ai/mcp/oauth/token"
-        scope = "mcp"
-    elif provider == "consensus":
-        reg_url = "https://consensus.app/oauth/register/"
-        auth_url = "https://consensus.app/oauth/authorize/"
-        token_url = "https://consensus.app/oauth/token/"
-        scope = "search"
-    else:
-        print(f"Error: Unsupported provider '{provider}'", file=sys.stderr)
-        sys.exit(1)
-        
-    store = ExtensionStore(config.cache.path)
-    store.init_db()
-    
-    auth_code = None
-    auth_error = None
-    state = secrets.token_urlsafe(16)
-    
-    # 1. Setup local callback server handler
-    class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, format, *args):
-            return
-
-        def do_GET(self):
-            nonlocal auth_code, auth_error
-            parsed_url = urllib.parse.urlparse(self.path)
-            query = urllib.parse.parse_qs(parsed_url.query)
-            
-            if parsed_url.path != "/callback":
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b"Not Found")
-                return
-                
-            incoming_state = query.get("state", [None])[0]
-            if incoming_state != state:
-                auth_error = "State mismatch. Possible CSRF attack."
-            else:
-                auth_code = query.get("code", [None])[0]
-                if not auth_code:
-                    auth_error = query.get("error_description", [query.get("error", ["Unknown error"])])[0]
-            
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            
-            if auth_error:
-                html = f"""
-                <html>
-                <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #fafafa;">
-                    <h2 style="color: #d9534f;">Authentication Failed</h2>
-                    <p style="color: #666;">{auth_error}</p>
-                    <p>You can close this tab and try again in the terminal.</p>
-                </body>
-                </html>
-                """
-            else:
-                html = """
-                <html>
-                <body style="font-family: sans-serif; text-align: center; padding-top: 50px; background-color: #fafafa;">
-                    <h2 style="color: #5cb85c;">Authorization Successful!</h2>
-                    <p style="color: #666;">You have successfully authorized writing-context-rtfm.</p>
-                    <p>You can close this tab now and return to your terminal.</p>
-                </body>
-                </html>
-                """
-            self.wfile.write(html.encode("utf-8"))
-
-    # 2. Bind port first to find a free port
-    socketserver.TCPServer.allow_reuse_address = True
-    server = None
-    port = 8989
-    for p in range(8989, 9000):
-        try:
-            server = socketserver.TCPServer(("localhost", p), OAuthCallbackHandler)
-            port = p
-            break
-        except OSError:
-            continue
-            
-    if not server:
-        print("Error: Could not start local callback server on ports 8989-9000.", file=sys.stderr)
-        sys.exit(1)
-        
-    redirect_uri = f"http://localhost:{port}/callback"
-    
-    # 3. Dynamic Client Registration (DCR) using the exact bound port's redirect URI
-    print(f"[*] Registering dynamic client with {provider.capitalize()} on port {port}...")
-    reg_payload = {
-        "client_name": "writing-context-rtfm",
-        "redirect_uris": [redirect_uri],
-        "grant_types": ["authorization_code", "refresh_token"],
-        "response_types": ["code"],
-        "token_endpoint_auth_method": "none",
-        "scope": scope
-    }
-    try:
-        req = urllib.request.Request(
-            reg_url,
-            data=json.dumps(reg_payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            reg_resp = json.loads(resp.read().decode())
-            client_id = reg_resp.get("client_id")
-            if not client_id:
-                raise ValueError("Registration response did not return a client_id")
-            store.set_provider_oauth(provider, client_id=client_id)
-            print(f"[OK] Dynamically registered! Client ID: {client_id}")
-    except Exception as e:
-        print(f"Error: Dynamic registration failed: {e}", file=sys.stderr)
-        server.server_close()
-        sys.exit(1)
-            
-    # 4. PKCE Setup
-    code_verifier = secrets.token_urlsafe(64)
-    sha256_hash = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    code_challenge = base64.urlsafe_b64encode(sha256_hash).decode("ascii").replace("=", "")
-    
-    # 5. Construct Authorization URL
-    auth_params = {
-        "response_type": "code",
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "scope": scope,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-        "state": state
-    }
-    authorize_url = f"{auth_url}?{urllib.parse.urlencode(auth_params)}"
-    
-    print(f"\n[*] Opening browser to authorize writing-context-rtfm...")
-    print(f"[*] URL: {authorize_url}\n")
-    webbrowser.open(authorize_url)
-    
-    print("[*] Waiting for authorization callback in browser (Press Ctrl+C to cancel)...")
-    try:
-        while auth_code is None and auth_error is None:
-            server.handle_request()
-    except KeyboardInterrupt:
-        print("\n[!] Authentication cancelled.")
-        sys.exit(1)
-    finally:
-        server.server_close()
-        
-    if auth_error:
-        print(f"\n[FAIL] Authentication failed: {auth_error}", file=sys.stderr)
-        sys.exit(1)
-        
-    # 6. Exchange Authorization Code for Access & Refresh Tokens
-    print("[*] Exchanging authorization code for access token...")
-    token_payload = {
-        "grant_type": "authorization_code",
-        "code": auth_code,
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "code_verifier": code_verifier
-    }
-    
-    try:
-        token_data = urllib.parse.urlencode(token_payload).encode("utf-8")
-        req = urllib.request.Request(
-            token_url,
-            data=token_data,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": "Mozilla/5.0"
-            },
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            token_resp = json.loads(resp.read().decode())
-            access_token = token_resp.get("access_token")
-            refresh_token = token_resp.get("refresh_token")
-            expires_in = token_resp.get("expires_in", 3600)
-            
-            if not access_token:
-                raise ValueError("Token response did not return an access_token")
-                
-            expires_at = time.time() + float(expires_in)
-            store.set_provider_oauth(
-                provider,
-                client_id=client_id,
-                access_token=access_token,
-                refresh_token=refresh_token,
-                expires_at=expires_at
-            )
-            print(f"\n[OK] Successfully authenticated with {provider.capitalize()}!")
-            print(f"[*] Access token expires in {expires_in} seconds.")
-            if refresh_token:
-                print("[*] Refresh token saved for automatic token rotation.")
-    except Exception as e:
-        print(f"\n[FAIL] Token exchange failed: {e}", file=sys.stderr)
-        sys.exit(1)
 
 def doctor_command(args):
     project_root = Path(getattr(args, "project_root", ".")).resolve()
@@ -931,6 +750,87 @@ def show_graph_command(args):
     else:
         print("  (No section cards or section_cards.yaml not found/empty)")
 
+def cleanup_command(args):
+    import os
+    import json
+    import time
+    
+    project_root = Path(getattr(args, "project_root", ".")).resolve()
+    pid_file = project_root / ".writing-context" / "active_pids.json"
+    
+    if not pid_file.exists():
+        print("No active processes to cleanup (active_pids.json not found).")
+        return
+        
+    try:
+        pids = json.loads(pid_file.read_text(encoding="utf-8"))
+        if not isinstance(pids, list):
+            pids = []
+    except Exception as e:
+        print(f"Error reading {pid_file}: {e}")
+        pids = []
+        
+    if not pids:
+        print("No active processes recorded in active_pids.json.")
+        return
+        
+    print(f"Cleaning up {len(pids)} registered processes...")
+    
+    def terminate_process(pid: int) -> None:
+        import sys
+        if sys.platform == "win32":
+            import subprocess
+            try:
+                subprocess.run(["taskkill", "/T", "/PID", str(pid)], capture_output=True)
+            except Exception:
+                pass
+            time.sleep(0.5)
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+            except Exception:
+                pass
+        else:
+            import signal
+            # SIGTERM
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                print(f"Process {pid} already terminated.")
+                return
+            except Exception as ex:
+                print(f"Error sending SIGTERM to {pid}: {ex}")
+                
+            # Wait up to 0.5s for process to die
+            for _ in range(5):
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    print(f"Process {pid} cleanly terminated.")
+                    return
+            
+            # If still alive, SIGKILL
+            try:
+                os.kill(pid, signal.SIGKILL)
+                print(f"Forcefully terminated process {pid} with SIGKILL.")
+            except ProcessLookupError:
+                print(f"Process {pid} terminated before SIGKILL.")
+            except Exception as ex:
+                print(f"Error sending SIGKILL to {pid}: {ex}")
+
+    for pid in pids:
+        try:
+            terminate_process(pid)
+        except Exception as e:
+            print(f"Failed to cleanup process {pid}: {e}")
+            
+    # Write back empty list to clear
+    try:
+        pid_file.write_text(json.dumps([]), encoding="utf-8")
+        print("Cleanup completed.")
+    except Exception as e:
+        print(f"Error writing empty list to {pid_file}: {e}")
+
 def main():
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
@@ -1002,10 +902,10 @@ def main():
     parser_show_graph.add_argument("--project-root", default=".", help="Project root path")
     parser_show_graph.add_argument("--format", default="text", choices=["text", "json"], help="Output format")
 
-    # auth
-    parser_auth = subparsers.add_parser("auth", help="Authenticate with Scite or Consensus cloud providers")
-    parser_auth.add_argument("provider", choices=["scite", "consensus"], help="Provider to authenticate with")
-    parser_auth.add_argument("--project-root", default=".", help="Project root path")
+
+    # cleanup
+    parser_cleanup = subparsers.add_parser("cleanup", help="Cleanly terminate all tracked background MCP processes")
+    parser_cleanup.add_argument("--project-root", default=".", help="Project root path")
 
     subparsers.add_parser("serve", help="Start the MCP server")
 
@@ -1020,11 +920,12 @@ def main():
         "proofread-pack": proofread_pack_command,
         "serve": serve_command,
         "cache": cache_command,
-        "auth": auth_command,
+
         "doctor": doctor_command,
         "inspect-target": inspect_target_command,
         "get-term": get_term_command,
-        "show-graph": show_graph_command
+        "show-graph": show_graph_command,
+        "cleanup": cleanup_command
     }
 
     commands[args.command](args)

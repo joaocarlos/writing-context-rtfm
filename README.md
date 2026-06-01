@@ -65,9 +65,19 @@ pipx install "rtfm-ai[embeddings]"
 ```
 *(Note: If you are setting up inside a local virtual environment, running `uv pip install "writing-context-rtfm[tiktoken]"` will automatically pull in `rtfm-ai[embeddings]` as a library dependency, but installing it globally ensures the `rtfm` binary is available on your PATH).*
 
+### 3. Install Zotero MCP (Semantic Literature Grounding)
+`writing-context-rtfm` uses `zotero-mcp` to ground your agent in your local literature library. It supports dynamic semantic search over your PDFs and metadata.
+You must install `zotero-mcp` and have Zotero Desktop running for literature grounding to work:
+
+```bash
+# Install zotero-mcp globally using uv
+uv tool install zotero-mcp
+```
+*(Make sure Zotero Desktop is open while the agent is running so it can connect to the local SQLite database).*
+
 ---
 
-### 3. Quick Project Onboarding
+### 4. Quick Project Onboarding
 To integrate the server into your manuscript repository, run the following commands:
 
 #### Step A: Initialize configuration and editor rules
@@ -186,6 +196,11 @@ The extension automatically parses the target text and detects LaTeX math enviro
 
 ### 3. SQLite Local Caching
 To optimize token and response latency, generated context packs are hashed and cached locally in `.writing-context/context_cache.sqlite`. Cache keys are dynamically invalidated whenever the project configuration, section cards, or underlying RTFM indexes are updated.
+
+### 4. Semantic Zotero Grounding
+The extension dynamically routes literature queries to `zotero-mcp`. 
+* **Semantic Routing**: High-level section intents (e.g., "Discuss how smart cities use IoT") are routed to ChromaDB-powered semantic searches.
+* **Proofread Protection**: If you run a `proofread-pack`, the engine intelligently skips open-ended searches to prevent "context contamination" (hallucinating new ideas into your polish phase), only resolving the explicit `\cite{}` keys already present in the draft.
 
 ---
 

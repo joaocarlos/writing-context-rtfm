@@ -6,7 +6,7 @@ class TestConfig(unittest.TestCase):
     def test_load_defaults_when_missing(self):
         config = load_config("nonexistent.yaml")
         self.assertEqual(config.version, 1)
-        self.assertEqual(config.rtfm.corpus, "manuscript")
+        self.assertEqual(config.rtfm.corpus, "default")
         self.assertEqual(config.context.default_token_budget, 12000)
 
     def test_load_providers_valid(self):
@@ -27,10 +27,6 @@ class TestConfig(unittest.TestCase):
                             "command": "npx",
                             "args": ["-y", "zotero-mcp"]
                         }
-                    },
-                    "scite": {
-                        "enabled": True,
-                        "sse_url": "https://api.scite.ai/mcp"
                     }
                 }
             }
@@ -41,14 +37,6 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(config.providers["zotero"].mcp_server.command, "npx")
             self.assertEqual(config.providers["zotero"].mcp_server.args, ["-y", "zotero-mcp"])
             self.assertIsNone(config.providers["zotero"].sse_url)
-            
-            self.assertTrue(config.providers["scite"].enabled)
-            self.assertIsNone(config.providers["scite"].mcp_server)
-            self.assertEqual(config.providers["scite"].sse_url, "https://api.scite.ai/mcp")
-            
-            # Default unconfigured ones
-            self.assertFalse(config.providers["notebooklm"].enabled)
-            self.assertFalse(config.providers["consensus"].enabled)
 
     def test_load_providers_invalid_type(self):
         import tempfile
@@ -104,9 +92,9 @@ class TestConfig(unittest.TestCase):
             yaml_content = {
                 "version": 1,
                 "providers": {
-                    "scite": {
+                    "zotero": {
                         "enabled": True,
-                        "sse_url": "https://api.scite.ai/mcp",
+                        "sse_url": "https://api.zotero.org/mcp",
                         "headers": {
                             "Authorization": "Bearer token123",
                             "X-Custom-Header": "custom_val"
@@ -117,10 +105,10 @@ class TestConfig(unittest.TestCase):
             config_yaml.write_text(yaml.dump(yaml_content))
             
             config = load_config(tmpdir)
-            scite_cfg = config.providers["scite"]
-            self.assertTrue(scite_cfg.enabled)
-            self.assertEqual(scite_cfg.sse_url, "https://api.scite.ai/mcp")
-            self.assertEqual(scite_cfg.headers, {
+            zotero_cfg = config.providers["zotero"]
+            self.assertTrue(zotero_cfg.enabled)
+            self.assertEqual(zotero_cfg.sse_url, "https://api.zotero.org/mcp")
+            self.assertEqual(zotero_cfg.headers, {
                 "Authorization": "Bearer token123",
                 "X-Custom-Header": "custom_val"
             })
@@ -137,9 +125,9 @@ class TestConfig(unittest.TestCase):
             yaml_content = {
                 "version": 1,
                 "providers": {
-                    "scite": {
+                    "zotero": {
                         "enabled": True,
-                        "sse_url": "https://api.scite.ai/mcp",
+                        "sse_url": "https://api.zotero.org/mcp",
                         "headers": "not-a-dict"
                     }
                 }
@@ -161,9 +149,9 @@ class TestConfig(unittest.TestCase):
             yaml_content = {
                 "version": 1,
                 "providers": {
-                    "scite": {
+                    "zotero": {
                         "enabled": True,
-                        "sse_url": "https://api.scite.ai/mcp",
+                        "sse_url": "https://api.zotero.org/mcp",
                         "headers": {
                             "Authorization": 12345
                         }

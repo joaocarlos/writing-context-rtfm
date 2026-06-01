@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Dict
 from writing_context_rtfm.schemas import SourceSpan
 from writing_context_rtfm.config import AppConfig
 
@@ -16,6 +16,6 @@ class BaseContextProvider(ABC):
         pass
 
     @abstractmethod
-    def fetch_context(self, queries: List[str], target: Optional[str], limit: int) -> List[SourceSpan]:
+    def fetch_context(self, queries: List[str], target: Optional[str], limit: int, query_type_map: Optional[Dict[str, str]] = None, task_type: Optional[str] = None) -> List[SourceSpan]:
         """Query the provider source and return a list of normalized SourceSpan objects."""
         pass

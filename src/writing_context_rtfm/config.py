@@ -1,13 +1,13 @@
 """Configuration schema and loading."""
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict
 import yaml
 from dataclasses import dataclass, field
 from writing_context_rtfm.schemas import ProviderConfig, MCPServerConfig
 
 @dataclass(frozen=True)
 class RTFMConfig:
-    corpus: str = "manuscript"
+    corpus: str = "default"
     project_root: str = "."
     sync_before_pack: bool = True
 
@@ -52,10 +52,7 @@ def load_config(project_root: str = ".") -> AppConfig:
     config_path = root / ".writing-context" / "config.yaml"
 
     default_providers = {
-        "zotero": ProviderConfig(enabled=False),
-        "notebooklm": ProviderConfig(enabled=False),
-        "scite": ProviderConfig(enabled=False),
-        "consensus": ProviderConfig(enabled=False)
+        "zotero": ProviderConfig(enabled=False)
     }
 
     defaults = AppConfig(
@@ -121,9 +118,17 @@ def load_config(project_root: str = ".") -> AppConfig:
                 raise TypeError(f"Provider '{name}' 'mcp_server' must be a dictionary, got {type(mcp_server_data).__name__}")
             if "command" not in mcp_server_data:
                 raise ValueError(f"Provider '{name}' 'mcp_server' must specify 'command'")
+            env_data = mcp_server_data.get("env")
+            if env_data is not None:
+                if not isinstance(env_data, dict):
+                    raise TypeError(f"Provider '{name}' 'mcp_server' 'env' must be a dictionary, got {type(env_data).__name__}")
+                for k, v in env_data.items():
+                    if not isinstance(k, str) or not isinstance(v, str):
+                        raise TypeError(f"Provider '{name}' 'mcp_server' 'env' keys and values must be strings")
             mcp_server = MCPServerConfig(
                 command=mcp_server_data["command"],
-                args=mcp_server_data.get("args") or []
+                args=mcp_server_data.get("args") or [],
+                env=env_data
             )
 
         sse_url = p_data.get("sse_url")
@@ -141,11 +146,16 @@ def load_config(project_root: str = ".") -> AppConfig:
             if not mcp_server and not sse_url:
                 raise ValueError(f"Provider '{name}' must configure either 'mcp_server' or 'sse_url' if enabled.")
 
+        extra = p_data.get("extra")
+        if extra is not None and not isinstance(extra, dict):
+            raise TypeError(f"Provider '{name}' 'extra' must be a dictionary, got {type(extra).__name__}")
+
         parsed_providers[name] = ProviderConfig(
             enabled=enabled,
             mcp_server=mcp_server,
             sse_url=sse_url,
-            headers=headers
+            headers=headers,
+            extra=extra
         )
 
     return AppConfig(

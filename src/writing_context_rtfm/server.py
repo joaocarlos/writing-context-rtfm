@@ -19,6 +19,8 @@ from writing_context_rtfm.latex import build_reference_graph
 from writing_context_rtfm.utils import resolve_rtfm_db_path
 from writing_context_rtfm import __version__
 
+_client_manager = None
+
 # --- Prompt formatters ------------------------------------------------------
 
 def _format_write_section_prompt(pack: Any) -> str:
@@ -547,7 +549,9 @@ def handle_get_writing_context_pack(args):
         logger.exception("Failed to load runtime for get_writing_context_pack")
         return _error_response(ERROR_CONFIG, "Failed to load configuration or section cards.", str(e))
 
-    generator = ContextPackGenerator(config, cards, adapter, store)
+    from writing_context_rtfm.providers import get_active_providers
+    providers = get_active_providers(config)
+    generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
     task = args.get("task", "")
     target = args.get("target")
     budget = args.get("token_budget", config.context.default_token_budget)
@@ -637,7 +641,7 @@ def handle_refresh_index(args):
         return _error_response(ERROR_CONFIG, "Failed to load configuration.", str(e))
 
     project_root = args.get("project_root", config.rtfm.project_root)
-    corpus = args.get("corpus", config.rtfm.corpus)
+
     adapter = RTFMAdapter(project_root=project_root)
 
     sync_path = args.get("project_root")
@@ -755,6 +759,8 @@ def process_message(line):
                         else:
                             WORKSPACE_ROOT = Path(root_uri).resolve()
                         logger.info(f"Initialized workspace root dynamically to: {WORKSPACE_ROOT}")
+                        if _client_manager is not None:
+                            _client_manager.workspace_root = WORKSPACE_ROOT
                         # Invalidate runtime cache to force config reload on new workspace
                         _RUNTIME_CACHE = None
                     except Exception:
@@ -818,7 +824,9 @@ def process_message(line):
                         budget = int(budget_arg) if budget_arg is not None else config.context.default_token_budget
                         line_start = int(line_start_val) if line_start_val is not None else None
                         line_end = int(line_end_val) if line_end_val is not None else None
-                        generator = ContextPackGenerator(config, cards, adapter, store)
+                        from writing_context_rtfm.providers import get_active_providers
+                        providers = get_active_providers(config)
+                        generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
                         pack = generator.generate(
                             task=task,
                             target=target,
@@ -953,6 +961,36 @@ def process_message(line):
 
 def run_server():
     """Start standard IO JSON-RPC loop."""
+    global _client_manager
+    import atexit
+    import signal
+    from writing_context_rtfm.providers.manager import LocalMCPClientManager
+
+    _client_manager = LocalMCPClientManager(workspace_root=str(WORKSPACE_ROOT))
+
+    def cleanup_handler(*args):
+        global _client_manager
+        if _client_manager is not None:
+            try:
+                _client_manager.shutdown()
+            except Exception:
+                pass
+            _client_manager = None
+        try:
+            from writing_context_rtfm.cli import cleanup_command
+            from argparse import Namespace
+            cleanup_command(Namespace(project_root=str(WORKSPACE_ROOT)))
+        except Exception:
+            pass
+
+    atexit.register(cleanup_handler)
+
+    try:
+        signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
+        signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
+    except (ValueError, OSError):
+        pass
+
     for line in sys.stdin:
         line = line.strip()
         if not line:

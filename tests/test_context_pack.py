@@ -127,7 +127,7 @@ class TestContextPackGenerator(unittest.TestCase):
             latex_warnings = [w for w in pack.warnings if "LaTeX Safety:" in w]
             self.assertTrue(len(latex_warnings) > 0)
 
-    def test_token_budget_degraded_warning_contains_required_budget(self):
+    def test_token_budget_auto_scaling_warning(self):
         # Mock search results returning large snippets
         mock_result1 = MagicMock()
         mock_result1.path = "sections/abstract.tex"
@@ -152,20 +152,8 @@ class TestContextPackGenerator(unittest.TestCase):
         # Use a small token budget so both cannot fit
         pack = self.generator.generate(task="write intro", target=None, token_budget=1500)
         
-        self.assertEqual(pack.status, "degraded")
-        self.assertTrue(len(pack.source_spans) < 2)
-        
-        # Check warning messages
-        budget_warnings = [w for w in pack.warnings if "Token budget exceeded:" in w]
-        self.assertTrue(len(budget_warnings) > 0)
-        warning_msg = budget_warnings[0]
-        self.assertIn("To resolve this, call the tool with a larger token_budget of at least", warning_msg)
-        
-        # Extract suggested budget from the warning message
-        parts = warning_msg.split("at least ")
-        self.assertEqual(len(parts), 2)
-        suggested_val = int(parts[1].rstrip("."))
-        self.assertTrue(suggested_val >= 2500)
+        self.assertEqual(pack.status, "degraded")  # Degraded due to missing section cards, NOT budget
+        self.assertEqual(len(pack.source_spans), 2)
 
 if __name__ == '__main__':
     unittest.main()

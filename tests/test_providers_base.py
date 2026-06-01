@@ -22,7 +22,7 @@ class MockContextProvider(BaseContextProvider):
         provider_cfg = config.providers.get(self._provider_id)
         return provider_cfg is not None and provider_cfg.enabled and self._enabled
 
-    def fetch_context(self, queries, target, limit):
+    def fetch_context(self, queries, target, limit, query_type_map=None, task_type="write_new_section"):
         self.fetch_context_called = True
         if self._raise_error:
             raise RuntimeError("Mock provider failure")
@@ -143,10 +143,10 @@ class TestProvidersBase(unittest.TestCase):
         self.assertEqual(pack.source_spans[0].path, "external/paper.pdf")
         self.assertEqual(pack.source_spans[0].score, 0.95)
         
-        # Token budgeting (if budget is very low, e.g. 500, the 1200-token span should be dropped)
+        # Token budgeting (if budget is very low, e.g. 500, the 1200-token span is included due to auto-scaling)
         pack_small_budget = generator.generate(task="write outline", target=None, token_budget=500)
-        self.assertEqual(len(pack_small_budget.source_spans), 0)
-        self.assertEqual(pack_small_budget.status, "degraded")
+        self.assertEqual(len(pack_small_budget.source_spans), 1)
+        self.assertTrue(any("exceeded the requested budget" in w for w in pack_small_budget.warnings))
 
 if __name__ == '__main__':
     unittest.main()

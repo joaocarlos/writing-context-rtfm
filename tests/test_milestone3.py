@@ -187,7 +187,8 @@ class TestMilestone3(unittest.TestCase):
         self.assertIn("target_text", selected_roles)
         self.assertIn("local_context", selected_roles)
         self.assertIn("dependency", selected_roles)
-        self.assertNotIn("reference", selected_roles)
+        self.assertIn("reference", selected_roles)
+        self.assertEqual(len(pack.source_spans), 4)
 
         # 2. Test runtime override of budgets
         pack_ref_override = self.generator.generate(
@@ -202,7 +203,7 @@ class TestMilestone3(unittest.TestCase):
         self.assertIn("reference", ref_override_roles)
         self.assertIn("target_text", ref_override_roles)
         self.assertIn("local_context", ref_override_roles)
-        self.assertNotIn("dependency", ref_override_roles)
+        self.assertIn("dependency", ref_override_roles)
 
     def test_mcp_and_cli_integration(self):
         # 1. MCP Server integration for get_term_context

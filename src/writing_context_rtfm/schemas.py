@@ -71,6 +71,7 @@ class ContextPack:
 class MCPServerConfig:
     command: str
     args: List[str] = field(default_factory=list)
+    env: Optional[Dict[str, str]] = None
 
 @dataclass(frozen=True)
 class ProviderConfig:
@@ -78,5 +79,6 @@ class ProviderConfig:
     mcp_server: Optional[MCPServerConfig] = None
     sse_url: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+    extra: Optional[Dict[str, Any]] = None
 
 

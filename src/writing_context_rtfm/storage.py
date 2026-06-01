@@ -146,6 +146,15 @@ class ExtensionStore:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS openai_embeddings (
+                chunk_id TEXT PRIMARY KEY,
+                embedding BLOB NOT NULL,
+                model TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
             conn.commit()
 
     def _compress(self, data: str) -> bytes:
@@ -328,5 +337,65 @@ class ExtensionStore:
                     updated_at=CURRENT_TIMESTAMP
             """, (provider_id, client_id, access_token, refresh_token, expires_at))
             conn.commit()
+
+    def get_all_openai_embeddings(self) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT chunk_id, embedding, model FROM openai_embeddings")
+            return [{"chunk_id": row["chunk_id"], "embedding": row["embedding"], "model": row["model"]} for row in cursor.fetchall()]
+
+    def store_openai_embeddings(self, embeddings_data: List[Dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.executemany("""
+                INSERT INTO openai_embeddings (chunk_id, embedding, model, updated_at)
+                VALUES (:chunk_id, :embedding, :model, CURRENT_TIMESTAMP)
+                ON CONFLICT(chunk_id) DO UPDATE SET 
+                    embedding=excluded.embedding,
+                    model=excluded.model,
+                    updated_at=CURRENT_TIMESTAMP
+            """, embeddings_data)
+            conn.commit()
+
+    def get_missing_openai_chunks(self, rtfm_db_path: str) -> List[Dict[str, Any]]:
+        """Returns chunks from RTFM DB that do not have an OpenAI embedding in the cache."""
+        missing = []
+        try:
+            rtfm_conn = sqlite3.connect(rtfm_db_path, check_same_thread=False)
+            rtfm_conn.row_factory = sqlite3.Row
+            
+            # Attach context_cache.sqlite to RTFM connection
+            rtfm_conn.execute(f"ATTACH DATABASE '{self.db_path}' AS cache_db")
+            
+            cursor = rtfm_conn.cursor()
+            # Select chunks from RTFM that are NOT in cache_db.openai_embeddings
+            cursor.execute("""
+                SELECT c.chunk_id, c.content, b.filename as file_path, c.line_start, c.line_end
+                FROM chunks c
+                JOIN books b ON c.book_id = b.id
+                LEFT JOIN cache_db.openai_embeddings e ON c.chunk_id = e.chunk_id
+                WHERE e.chunk_id IS NULL
+            """)
+            
+            for row in cursor.fetchall():
+                missing.append({
+                    "chunk_id": row["chunk_id"],
+                    "content": row["content"],
+                    "file_path": row["file_path"],
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"]
+                })
+        except Exception as e:
+            import logging
+            logging.getLogger("mcp-server").error(f"Failed to fetch missing OpenAI chunks: {e}")
+        finally:
+            if 'rtfm_conn' in locals():
+                try:
+                    rtfm_conn.execute("DETACH DATABASE cache_db")
+                except Exception:
+                    pass
+                rtfm_conn.close()
+                
+        return missing
 
 

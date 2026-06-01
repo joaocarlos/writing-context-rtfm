@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-06-01
+
+### Added
+- **OpenAI Semantic Search Provider**: Integrated `OpenAISemanticSearchProvider` as an optional extension to overlay semantic search on top of RTFM's lexical index. This uses `numpy` for zero-friction in-memory cosine similarity instead of complex SQLite VSS extensions.
+- **CLI Auth Command**: Added `writing-context-rtfm auth <provider> <token>` command to securely store API keys directly in the local `.writing-context/context_cache.sqlite` database, bypassing the need for environment variables.
+- **Configurable Sync Strategies**: `openai_semantic` provider configuration now supports `auto_sync` (defaults to lazy loading) to balance context latency and API costs.
+
 ## [0.5.5] - 2026-05-27
 
 ### Added

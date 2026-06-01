@@ -260,8 +260,17 @@ def init_command(args):
                 '      args: ["-y", "zotero-mcp"]'
             )
             
+        openai_block = (
+            "  openai_semantic:\n"
+            "    enabled: false\n"
+            "    # Set OPENAI_API_KEY environment variable to use this\n"
+            "    model: \"text-embedding-3-small\"\n"
+            "    # By default, embeddings are generated lazily when needed. Set to true to embed all files on sync.\n"
+            "    auto_sync: false\n"
+        )
         providers_block = (
             "providers:\n"
+            f"{openai_block}"
             f"{zotero_block}"
         )
 
@@ -422,6 +431,15 @@ def sync_command(args):
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
             
         store.invalidate_for_fingerprint(fingerprint)
+        
+        from writing_context_rtfm.providers import get_active_providers
+        for provider in get_active_providers(config):
+            if provider.provider_id == "openai_semantic":
+                provider_cfg = config.providers.get("openai_semantic", {})
+                if provider_cfg.get("auto_sync", False):
+                    print("[*] Synchronizing OpenAI semantic embeddings...")
+                    provider.sync_chunks(store, str(rtfm_db))
+                    
         print("Sync completed successfully.")
     except Exception as e:
         print(f"Sync failed: {e}", file=sys.stderr)
@@ -524,6 +542,15 @@ def get_term_command(args):
     except Exception as e:
         print(json.dumps({"status": "error", "message": str(e)}), file=sys.stderr)
         sys.exit(1)
+
+def auth_command(args):
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+    store = ExtensionStore(config.cache.path)
+    store.init_db()
+    
+    store.set_provider_token(args.provider, args.token)
+    print(f"Successfully saved API key for provider '{args.provider}' in local cache database.")
 
 def serve_command(args):
     run_server()
@@ -902,6 +929,11 @@ def main():
     parser_show_graph.add_argument("--project-root", default=".", help="Project root path")
     parser_show_graph.add_argument("--format", default="text", choices=["text", "json"], help="Output format")
 
+    # auth
+    parser_auth = subparsers.add_parser("auth", help="Store an API key for a provider in the local cache database")
+    parser_auth.add_argument("provider", choices=["openai_semantic"], help="The provider to authenticate")
+    parser_auth.add_argument("token", help="The API key/token")
+    parser_auth.add_argument("--project-root", default=".", help="Project root path")
 
     # cleanup
     parser_cleanup = subparsers.add_parser("cleanup", help="Cleanly terminate all tracked background MCP processes")
@@ -925,6 +957,7 @@ def main():
         "inspect-target": inspect_target_command,
         "get-term": get_term_command,
         "show-graph": show_graph_command,
+        "auth": auth_command,
         "cleanup": cleanup_command
     }
 

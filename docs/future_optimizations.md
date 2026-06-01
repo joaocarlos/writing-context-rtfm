@@ -32,15 +32,10 @@ graph TD
     *   *Local (Maximum Accuracy)*: `BAAI/bge-base-en-v1.5` (768-dimensional vectors) or `BAAI/bge-small-en-v1.5` (384-dimensional vectors).
     *   *API-Based (Zero-Footprint)*: Gemini `text-embedding-004` or OpenAI `text-embedding-3-small`.
     *   *Local (Baseline)*: `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional dense vectors).
-*   **Storage**: Leverage the SQLite vector search extension (`sqlite-vss`) directly inside the existing `.writing-context/context_cache.sqlite` database.
+*   **Storage**: Leverage `numpy` for blazing-fast, zero-dependency in-memory cosine similarity, storing vectors as raw BLOBs in the existing `.writing-context/context_cache.sqlite` database. This avoids complex C++ extension compilation (`sqlite-vss`) across different OS platforms.
 *   **Index Construction**:
-    *   During RTFM synchronization, trigger a background worker to chunk document files (e.g., using a sliding window of 100–150 tokens) and compute dense embeddings.
-    *   Store vector blobs in a virtual table:
-        ```sql
-        CREATE VIRTUAL TABLE vss_context_embeddings USING vss0(
-            embedding(384) -- or 768 depending on model dimensionality
-        );
-        ```
+    *   During RTFM synchronization, trigger a background worker (or lazy-load on fetch) to read chunks from RTFM and compute dense embeddings.
+    *   Store vector blobs alongside chunk metadata in standard SQLite tables and load into `numpy` memory maps on query.
 
 #### B. Reciprocal Rank Fusion (RRF)
 To combine BM25 scores (lexical) and cosine similarities (dense) without calibrating distinct scale systems, apply Reciprocal Rank Fusion:

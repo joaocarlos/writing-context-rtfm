@@ -115,6 +115,19 @@ rtfm sync
   rtfm embed --embed-model balanced
   ```
 
+##### OpenAI Semantic Search (Optional Extension)
+If you prefer to leverage OpenAI embeddings for semantic expansion instead of running local transformer models, `writing-context-rtfm` includes a built-in provider that seamlessly overlays OpenAI vectors onto RTFM's index.
+1. Securely save your API key to the local cache: `writing-context-rtfm auth openai_semantic "sk-..."`
+2. Enable it in your `.writing-context/config.yaml`:
+   ```yaml
+   providers:
+     openai_semantic:
+       enabled: true
+       model: "text-embedding-3-small"
+       auto_sync: false # Set to true to embed all files automatically during `rtfm sync`
+   ```
+*Note: This architecture uses an ultra-fast `numpy` in-memory comparison, requiring zero C++ SQLite VSS extensions, ensuring maximum compatibility across all operating systems in your laboratory.*
+
 ---
 
 ## MCP Server Integration

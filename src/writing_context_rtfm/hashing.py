@@ -1,8 +1,8 @@
 """Hashing utilities for cache invalidation."""
-import hashlib
-from typing import Optional
 
+import hashlib
 from pathlib import Path
+
 
 def stable_hash(*parts: str) -> str:
     h = hashlib.sha256()
@@ -11,11 +11,16 @@ def stable_hash(*parts: str) -> str:
         h.update(b"\0")
     return h.hexdigest()
 
-def compute_task_hash(task: str, target: Optional[str], token_budget: int,
-                      task_type: Optional[str] = None,
-                      line_start: Optional[int] = None,
-                      line_end: Optional[int] = None,
-                      pack_mode: Optional[str] = None) -> str:
+
+def compute_task_hash(
+    task: str,
+    target: str | None,
+    token_budget: int,
+    task_type: str | None = None,
+    line_start: int | None = None,
+    line_end: int | None = None,
+    pack_mode: str | None = None,
+) -> str:
     return stable_hash(
         task.strip(),
         target or "",
@@ -23,8 +28,9 @@ def compute_task_hash(task: str, target: Optional[str], token_budget: int,
         task_type or "",
         str(line_start or ""),
         str(line_end or ""),
-        pack_mode or ""
+        pack_mode or "",
     )
+
 
 def compute_rtfm_fingerprint(db_path: Path) -> str:
     """Compute real RTFM database fingerprint based on mtime and size."""
@@ -35,4 +41,3 @@ def compute_rtfm_fingerprint(db_path: Path) -> str:
         except OSError:
             return "no-rtfm-db"
     return "no-rtfm-db"
-

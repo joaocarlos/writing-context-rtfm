@@ -1,21 +1,25 @@
 import os
 import re
-import yaml
-from pathlib import Path
-from typing import Dict, Any, Optional, List
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+import yaml
+
 
 def sanitize_id(filename: str) -> str:
     """Removes extension and replaces non-alphanumeric characters with underscores."""
     name_without_ext = Path(filename).stem
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name_without_ext).lower()
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name_without_ext).lower()
     if not sanitized.startswith("section_"):
         sanitized = f"section_{sanitized}"
     return sanitized
 
-def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, Any]:
+
+def initialize_section_cards(project_root: str | None = None) -> dict[str, Any]:
     """Scans the project for .tex and .md files and generates/appends to section_cards.yaml."""
     from writing_context_rtfm.config import load_config
+
     root = Path(project_root or ".").resolve()
 
     # Load config
@@ -30,38 +34,46 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
     sc_path.parent.mkdir(exist_ok=True)
 
     # Load existing section cards
-    existing_cards: Dict[str, Any] = {
+    existing_cards: dict[str, Any] = {
         "version": 1,
         "document": {
             "title": "My Manuscript",
             "thesis": "",
-            "writing_style": {
-                "tone": "academic, formal",
-                "avoid": []
-            },
+            "writing_style": {"tone": "academic, formal", "avoid": []},
             "terminology": {
                 "sample_term": {
                     "definition": "A sample technical term description.",
                     "variants": ["alternate phrasing 1"],
-                    "avoid": ["deprecated variant"]
+                    "avoid": ["deprecated variant"],
                 }
-            }
+            },
         },
-        "sections": {}
+        "sections": {},
     }
     if sc_path.exists():
         try:
-            with open(sc_path, "r") as fh:
+            with open(sc_path) as fh:
                 loaded = yaml.safe_load(fh)
                 if isinstance(loaded, dict):
                     existing_cards = loaded
-                    if "sections" not in existing_cards or not isinstance(existing_cards["sections"], dict):
+                    if "sections" not in existing_cards or not isinstance(
+                        existing_cards["sections"], dict
+                    ):
                         existing_cards["sections"] = {}
         except Exception:
             pass
 
     # Scan for files (.tex, .md)
-    exclude_dirs = {".git", ".venv", ".rtfm", ".writing-context", "node_modules", "__pycache__", "build", "dist"}
+    exclude_dirs = {
+        ".git",
+        ".venv",
+        ".rtfm",
+        ".writing-context",
+        "node_modules",
+        "__pycache__",
+        "build",
+        "dist",
+    }
     found_files = []
 
     for dirpath, dirnames, filenames in os.walk(root):
@@ -105,7 +117,7 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
                     "depends_on": [],
                     "must_preserve": [],
                     "avoid": [],
-                    "constraints": []
+                    "constraints": [],
                 }
                 added.append({"id": sid, "path": str(rel_path)})
 
@@ -123,7 +135,7 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
 
     try:
         graph = build_reference_graph(str(root))
-        
+
         # Build map of normalized relative path string -> section ID
         rel_path_to_sid = {}
         if isinstance(sections_dict, dict):
@@ -143,10 +155,10 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
             for sid, scard in sections_dict.items():
                 if not isinstance(scard, dict) or "path" not in scard:
                     continue
-                
+
                 norm_path = normalize_rel_path(scard["path"], root)
                 deps = set()
-                
+
                 # Existing dependencies in YAML (preserve them)
                 existing_deps = scard.get("depends_on", [])
                 if isinstance(existing_deps, list):
@@ -169,7 +181,7 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
                         deps.add(target_sid)
 
                 # Store back sorted list of dependencies
-                scard["depends_on"] = sorted(list(deps))
+                scard["depends_on"] = sorted(deps)
     except Exception:
         pass
 
@@ -182,14 +194,15 @@ def initialize_section_cards(project_root: Optional[str] = None) -> Dict[str, An
         "sc_path": str(sc_path),
         "added": added,
         "preserved_count": len(preserved),
-        "total_sections": len(sections_dict)
+        "total_sections": len(sections_dict),
     }
 
-def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str, Any]:
+
+def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, Any]:
     """Audits key terms from section cards against their actual occurrences in the RTFM index."""
     from writing_context_rtfm.config import load_config
-    from writing_context_rtfm.section_cards import load_section_cards
     from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+    from writing_context_rtfm.section_cards import load_section_cards
 
     root = Path(project_root or ".").resolve()
     try:
@@ -211,7 +224,7 @@ def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str
 
     # Map each section path to its declared section card
     path_to_section = {}
-    term_declarations: Dict[str, List[str]] = {} # term_lower -> list of section_ids
+    term_declarations: dict[str, list[str]] = {}  # term_lower -> list of section_ids
     for sid, scard in section_cards.sections.items():
         if scard.path:
             p = Path(scard.path)
@@ -219,7 +232,7 @@ def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str
                 p = p.relative_to(root)
             path_to_section[str(p)] = sid
 
-        for term in (scard.key_terms or []):
+        for term in scard.key_terms or []:
             term_lower = term.lower()
             if term_lower not in term_declarations:
                 term_declarations[term_lower] = []
@@ -252,15 +265,19 @@ def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str
                     p = p.relative_to(root)
                 p_str = str(p)
                 occurring_paths.add(p_str)
-                occurrences.append({
-                    "path": r.path,
-                    "line_start": r.line_start,
-                    "line_end": r.line_end,
-                    "snippet": r.snippet
-                })
+                occurrences.append(
+                    {
+                        "path": r.path,
+                        "line_start": r.line_start,
+                        "line_end": r.line_end,
+                        "snippet": r.snippet,
+                    }
+                )
 
             if not occurrences:
-                warnings.append(f"Term '{term_lower}' is declared in {sids} but never found in the index.")
+                warnings.append(
+                    f"Term '{term_lower}' is declared in {sids} but never found in the index."
+                )
 
             for p_str in occurring_paths:
                 sid_occurrence = path_to_section.get(p_str)
@@ -286,18 +303,15 @@ def audit_manuscript_terminology(project_root: Optional[str] = None) -> Dict[str
                 "declared_in_sections": sids,
                 "occurrence_count": len(occurrences),
                 "warnings": warnings,
-                "occurrences": occurrences[:5]
+                "occurrences": occurrences[:5],
             }
 
-    return {
-        "status": "success",
-        "audited_terms_count": len(term_declarations),
-        "report": report
-    }
+    return {"status": "success", "audited_terms_count": len(term_declarations), "report": report}
 
-def get_term_context(term: str, project_root: Optional[str] = None) -> Dict[str, Any]:
+
+def get_term_context(term: str, project_root: str | None = None) -> dict[str, Any]:
     """Look up a term in the terminology glossary defined in section_cards.yaml.
-    
+
     Returns the term definition, allowed variants, and phrases to avoid.
     """
     from writing_context_rtfm.config import load_config
@@ -318,7 +332,10 @@ def get_term_context(term: str, project_root: Optional[str] = None) -> Dict[str,
 
     section_cards = load_section_cards(str(sc_path), required=False)
     if not section_cards or not section_cards.document or not section_cards.document.terminology:
-        return {"status": "not_found", "message": "No terminology dictionary defined in section cards."}
+        return {
+            "status": "not_found",
+            "message": "No terminology dictionary defined in section cards.",
+        }
 
     term_lower = term.lower()
     terminology = section_cards.document.terminology
@@ -348,7 +365,7 @@ def get_term_context(term: str, project_root: Optional[str] = None) -> Dict[str,
     else:
         return {
             "status": "not_found",
-            "message": f"Term '{term}' not found in terminology dictionary."
+            "message": f"Term '{term}' not found in terminology dictionary.",
         }
 
     return {
@@ -356,5 +373,5 @@ def get_term_context(term: str, project_root: Optional[str] = None) -> Dict[str,
         "term": canonical_term,
         "definition": details.get("definition", ""),
         "variants": details.get("variants", []),
-        "avoid": details.get("avoid", [])
+        "avoid": details.get("avoid", []),
     }

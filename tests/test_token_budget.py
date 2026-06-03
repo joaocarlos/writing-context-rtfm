@@ -1,6 +1,8 @@
 import unittest
-from unittest.mock import patch, MagicMock
-from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
+from unittest.mock import MagicMock, patch
+
+from writing_context_rtfm.token_budget import estimate_span_tokens, estimate_tokens
+
 
 class TestTokenBudget(unittest.TestCase):
     def test_estimate_span_tokens(self):
@@ -15,14 +17,14 @@ class TestTokenBudget(unittest.TestCase):
     def test_estimate_tokens_fallback(self):
         # When _ENCODING is None, should use len(text) // 4
         with patch("writing_context_rtfm.token_budget._ENCODING", None):
-            self.assertEqual(estimate_tokens("Hello World!"), 3) # 12 // 4 = 3
-            self.assertEqual(estimate_tokens(""), 1) # Max(1, 0) = 1
+            self.assertEqual(estimate_tokens("Hello World!"), 3)  # 12 // 4 = 3
+            self.assertEqual(estimate_tokens(""), 1)  # Max(1, 0) = 1
 
     def test_estimate_tokens_with_tiktoken(self):
         # Create a mock encoder
         mock_encoding = MagicMock()
         mock_encoding.encode.return_value = [1, 2, 3, 4]
-        
+
         with patch("writing_context_rtfm.token_budget._ENCODING", mock_encoding):
             res = estimate_tokens("Mock text")
             self.assertEqual(res, 4)
@@ -32,7 +34,7 @@ class TestTokenBudget(unittest.TestCase):
         # If encoding raises an exception, should fallback to len(text) // 4
         mock_encoding = MagicMock()
         mock_encoding.encode.side_effect = Exception("Some encode error")
-        
+
         with patch("writing_context_rtfm.token_budget._ENCODING", mock_encoding):
             # len("Some text here") is 14. 14 // 4 = 3.
             res = estimate_tokens("Some text here")

@@ -1,15 +1,22 @@
-import unittest
-import tempfile
-import shutil
 import json
+import shutil
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
-from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
 from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan
-from writing_context_rtfm.storage import ExtensionStore
+from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
 from writing_context_rtfm.server import process_message
+from writing_context_rtfm.storage import ExtensionStore
+
 
 class TestMilestone2(unittest.TestCase):
     def setUp(self):
@@ -52,11 +59,15 @@ class TestMilestone2(unittest.TestCase):
 
         # Create dummy target file
         self.target_file = self.project_root / "sec1.md"
-        self.target_file.write_text("\n".join(f"Line {i}: Content of line {i}" for i in range(1, 101)))
+        self.target_file.write_text(
+            "\n".join(f"Line {i}: Content of line {i}" for i in range(1, 101))
+        )
 
         # Create dummy dependency file
         self.dep_file = self.project_root / "sec2.md"
-        self.dep_file.write_text("\n".join(f"Dep Line {i}: Content of line {i}" for i in range(1, 50)))
+        self.dep_file.write_text(
+            "\n".join(f"Dep Line {i}: Content of line {i}" for i in range(1, 50))
+        )
 
         # Create dummy library.db
         self.rtfm_db = self.project_root / ".rtfm" / "library.db"
@@ -66,8 +77,10 @@ class TestMilestone2(unittest.TestCase):
             version=1,
             rtfm=RTFMConfig(corpus="test_corpus", project_root=str(self.project_root)),
             context=ContextConfig(default_token_budget=1000, max_source_spans=10),
-            cache=CacheConfig(enabled=True, path=str(self.project_root / ".writing-context" / "cache.sqlite")),
-            section_cards=SectionCardsConfig(path=str(self.sc_file))
+            cache=CacheConfig(
+                enabled=True, path=str(self.project_root / ".writing-context" / "cache.sqlite")
+            ),
+            section_cards=SectionCardsConfig(path=str(self.sc_file)),
         )
 
         self.section_cards = SectionCards(
@@ -80,7 +93,16 @@ class TestMilestone2(unittest.TestCase):
                     path="sec1.md",
                     role="intro",
                     depends_on=["sec2"],
-                    key_terms=["term1", "term2", "term3", "term4", "term5", "term6", "term7", "term8"]
+                    key_terms=[
+                        "term1",
+                        "term2",
+                        "term3",
+                        "term4",
+                        "term5",
+                        "term6",
+                        "term7",
+                        "term8",
+                    ],
                 ),
                 "sec2": SectionCard(
                     id="sec2",
@@ -88,9 +110,17 @@ class TestMilestone2(unittest.TestCase):
                     path="sec2.md",
                     role="approach",
                     depends_on=[],
-                    key_terms=["depterm1", "depterm2", "depterm3", "depterm4", "depterm5", "depterm6", "depterm7"]
-                )
-            }
+                    key_terms=[
+                        "depterm1",
+                        "depterm2",
+                        "depterm3",
+                        "depterm4",
+                        "depterm5",
+                        "depterm6",
+                        "depterm7",
+                    ],
+                ),
+            },
         )
 
         self.adapter = MagicMock()
@@ -98,7 +128,9 @@ class TestMilestone2(unittest.TestCase):
 
         self.store = ExtensionStore(self.config.cache.path)
         self.store.init_db()
-        self.generator = ContextPackGenerator(self.config, self.section_cards, self.adapter, self.store)
+        self.generator = ContextPackGenerator(
+            self.config, self.section_cards, self.adapter, self.store
+        )
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
@@ -109,13 +141,13 @@ class TestMilestone2(unittest.TestCase):
             task="Draft intro section about term1",
             target="sec1",
             must_consider=[],
-            task_type="review"
+            task_type="review",
         )
         self.assertIn("Main thesis statement", queries)
         self.assertEqual(query_type_map["Main thesis statement"], "thesis")
         # Ensure it skips task keywords in review mode
         # "draft", "intro", "section", "about", "term1" are keywords
-        for q, qtype in query_type_map.items():
+        for _q, qtype in query_type_map.items():
             self.assertNotEqual(qtype, "task_keyword")
 
     def test_task_type_query_routing_align(self):
@@ -124,7 +156,7 @@ class TestMilestone2(unittest.TestCase):
             task="Draft intro section about term1",
             target="sec1",
             must_consider=[],
-            task_type="align_with_previous_sections"
+            task_type="align_with_previous_sections",
         )
         target_kt_queries = [q for q, qtype in query_type_map.items() if qtype == "key_term"]
         self.assertEqual(len(target_kt_queries), 2)
@@ -137,22 +169,19 @@ class TestMilestone2(unittest.TestCase):
             task="Draft intro section about term1",
             target="sec1",
             must_consider=[],
-            pack_mode="minimal"
+            pack_mode="minimal",
         )
         # Check that it has title but no key terms
         self.assertIn("Section One", queries)
         self.assertEqual(query_type_map["Section One"], "title")
-        for q, qtype in query_type_map.items():
+        for _q, qtype in query_type_map.items():
             self.assertNotEqual(qtype, "key_term")
             self.assertNotEqual(qtype, "task_keyword")
             self.assertNotEqual(qtype, "dep_key_term")
 
         # Test budget capping
         pack = self.generator.generate(
-            task="Draft intro section",
-            target="sec1",
-            token_budget=5000,
-            pack_mode="minimal"
+            task="Draft intro section", target="sec1", token_budget=5000, pack_mode="minimal"
         )
         self.assertEqual(pack.pack_mode, "minimal")
         # Budget gets capped at 2000
@@ -166,7 +195,7 @@ class TestMilestone2(unittest.TestCase):
             task="Draft intro section about term1",
             target="sec1",
             must_consider=[],
-            pack_mode="deep"
+            pack_mode="deep",
         )
         target_kt_queries = [q for q, qtype in query_type_map.items() if qtype == "key_term"]
         dep_kt_queries = [q for q, qtype in query_type_map.items() if qtype == "dep_key_term"]
@@ -182,13 +211,13 @@ class TestMilestone2(unittest.TestCase):
             target="sec1",
             token_budget=1000,
             line_start=10,
-            line_end=12
+            line_end=12,
         )
-        
+
         self.assertEqual(pack.status, "complete")
         spans = pack.source_spans
         self.assertTrue(len(spans) >= 1)
-        
+
         # Verify first span is target_text (which gets merged with adjacent local context)
         target_span = spans[0]
         self.assertEqual(target_span.source_role, "target_text")
@@ -208,10 +237,12 @@ class TestMilestone2(unittest.TestCase):
             target="missing_section",
             token_budget=1000,
             line_start=10,
-            line_end=12
+            line_end=12,
         )
         self.assertEqual(pack.status, "degraded")
-        self.assertTrue(any("provided but target file path could not be resolved" in w for w in pack.warnings))
+        self.assertTrue(
+            any("provided but target file path could not be resolved" in w for w in pack.warnings)
+        )
 
         # Test target file not found
         pack2 = self.generator.generate(
@@ -219,7 +250,7 @@ class TestMilestone2(unittest.TestCase):
             target="missing_file.md",
             token_budget=1000,
             line_start=10,
-            line_end=12
+            line_end=12,
         )
         self.assertEqual(pack2.status, "degraded")
         self.assertTrue(any("not found for line range extraction" in w for w in pack2.warnings))
@@ -229,7 +260,7 @@ class TestMilestone2(unittest.TestCase):
         # 1. Target path match with line range overlap -> target_text or local_context
         # 2. Dependency path match -> dependency
         # 3. Reference path match -> reference
-        
+
         retrieved_spans = [
             SourceSpan(
                 path="sec1.md",
@@ -237,7 +268,7 @@ class TestMilestone2(unittest.TestCase):
                 line_end=11,
                 reason="Match 1",
                 score=0.9,
-                priority="supporting"
+                priority="supporting",
             ),
             SourceSpan(
                 path="sec1.md",
@@ -245,7 +276,7 @@ class TestMilestone2(unittest.TestCase):
                 line_end=22,
                 reason="Match 2",
                 score=0.8,
-                priority="supporting"
+                priority="supporting",
             ),
             SourceSpan(
                 path="sec2.md",
@@ -253,7 +284,7 @@ class TestMilestone2(unittest.TestCase):
                 line_end=10,
                 reason="Match 3",
                 score=0.7,
-                priority="supporting"
+                priority="supporting",
             ),
             SourceSpan(
                 path="other.md",
@@ -261,10 +292,10 @@ class TestMilestone2(unittest.TestCase):
                 line_end=5,
                 reason="Match 4",
                 score=0.6,
-                priority="supporting"
+                priority="supporting",
             ),
         ]
-        
+
         # Test roles classification during generator priority assignment
         classified = self.generator._classify_priority(
             spans=retrieved_spans,
@@ -272,20 +303,24 @@ class TestMilestone2(unittest.TestCase):
             dep_cards=[self.section_cards.sections["sec2"]],
             target_path="sec1.md",
             line_start=10,
-            line_end=12
+            line_end=12,
         )
-        
+
         {s.path: s.source_role for s in classified}
-        self.assertEqual(classified[0].source_role, "target_text")  # L11 is inside target range 10-12
-        self.assertEqual(classified[1].source_role, "local_context") # L20-22 is inside local range 1-27
-        self.assertEqual(classified[2].source_role, "dependency")    # sec2.md is dependency
-        self.assertEqual(classified[3].source_role, "reference")     # other.md is reference
+        self.assertEqual(
+            classified[0].source_role, "target_text"
+        )  # L11 is inside target range 10-12
+        self.assertEqual(
+            classified[1].source_role, "local_context"
+        )  # L20-22 is inside local range 1-27
+        self.assertEqual(classified[2].source_role, "dependency")  # sec2.md is dependency
+        self.assertEqual(classified[3].source_role, "reference")  # other.md is reference
 
     def test_mcp_server_schema_compatibility(self):
         # Test that MCP process_message accepts new parameters
         with patch("writing_context_rtfm.server._load_runtime") as mock_load:
             mock_load.return_value = (self.config, self.section_cards, [], self.adapter, self.store)
-            
+
             # 1. Test tools/call with new parameters
             req = {
                 "jsonrpc": "2.0",
@@ -299,18 +334,18 @@ class TestMilestone2(unittest.TestCase):
                         "task_type": "revise_existing_section",
                         "line_start": 10,
                         "line_end": 12,
-                        "pack_mode": "minimal"
-                    }
-                }
+                        "pack_mode": "minimal",
+                    },
+                },
             }
             res_str = process_message(json.dumps(req))
             res = json.loads(res_str)
             self.assertNotIn("error", res)
-            
+
             result_payload = json.loads(res["result"]["content"][0]["text"])
             self.assertEqual(result_payload["task_type"], "revise_existing_section")
             self.assertEqual(result_payload["pack_mode"], "minimal")
-            
+
             # The first source span should be target_text (due to manual extraction)
             spans = result_payload["source_spans"]
             self.assertTrue(len(spans) > 0)
@@ -327,9 +362,9 @@ class TestMilestone2(unittest.TestCase):
                         "task": "Test prompt get task",
                         "target": "sec1",
                         "task_type": "review",
-                        "pack_mode": "deep"
-                    }
-                }
+                        "pack_mode": "deep",
+                    },
+                },
             }
             res_prompt_str = process_message(json.dumps(req_prompt))
             res_prompt = json.loads(res_prompt_str)
@@ -337,6 +372,7 @@ class TestMilestone2(unittest.TestCase):
             prompt_text = res_prompt["result"]["messages"][0]["content"]["text"]
             self.assertIn("Test prompt get task", prompt_text)
             self.assertIn("Main thesis statement", prompt_text)
+
 
 if __name__ == "__main__":
     unittest.main()

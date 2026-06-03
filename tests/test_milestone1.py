@@ -1,24 +1,31 @@
-import unittest
-import tempfile
 import shutil
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
-from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
-from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan
-from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.cli import doctor_command, inspect_target_command
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
+from writing_context_rtfm.context_pack import ContextPackGenerator, SourceSpan
+from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
+from writing_context_rtfm.storage import ExtensionStore
+
 
 class TestMilestone1(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp()
         self.project_root = Path(self.tmp_dir)
-        
+
         # Create necessary directories
         (self.project_root / ".writing-context").mkdir()
         (self.project_root / ".rtfm").mkdir()
-        
+
         self.config_file = self.project_root / ".writing-context" / "config.yaml"
         self.config_file.write_text(
             "version: 1\n"
@@ -27,7 +34,7 @@ class TestMilestone1(unittest.TestCase):
             "cache:\n"
             "  path: .writing-context/cache.sqlite\n"
         )
-        
+
         self.sc_file = self.project_root / ".writing-context" / "section_cards.yaml"
         self.sc_file.write_text(
             "version: 1\n"
@@ -41,19 +48,21 @@ class TestMilestone1(unittest.TestCase):
             "    depends_on: []\n"
             "    key_terms: [hello, world]\n"
         )
-        
+
         # Create dummy library.db
         self.rtfm_db = self.project_root / ".rtfm" / "library.db"
         self.rtfm_db.write_text("dummy rtfm content")
-        
+
         self.config = AppConfig(
             version=1,
             rtfm=RTFMConfig(corpus="test_corpus", project_root=str(self.project_root)),
             context=ContextConfig(default_token_budget=1000),
-            cache=CacheConfig(enabled=True, path=str(self.project_root / ".writing-context" / "cache.sqlite")),
-            section_cards=SectionCardsConfig(path=str(self.sc_file))
+            cache=CacheConfig(
+                enabled=True, path=str(self.project_root / ".writing-context" / "cache.sqlite")
+            ),
+            section_cards=SectionCardsConfig(path=str(self.sc_file)),
         )
-        
+
         self.section_cards = SectionCards(
             version=1,
             document=DocumentCard(title="Test Doc"),
@@ -64,17 +73,19 @@ class TestMilestone1(unittest.TestCase):
                     path="sec1.md",
                     role="intro",
                     depends_on=[],
-                    key_terms=["hello", "world"]
+                    key_terms=["hello", "world"],
                 )
-            }
+            },
         )
-        
+
         self.adapter = MagicMock()
         self.adapter.search.return_value = []
-        
+
         self.store = ExtensionStore(self.config.cache.path)
         self.store.init_db()
-        self.generator = ContextPackGenerator(self.config, self.section_cards, self.adapter, self.store)
+        self.generator = ContextPackGenerator(
+            self.config, self.section_cards, self.adapter, self.store
+        )
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
@@ -85,14 +96,14 @@ class TestMilestone1(unittest.TestCase):
         # Span B: lines 12-15 (Adjacent)
         # Span C: lines 10-14 (Overlapping, but we sort first: 5-11, 10-14, 12-15)
         # Span D: lines 20-30 (Distinct)
-        
+
         # In current sorting key: (start, end)
         # Spans on path "file.md":
         # 1. start=5, end=11
         # 2. start=10, end=14
         # 3. start=12, end=15
         # 4. start=20, end=30
-        
+
         spans = [
             SourceSpan(
                 path="file.md",
@@ -102,7 +113,7 @@ class TestMilestone1(unittest.TestCase):
                 score=0.8,
                 priority="supporting",
                 query="Query A",
-                metadata={"snippet": "line5\nline6\nline7\nline8\nline9\nline10\nline11"}
+                metadata={"snippet": "line5\nline6\nline7\nline8\nline9\nline10\nline11"},
             ),
             SourceSpan(
                 path="file.md",
@@ -112,7 +123,7 @@ class TestMilestone1(unittest.TestCase):
                 score=0.9,
                 priority="essential",
                 query="Query B",
-                metadata={"snippet": "line12\nline13\nline14\nline15"}
+                metadata={"snippet": "line12\nline13\nline14\nline15"},
             ),
             SourceSpan(
                 path="file.md",
@@ -122,7 +133,7 @@ class TestMilestone1(unittest.TestCase):
                 score=0.7,
                 priority="background",
                 query="Query C",
-                metadata={"snippet": "line10\nline11\nline12\nline13\nline14"}
+                metadata={"snippet": "line10\nline11\nline12\nline13\nline14"},
             ),
             SourceSpan(
                 path="file.md",
@@ -132,29 +143,29 @@ class TestMilestone1(unittest.TestCase):
                 score=0.6,
                 priority="background",
                 query="Query D",
-                metadata={"snippet": "line20\nto\nline30"}
+                metadata={"snippet": "line20\nto\nline30"},
             ),
         ]
-        
+
         merged = self.generator._deduplicate_spans(spans)
-        
+
         # We expect two final spans:
         # One merged span from 5 to 15 (covering all of 5-11, 10-14, 12-15)
         # One span from 20 to 30
         self.assertEqual(len(merged), 2)
-        
+
         # Let's inspect the first merged span (it should have the highest score: 0.9, so it should be sorted first)
         span_5_15 = merged[0]
         self.assertEqual(span_5_15.line_start, 5)
         self.assertEqual(span_5_15.line_end, 15)
         self.assertEqual(span_5_15.score, 0.9)
         self.assertEqual(span_5_15.priority, "essential")
-        
+
         # Combine reasons: "Reason A", "Reason C", "Reason B" in order of merge
         self.assertIn("Reason A", span_5_15.reason)
         self.assertIn("Reason B", span_5_15.reason)
         self.assertIn("Reason C", span_5_15.reason)
-        
+
         # Combine queries: "Query A", "Query C", "Query B"
         self.assertIn("Query A", span_5_15.query)
         self.assertIn("Query B", span_5_15.query)
@@ -181,11 +192,13 @@ class TestMilestone1(unittest.TestCase):
         mock_result.line_end = 2
         mock_result.score = 0.85
         mock_result.snippet = "Hello world context"
-        
+
         self.adapter.search.return_value = [mock_result]
-        
+
         # 1. First run: cache miss
-        pack1 = self.generator.generate(task="write introductory section", target="sec1", token_budget=1000)
+        pack1 = self.generator.generate(
+            task="write introductory section", target="sec1", token_budget=1000
+        )
         self.assertIsNotNone(pack1.cache)
         self.assertTrue(pack1.cache.enabled)
         self.assertFalse(pack1.cache.hit)
@@ -193,12 +206,14 @@ class TestMilestone1(unittest.TestCase):
         self.assertIsNotNone(pack1.cache.config_hash)
         self.assertIsNotNone(pack1.cache.section_cards_hash)
         self.assertIsNotNone(pack1.cache.rtfm_index_fingerprint)
-        
+
         # Reset mock
         self.adapter.search.reset_mock()
-        
+
         # 2. Second run: cache hit
-        pack2 = self.generator.generate(task="write introductory section", target="sec1", token_budget=1000)
+        pack2 = self.generator.generate(
+            task="write introductory section", target="sec1", token_budget=1000
+        )
         self.adapter.search.assert_not_called()
         self.assertIsNotNone(pack2.cache)
         self.assertTrue(pack2.cache.enabled)
@@ -212,17 +227,16 @@ class TestMilestone1(unittest.TestCase):
         # We can test doctor_command directly by redirecting stdout
         import io
         from contextlib import redirect_stdout
-        
+
         args = MagicMock()
         args.project_root = str(self.project_root)
-        
+
         f = io.StringIO()
         with redirect_stdout(f):
             # Patch import to simulate rtfm available / CLI available
-            with patch("shutil.which", return_value="/usr/local/bin/rtfm"), \
-                 patch("sys.exit"):
+            with patch("shutil.which", return_value="/usr/local/bin/rtfm"), patch("sys.exit"):
                 doctor_command(args)
-                
+
         output = f.getvalue()
         self.assertIn("Writing Context RTFM Extension Doctor", output)
         self.assertIn("[*] RTFM CLI:         [OK]", output)
@@ -234,17 +248,16 @@ class TestMilestone1(unittest.TestCase):
     def test_inspect_target_cli_command(self):
         import io
         from contextlib import redirect_stdout
-        
+
         args = MagicMock()
         args.project_root = str(self.project_root)
         args.target = "sec1"
-        
+
         f = io.StringIO()
-        with redirect_stdout(f):
-            with patch("sys.exit") as mock_exit:
-                inspect_target_command(args)
-                mock_exit.assert_not_called()
-                
+        with redirect_stdout(f), patch("sys.exit") as mock_exit:
+            inspect_target_command(args)
+            mock_exit.assert_not_called()
+
         output = f.getvalue()
         self.assertIn("Target Section ID: sec1", output)
         self.assertIn("Title:             Section One", output)
@@ -252,6 +265,7 @@ class TestMilestone1(unittest.TestCase):
         self.assertIn("Role:              intro", output)
         self.assertIn("Depends On:        []", output)
         self.assertIn("Key Terms:         ['hello', 'world']", output)
+
 
 if __name__ == "__main__":
     unittest.main()

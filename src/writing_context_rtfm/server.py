@@ -1,27 +1,34 @@
 """MCP server logic."""
-import sys
-import json
-import os
-from dataclasses import asdict
-from typing import Any, Dict, Optional
-from pathlib import Path
 
+import contextlib
+import json
+import logging
+import os
+import sys
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+from writing_context_rtfm import __version__
 from writing_context_rtfm.config import load_config
+from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.features import (
+    audit_manuscript_terminology,
+    get_term_context,
+    initialize_section_cards,
+)
+from writing_context_rtfm.hashing import compute_rtfm_fingerprint
+from writing_context_rtfm.latex import build_reference_graph
+from writing_context_rtfm.proofread import ProofreadPackGenerator
+from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import load_section_cards, validate_section_cards
 from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.context_pack import ContextPackGenerator
-from writing_context_rtfm.proofread import ProofreadPackGenerator
-from writing_context_rtfm.hashing import compute_rtfm_fingerprint
-import logging
-from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology, get_term_context
-from writing_context_rtfm.latex import build_reference_graph
 from writing_context_rtfm.utils import resolve_rtfm_db_path
-from writing_context_rtfm import __version__
 
 _client_manager = None
 
 # --- Prompt formatters ------------------------------------------------------
+
 
 def _format_write_section_prompt(pack: Any) -> str:
     source_spans_txt = []
@@ -33,7 +40,9 @@ def _format_write_section_prompt(pack: Any) -> str:
             f"Content:\n{snippet}\n"
         )
     source_spans_joined = "\n".join(source_spans_txt)
-    constraints_joined = "\n".join(f"- {c}" for c in pack.constraints) if pack.constraints else "None"
+    constraints_joined = (
+        "\n".join(f"- {c}" for c in pack.constraints) if pack.constraints else "None"
+    )
 
     return (
         f"You are writing/editing a manuscript section. Follow the task instructions below and stay aligned with the manuscript's thesis and constraints.\n\n"
@@ -45,15 +54,26 @@ def _format_write_section_prompt(pack: Any) -> str:
         f"Instruction: Draft or revise the section based strictly on the provided context spans and constraints above. Maintain academic tone and LaTeX/Markdown formatting consistency."
     )
 
+
 def _format_proofread_section_prompt(pack: Any) -> str:
     terminology_txt = []
-    for t in (pack.constraints.terminology or []):
-        examples_str = "; ".join(f"'{ex}'" for ex in t.usage_examples) if t.usage_examples else "None"
+    for t in pack.constraints.terminology or []:
+        examples_str = (
+            "; ".join(f"'{ex}'" for ex in t.usage_examples) if t.usage_examples else "None"
+        )
         terminology_txt.append(f"- '{t.term}': used in: {examples_str}")
     terminology_joined = "\n".join(terminology_txt) if terminology_txt else "None"
 
-    constraints_joined = "\n".join(f"- {c}" for c in pack.constraints.section_specific_rules) if pack.constraints.section_specific_rules else "None"
-    general_joined = "\n".join(f"- {c}" for c in pack.constraints.general_rules) if pack.constraints.general_rules else "None"
+    constraints_joined = (
+        "\n".join(f"- {c}" for c in pack.constraints.section_specific_rules)
+        if pack.constraints.section_specific_rules
+        else "None"
+    )
+    general_joined = (
+        "\n".join(f"- {c}" for c in pack.constraints.general_rules)
+        if pack.constraints.general_rules
+        else "None"
+    )
 
     local_txt = ""
     if pack.local_context.previous_paragraph:
@@ -72,6 +92,7 @@ def _format_proofread_section_prompt(pack: Any) -> str:
         f"[Terminology Usage Examples (Prior Context)]:\n{terminology_joined}\n\n"
         f"Instruction: Revise the target segment strictly following the mode and constraints above. Maintain terminology consistency as shown in the examples."
     )
+
 
 # Log path can be overridden via WRITING_CONTEXT_LOG; falls back to a user-local
 # directory when /tmp is not writable (e.g., locked-down systems).
@@ -102,7 +123,7 @@ ERROR_RETRIEVAL = "retrieval_failed"
 ERROR_INTERNAL = "internal_error"
 
 
-def _error_response(code: str, message: str, detail: Optional[str] = None) -> Dict[str, Any]:
+def _error_response(code: str, message: str, detail: str | None = None) -> dict[str, Any]:
     """Return a structured MCP tool error.
 
     The full traceback (if any) is logged but never returned to the client to
@@ -117,11 +138,11 @@ def _error_response(code: str, message: str, detail: Optional[str] = None) -> Di
     }
 
 
-def _success_response(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _success_response(payload: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(payload)}]}
 
 
-def _sanitize_span_for_output(span_dict: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_span_for_output(span_dict: dict[str, Any]) -> dict[str, Any]:
     """Strip internal-only fields (e.g., raw snippet metadata) from a serialized SourceSpan.
 
     The `metadata` dict is used internally for token estimation and avoid-filtering
@@ -132,13 +153,14 @@ def _sanitize_span_for_output(span_dict: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _sanitize_pack_for_output(pack_dict: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_pack_for_output(pack_dict: dict[str, Any]) -> dict[str, Any]:
     spans = pack_dict.get("source_spans") or []
     pack_dict["source_spans"] = [_sanitize_span_for_output(s) for s in spans]
     return pack_dict
 
 
 # --- Tool catalog -----------------------------------------------------------
+
 
 def get_tools_list():
     return {
@@ -203,7 +225,7 @@ def get_tools_list():
                                 "expand",
                                 "condense",
                                 "align_with_previous_sections",
-                                "review"
+                                "review",
                             ],
                             "description": "The specific type of writing task.",
                         },
@@ -227,9 +249,7 @@ def get_tools_list():
                                 "source roles (target_text, local_context, dependency, reference) and values "
                                 "must be float fractions summing to 1.0 (e.g. {'target_text': 0.40, 'reference': 0.10})."
                             ),
-                            "additionalProperties": {
-                                "type": "number"
-                            }
+                            "additionalProperties": {"type": "number"},
                         },
                     },
                     "required": ["task"],
@@ -331,10 +351,10 @@ def get_tools_list():
                     "properties": {
                         "project_root": {
                             "type": "string",
-                            "description": "Custom project root path (optional). Defaults to current workspace."
+                            "description": "Custom project root path (optional). Defaults to current workspace.",
                         }
-                    }
-                }
+                    },
+                },
             },
             {
                 "name": "request_more_context",
@@ -347,15 +367,15 @@ def get_tools_list():
                     "properties": {
                         "run_id": {
                             "type": "string",
-                            "description": "The unique UUID run_id returned from a prior get_writing_context_pack call."
+                            "description": "The unique UUID run_id returned from a prior get_writing_context_pack call.",
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of extra context spans to fetch (default: 5)."
-                        }
+                            "description": "Maximum number of extra context spans to fetch (default: 5).",
+                        },
                     },
-                    "required": ["run_id"]
-                }
+                    "required": ["run_id"],
+                },
             },
             {
                 "name": "submit_generation_feedback",
@@ -367,23 +387,23 @@ def get_tools_list():
                     "properties": {
                         "run_id": {
                             "type": "string",
-                            "description": "The unique UUID run_id from the context pack."
+                            "description": "The unique UUID run_id from the context pack.",
                         },
                         "metric_name": {
                             "type": "string",
-                            "description": "Metric category being logged (e.g. helpfulness, hallucinations, constraint_violated)."
+                            "description": "Metric category being logged (e.g. helpfulness, hallucinations, constraint_violated).",
                         },
                         "metric_value": {
                             "type": "number",
-                            "description": "Numeric evaluation value (e.g. 1.0 for positive/present, 0.0 for negative/absent)."
+                            "description": "Numeric evaluation value (e.g. 1.0 for positive/present, 0.0 for negative/absent).",
                         },
                         "metric_text": {
                             "type": "string",
-                            "description": "Optional text details or description of issue/helpfulness."
-                        }
+                            "description": "Optional text details or description of issue/helpfulness.",
+                        },
                     },
-                    "required": ["run_id", "metric_name", "metric_value"]
-                }
+                    "required": ["run_id", "metric_name", "metric_value"],
+                },
             },
             {
                 "name": "audit_manuscript_terminology",
@@ -396,10 +416,10 @@ def get_tools_list():
                     "properties": {
                         "project_root": {
                             "type": "string",
-                            "description": "Custom project root path (optional). Defaults to current workspace."
+                            "description": "Custom project root path (optional). Defaults to current workspace.",
                         }
-                    }
-                }
+                    },
+                },
             },
             {
                 "name": "get_term_context",
@@ -412,15 +432,15 @@ def get_tools_list():
                     "properties": {
                         "term": {
                             "type": "string",
-                            "description": "The term (canonical, variant, or avoid phrase) to look up."
+                            "description": "The term (canonical, variant, or avoid phrase) to look up.",
                         },
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path."
-                        }
+                            "description": "Optional project root path.",
+                        },
                     },
-                    "required": ["term"]
-                }
+                    "required": ["term"],
+                },
             },
             {
                 "name": "get_manuscript_reference_graph",
@@ -433,15 +453,17 @@ def get_tools_list():
                     "properties": {
                         "project_root": {
                             "type": "string",
-                            "description": "Optional custom project root path. Defaults to the workspace root."
+                            "description": "Optional custom project root path. Defaults to the workspace root.",
                         }
-                    }
-                }
-            }
+                    },
+                },
+            },
         ]
     }
 
+
 _RUNTIME_CACHE = None
+
 
 def _load_runtime():
     """Load config, section cards, adapter, store. Returns (config, cards, card_warnings, adapter, store).
@@ -452,7 +474,7 @@ def _load_runtime():
     global _RUNTIME_CACHE
 
     config_path = WORKSPACE_ROOT / ".writing-context" / "config.yaml"
-    
+
     config_mtime = None
     config_size = None
     if config_path.exists():
@@ -484,17 +506,19 @@ def _load_runtime():
         except OSError:
             pass
 
-    if (_RUNTIME_CACHE is not None and
-        _RUNTIME_CACHE["config_mtime"] == config_mtime and
-        _RUNTIME_CACHE["config_size"] == config_size and
-        _RUNTIME_CACHE["sc_mtime"] == sc_mtime and
-        _RUNTIME_CACHE["sc_size"] == sc_size):
+    if (
+        _RUNTIME_CACHE is not None
+        and _RUNTIME_CACHE["config_mtime"] == config_mtime
+        and _RUNTIME_CACHE["config_size"] == config_size
+        and _RUNTIME_CACHE["sc_mtime"] == sc_mtime
+        and _RUNTIME_CACHE["sc_size"] == sc_size
+    ):
         return (
             _RUNTIME_CACHE["config"],
             _RUNTIME_CACHE["cards"],
             _RUNTIME_CACHE["card_warnings"],
             _RUNTIME_CACHE["adapter"],
-            _RUNTIME_CACHE["store"]
+            _RUNTIME_CACHE["store"],
         )
 
     config = load_config(str(WORKSPACE_ROOT))
@@ -533,7 +557,7 @@ def _load_runtime():
         "cards": cards,
         "card_warnings": card_warnings,
         "adapter": adapter,
-        "store": store
+        "store": store,
     }
 
     return config, cards, card_warnings, adapter, store
@@ -547,9 +571,12 @@ def handle_get_writing_context_pack(args):
         config, cards, card_warnings, adapter, store = _load_runtime()
     except Exception as e:
         logger.exception("Failed to load runtime for get_writing_context_pack")
-        return _error_response(ERROR_CONFIG, "Failed to load configuration or section cards.", str(e))
+        return _error_response(
+            ERROR_CONFIG, "Failed to load configuration or section cards.", str(e)
+        )
 
     from writing_context_rtfm.providers import get_active_providers
+
     providers = get_active_providers(config)
     generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
     task = args.get("task", "")
@@ -575,7 +602,7 @@ def handle_get_writing_context_pack(args):
             line_start=line_start,
             line_end=line_end,
             pack_mode=pack_mode,
-            role_budgets=role_budgets
+            role_budgets=role_budgets,
         )
     except Exception as e:
         logger.exception("Pack generation failed")
@@ -605,7 +632,9 @@ def handle_get_proofreading_context_pack(args):
         config, cards, card_warnings, adapter, store = _load_runtime()
     except Exception as e:
         logger.exception("Failed to load runtime for get_proofreading_context_pack")
-        return _error_response(ERROR_CONFIG, "Failed to load configuration or section cards.", str(e))
+        return _error_response(
+            ERROR_CONFIG, "Failed to load configuration or section cards.", str(e)
+        )
 
     generator = ProofreadPackGenerator(config, cards, adapter, store)
     try:
@@ -619,7 +648,9 @@ def handle_get_proofreading_context_pack(args):
         )
     except Exception as e:
         logger.exception("Proofreading pack generation failed")
-        return _error_response(ERROR_RETRIEVAL, "Proofreading pack generation failed.", type(e).__name__)
+        return _error_response(
+            ERROR_RETRIEVAL, "Proofreading pack generation failed.", type(e).__name__
+        )
 
     payload = asdict(pack)
     all_warnings = list(pack.warnings or [])
@@ -658,7 +689,10 @@ def handle_refresh_index(args):
         rtfm_db = resolve_rtfm_db_path(Path(project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
         store.invalidate_for_fingerprint(fingerprint)
-    return _success_response({"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh})
+    return _success_response(
+        {"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh}
+    )
+
 
 def handle_initialize_section_cards(args):
     project_root = args.get("project_root") or str(WORKSPACE_ROOT)
@@ -668,6 +702,7 @@ def handle_initialize_section_cards(args):
     except Exception as e:
         logger.exception("Failed to initialize section cards")
         return _error_response(ERROR_INTERNAL, f"Initialization failed: {e}", type(e).__name__)
+
 
 def handle_request_more_context(args):
     run_id = args.get("run_id")
@@ -682,7 +717,10 @@ def handle_request_more_context(args):
         return _success_response({"run_id": run_id, "source_spans": results, "count": len(results)})
     except Exception as e:
         logger.exception("Failed to request more context")
-        return _error_response(ERROR_INTERNAL, f"Failed to request more context: {e}", type(e).__name__)
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to request more context: {e}", type(e).__name__
+        )
+
 
 def handle_submit_generation_feedback(args):
     run_id = args.get("run_id")
@@ -690,7 +728,9 @@ def handle_submit_generation_feedback(args):
     metric_value = args.get("metric_value")
     metric_text = args.get("metric_text")
     if not run_id or not metric_name or metric_value is None:
-        return _error_response(ERROR_INVALID_INPUT, "Missing required arguments: run_id, metric_name, and metric_value")
+        return _error_response(
+            ERROR_INVALID_INPUT, "Missing required arguments: run_id, metric_name, and metric_value"
+        )
     try:
         config = load_config(str(WORKSPACE_ROOT))
         store = ExtensionStore(config.cache.path)
@@ -701,6 +741,7 @@ def handle_submit_generation_feedback(args):
         logger.exception("Failed to submit feedback")
         return _error_response(ERROR_INTERNAL, f"Failed to submit feedback: {e}", type(e).__name__)
 
+
 def handle_audit_manuscript_terminology(args):
     project_root = args.get("project_root") or str(WORKSPACE_ROOT)
     try:
@@ -709,6 +750,7 @@ def handle_audit_manuscript_terminology(args):
     except Exception as e:
         logger.exception("Failed to audit terminology")
         return _error_response(ERROR_INTERNAL, f"Terminology audit failed: {e}", type(e).__name__)
+
 
 def handle_get_term_context(args):
     if not args or "term" not in args:
@@ -725,6 +767,7 @@ def handle_get_term_context(args):
         logger.exception("Failed to lookup term context")
         return _error_response(ERROR_INTERNAL, f"Terminology lookup failed: {e}", type(e).__name__)
 
+
 def handle_get_manuscript_reference_graph(args):
     project_root = args.get("project_root")
     try:
@@ -734,7 +777,10 @@ def handle_get_manuscript_reference_graph(args):
         return _success_response(res)
     except Exception as e:
         logger.exception("Failed to build reference graph")
-        return _error_response(ERROR_INTERNAL, f"Failed to build reference graph: {e}", type(e).__name__)
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to build reference graph: {e}", type(e).__name__
+        )
+
 
 def process_message(line):
     global WORKSPACE_ROOT, _RUNTIME_CACHE
@@ -749,11 +795,17 @@ def process_message(line):
                 root_uri = params.get("rootUri")
                 if root_uri:
                     try:
-                        from urllib.parse import urlparse, unquote
+                        from urllib.parse import unquote, urlparse
+
                         parsed = urlparse(root_uri)
                         if parsed.scheme == "file":
                             path_str = unquote(parsed.path)
-                            if os.name == 'nt' and path_str.startswith('/') and len(path_str) > 2 and path_str[2] == ':':
+                            if (
+                                os.name == "nt"
+                                and path_str.startswith("/")
+                                and len(path_str) > 2
+                                and path_str[2] == ":"
+                            ):
                                 path_str = path_str[1:]
                             WORKSPACE_ROOT = Path(path_str).resolve()
                         else:
@@ -785,26 +837,74 @@ def process_message(line):
                             "name": "write_section",
                             "description": "Pre-structure a prompt for drafting or editing a manuscript section with surgical context.",
                             "arguments": [
-                                {"name": "task", "description": "Natural-language description of the writing task", "required": True},
-                                {"name": "target", "description": "section_id from section_cards.yaml (e.g. section_intro)", "required": True},
-                                {"name": "token_budget", "description": "Maximum token budget for context (default: 6000)", "required": False},
-                                {"name": "task_type", "description": "Writing task type (choices: write_new_section, revise_existing_section, proofread, expand, condense, align_with_previous_sections, review)", "required": False},
-                                {"name": "line_start", "description": "Target start line range", "required": False},
-                                {"name": "line_end", "description": "Target end line range", "required": False},
-                                {"name": "pack_mode", "description": "Context pack mode (choices: minimal, standard, deep)", "required": False}
-                            ]
+                                {
+                                    "name": "task",
+                                    "description": "Natural-language description of the writing task",
+                                    "required": True,
+                                },
+                                {
+                                    "name": "target",
+                                    "description": "section_id from section_cards.yaml (e.g. section_intro)",
+                                    "required": True,
+                                },
+                                {
+                                    "name": "token_budget",
+                                    "description": "Maximum token budget for context (default: 6000)",
+                                    "required": False,
+                                },
+                                {
+                                    "name": "task_type",
+                                    "description": "Writing task type (choices: write_new_section, revise_existing_section, proofread, expand, condense, align_with_previous_sections, review)",
+                                    "required": False,
+                                },
+                                {
+                                    "name": "line_start",
+                                    "description": "Target start line range",
+                                    "required": False,
+                                },
+                                {
+                                    "name": "line_end",
+                                    "description": "Target end line range",
+                                    "required": False,
+                                },
+                                {
+                                    "name": "pack_mode",
+                                    "description": "Context pack mode (choices: minimal, standard, deep)",
+                                    "required": False,
+                                },
+                            ],
                         },
                         {
                             "name": "proofread_section",
                             "description": "Pre-structure a prompt for proofreading or editing a specific line range of a file.",
                             "arguments": [
-                                {"name": "target_file", "description": "Path to the file being proofread", "required": True},
-                                {"name": "line_start", "description": "1-indexed starting line number", "required": True},
-                                {"name": "line_end", "description": "1-indexed ending line number", "required": True},
-                                {"name": "mode", "description": "Proofreading mode (surface, academic_clarity, consistency, latex_safe)", "required": False},
-                                {"name": "strictness", "description": "Strictness level (conservative, moderate, assertive)", "required": False}
-                            ]
-                        }
+                                {
+                                    "name": "target_file",
+                                    "description": "Path to the file being proofread",
+                                    "required": True,
+                                },
+                                {
+                                    "name": "line_start",
+                                    "description": "1-indexed starting line number",
+                                    "required": True,
+                                },
+                                {
+                                    "name": "line_end",
+                                    "description": "1-indexed ending line number",
+                                    "required": True,
+                                },
+                                {
+                                    "name": "mode",
+                                    "description": "Proofreading mode (surface, academic_clarity, consistency, latex_safe)",
+                                    "required": False,
+                                },
+                                {
+                                    "name": "strictness",
+                                    "description": "Strictness level (conservative, moderate, assertive)",
+                                    "required": False,
+                                },
+                            ],
+                        },
                     ]
                 }
             elif method == "prompts/get":
@@ -821,12 +921,19 @@ def process_message(line):
                     pack_mode = arguments.get("pack_mode")
                     try:
                         config, cards, card_warnings, adapter, store = _load_runtime()
-                        budget = int(budget_arg) if budget_arg is not None else config.context.default_token_budget
+                        budget = (
+                            int(budget_arg)
+                            if budget_arg is not None
+                            else config.context.default_token_budget
+                        )
                         line_start = int(line_start_val) if line_start_val is not None else None
                         line_end = int(line_end_val) if line_end_val is not None else None
                         from writing_context_rtfm.providers import get_active_providers
+
                         providers = get_active_providers(config)
-                        generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
+                        generator = ContextPackGenerator(
+                            config, cards, adapter, store, providers=providers
+                        )
                         pack = generator.generate(
                             task=task,
                             target=target,
@@ -834,28 +941,27 @@ def process_message(line):
                             task_type=task_type,
                             line_start=line_start,
                             line_end=line_end,
-                            pack_mode=pack_mode
+                            pack_mode=pack_mode,
                         )
                         prompt_text = _format_write_section_prompt(pack)
                         result = {
                             "description": "Hydrated drafting/editing prompt with surgical context.",
                             "messages": [
-                                {
-                                    "role": "user",
-                                    "content": {
-                                        "type": "text",
-                                        "text": prompt_text
-                                    }
-                                }
-                            ]
+                                {"role": "user", "content": {"type": "text", "text": prompt_text}}
+                            ],
                         }
                     except Exception as e:
                         logger.exception("Failed to hydrate prompt write_section")
-                        response = json.dumps({
-                            "jsonrpc": "2.0",
-                            "id": req.get("id"),
-                            "error": {"code": -32603, "message": f"Failed to hydrate prompt: {e}"}
-                        })
+                        response = json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": req.get("id"),
+                                "error": {
+                                    "code": -32603,
+                                    "message": f"Failed to hydrate prompt: {e}",
+                                },
+                            }
+                        )
                         return response
                 elif name == "proofread_section":
                     target_file = arguments.get("target_file", "")
@@ -873,35 +979,36 @@ def process_message(line):
                             line_start=line_start,
                             line_end=line_end,
                             mode=mode,
-                            strictness=strictness
+                            strictness=strictness,
                         )
                         prompt_text = _format_proofread_section_prompt(pack)
                         result = {
                             "description": "Hydrated proofreading prompt with target text and terminology.",
                             "messages": [
-                                {
-                                    "role": "user",
-                                    "content": {
-                                        "type": "text",
-                                        "text": prompt_text
-                                    }
-                                }
-                            ]
+                                {"role": "user", "content": {"type": "text", "text": prompt_text}}
+                            ],
                         }
                     except Exception as e:
                         logger.exception("Failed to hydrate prompt proofread_section")
-                        response = json.dumps({
-                            "jsonrpc": "2.0",
-                            "id": req.get("id"),
-                            "error": {"code": -32603, "message": f"Failed to hydrate prompt: {e}"}
-                        })
+                        response = json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": req.get("id"),
+                                "error": {
+                                    "code": -32603,
+                                    "message": f"Failed to hydrate prompt: {e}",
+                                },
+                            }
+                        )
                         return response
                 else:
-                    response = json.dumps({
-                        "jsonrpc": "2.0",
-                        "id": req.get("id"),
-                        "error": {"code": -32601, "message": f"Prompt not found: {name}"}
-                    })
+                    response = json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "error": {"code": -32601, "message": f"Prompt not found: {name}"},
+                        }
+                    )
                     return response
             elif method == "tools/call":
                 params = req.get("params", {})
@@ -926,44 +1033,43 @@ def process_message(line):
                 elif name == "get_manuscript_reference_graph":
                     result = handle_get_manuscript_reference_graph(args)
                 else:
-                    response = json.dumps({
-                        "jsonrpc": "2.0",
-                        "id": req.get("id"),
-                        "error": {"code": -32601, "message": f"Tool not found: {name}"}
-                    })
+                    response = json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "error": {"code": -32601, "message": f"Tool not found: {name}"},
+                        }
+                    )
                     logger.debug(f"Responding (Error): {response}")
                     return response
             else:
                 if "id" in req:
-                    response = json.dumps({
-                        "jsonrpc": "2.0",
-                        "id": req.get("id"),
-                        "error": {"code": -32601, "message": f"Method not found: {method}"}
-                    })
+                    response = json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "error": {"code": -32601, "message": f"Method not found: {method}"},
+                        }
+                    )
                     logger.debug(f"Responding (Error): {response}")
                     return response
                 return None
-                
-            response = json.dumps({
-                "jsonrpc": "2.0",
-                "id": req.get("id"),
-                "result": result
-            })
+
+            response = json.dumps({"jsonrpc": "2.0", "id": req.get("id"), "result": result})
             logger.debug(f"Responding: {response}")
             return response
     except Exception as e:
         logger.exception("Error processing message")
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "error": {"code": -32000, "message": str(e)}
-        })
+        return json.dumps({"jsonrpc": "2.0", "error": {"code": -32000, "message": str(e)}})
     return None
+
 
 def run_server():
     """Start standard IO JSON-RPC loop."""
     global _client_manager
     import atexit
     import signal
+
     from writing_context_rtfm.providers.manager import LocalMCPClientManager
 
     _client_manager = LocalMCPClientManager(workspace_root=str(WORKSPACE_ROOT))
@@ -971,14 +1077,14 @@ def run_server():
     def cleanup_handler(*args):
         global _client_manager
         if _client_manager is not None:
-            try:
+            with contextlib.suppress(Exception):
                 _client_manager.shutdown()
-            except Exception:
-                pass
             _client_manager = None
         try:
-            from writing_context_rtfm.cli import cleanup_command
             from argparse import Namespace
+
+            from writing_context_rtfm.cli import cleanup_command
+
             cleanup_command(Namespace(project_root=str(WORKSPACE_ROOT)))
         except Exception:
             pass
@@ -986,8 +1092,8 @@ def run_server():
     atexit.register(cleanup_handler)
 
     try:
-        signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
-        signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
+        signal.signal(signal.SIGTERM, lambda _sig, _frame: sys.exit(0))
+        signal.signal(signal.SIGINT, lambda _sig, _frame: sys.exit(0))
     except (ValueError, OSError):
         pass
 

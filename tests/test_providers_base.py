@@ -1,13 +1,23 @@
 import unittest
 from unittest.mock import MagicMock
-from writing_context_rtfm.config import AppConfig, ContextConfig, RTFMConfig, CacheConfig, SectionCardsConfig
-from writing_context_rtfm.schemas import SourceSpan, ProviderConfig
+
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.providers.base import BaseContextProvider
+from writing_context_rtfm.schemas import ProviderConfig, SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 
+
 class MockContextProvider(BaseContextProvider):
-    def __init__(self, provider_id: str, enabled: bool = True, raise_error: bool = False, spans = None):
+    def __init__(
+        self, provider_id: str, enabled: bool = True, raise_error: bool = False, spans=None
+    ):
         self._provider_id = provider_id
         self._enabled = enabled
         self._raise_error = raise_error
@@ -22,11 +32,14 @@ class MockContextProvider(BaseContextProvider):
         provider_cfg = config.providers.get(self._provider_id)
         return provider_cfg is not None and provider_cfg.enabled and self._enabled
 
-    def fetch_context(self, queries, target, limit, query_type_map=None, task_type="write_new_section"):
+    def fetch_context(
+        self, queries, target, limit, query_type_map=None, task_type="write_new_section"
+    ):
         self.fetch_context_called = True
         if self._raise_error:
             raise RuntimeError("Mock provider failure")
         return self.spans
+
 
 class TestProvidersBase(unittest.TestCase):
     def setUp(self):
@@ -39,8 +52,8 @@ class TestProvidersBase(unittest.TestCase):
             providers={
                 "mock_prov": ProviderConfig(enabled=True, sse_url="http://mock"),
                 "disabled_prov": ProviderConfig(enabled=False, sse_url="http://mock"),
-                "failing_prov": ProviderConfig(enabled=True, sse_url="http://mock")
-            }
+                "failing_prov": ProviderConfig(enabled=True, sse_url="http://mock"),
+            },
         )
         self.adapter = MagicMock()
         self.adapter.search.return_value = []
@@ -56,22 +69,24 @@ class TestProvidersBase(unittest.TestCase):
             score=0.95,
             priority="essential",
             source_role="reference",
-            metadata={"snippet": "Some external paper data"}
+            metadata={"snippet": "Some external paper data"},
         )
         mock_prov = MockContextProvider("mock_prov", spans=[span])
         disabled_prov = MockContextProvider("disabled_prov", spans=[])
-        
-        generator = ContextPackGenerator(self.config, None, self.adapter, self.store, providers=[mock_prov, disabled_prov])
+
+        generator = ContextPackGenerator(
+            self.config, None, self.adapter, self.store, providers=[mock_prov, disabled_prov]
+        )
         pack = generator.generate(task="write outline", target=None, token_budget=10000)
-        
+
         self.assertTrue(mock_prov.fetch_context_called)
         self.assertFalse(disabled_prov.fetch_context_called)
-        
+
         # Verify the span is returned in the pack
         self.assertEqual(len(pack.source_spans), 1)
         self.assertEqual(pack.source_spans[0].path, "external/paper.pdf")
         self.assertEqual(pack.source_spans[0].score, 0.95)
-        self.assertEqual(pack.status, "degraded") # Degraded because no section cards are loaded
+        self.assertEqual(pack.status, "degraded")  # Degraded because no section cards are loaded
 
     def test_provider_error_resilience(self):
         failing_prov = MockContextProvider("failing_prov", raise_error=True)
@@ -83,17 +98,19 @@ class TestProvidersBase(unittest.TestCase):
             score=0.95,
             priority="essential",
             source_role="reference",
-            metadata={"snippet": "Some external paper data"}
+            metadata={"snippet": "Some external paper data"},
         )
         mock_prov = MockContextProvider("mock_prov", spans=[span])
-        
-        generator = ContextPackGenerator(self.config, None, self.adapter, self.store, providers=[failing_prov, mock_prov])
+
+        generator = ContextPackGenerator(
+            self.config, None, self.adapter, self.store, providers=[failing_prov, mock_prov]
+        )
         pack = generator.generate(task="write outline", target=None, token_budget=10000)
-        
+
         # Generator should continue, status should be degraded, and have warning
         self.assertEqual(pack.status, "degraded")
         self.assertTrue(any("Provider 'failing_prov' failed:" in w for w in pack.warnings))
-        
+
         # The successful provider span should still be there
         self.assertEqual(len(pack.source_spans), 1)
         self.assertEqual(pack.source_spans[0].path, "external/paper.pdf")
@@ -108,7 +125,7 @@ class TestProvidersBase(unittest.TestCase):
             score=0.95,
             priority="essential",
             source_role="reference",
-            metadata={"snippet": "word " * 1200}  # ~1200 tokens
+            metadata={"snippet": "word " * 1200},  # ~1200 tokens
         )
         span_local = SourceSpan(
             path="external/paper.pdf",  # Same path and lines -> duplicate!
@@ -118,7 +135,7 @@ class TestProvidersBase(unittest.TestCase):
             score=0.85,
             priority="supporting",
             source_role="reference",
-            metadata={"snippet": "word " * 1200}
+            metadata={"snippet": "word " * 1200},
         )
         span_low_score = SourceSpan(
             path="external/low.pdf",
@@ -128,25 +145,30 @@ class TestProvidersBase(unittest.TestCase):
             score=0.0001,  # Should be filtered out by score filtering
             priority="background",
             source_role="reference",
-            metadata={"snippet": "low score data"}
+            metadata={"snippet": "low score data"},
         )
-        
+
         mock_prov1 = MockContextProvider("mock_prov", spans=[span_external])
         mock_prov2 = MockContextProvider("failing_prov", spans=[span_local, span_low_score])
-        
-        generator = ContextPackGenerator(self.config, None, self.adapter, self.store, providers=[mock_prov1, mock_prov2])
-        
+
+        generator = ContextPackGenerator(
+            self.config, None, self.adapter, self.store, providers=[mock_prov1, mock_prov2]
+        )
+
         # Deduplication (duplicate external/paper.pdf should be merged, keeping the higher score 0.95)
         # Also, low score should be filtered out by config.context.min_score (default 0.01)
         pack = generator.generate(task="write outline", target=None, token_budget=10000)
         self.assertEqual(len(pack.source_spans), 1)
         self.assertEqual(pack.source_spans[0].path, "external/paper.pdf")
         self.assertEqual(pack.source_spans[0].score, 0.95)
-        
+
         # Token budgeting (if budget is very low, e.g. 500, the 1200-token span is included due to auto-scaling)
         pack_small_budget = generator.generate(task="write outline", target=None, token_budget=500)
         self.assertEqual(len(pack_small_budget.source_spans), 1)
-        self.assertTrue(any("exceeded the requested budget" in w for w in pack_small_budget.warnings))
+        self.assertTrue(
+            any("exceeded the requested budget" in w for w in pack_small_budget.warnings)
+        )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

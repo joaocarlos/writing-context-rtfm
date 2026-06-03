@@ -1,6 +1,6 @@
 # Prompt: Generate `section_cards.yaml`
 
-Use this prompt with any LLM to generate a `.writing-context/section_cards.yaml` file
+Use this prompt with any LLM or CLI code agent to generate a `.writing-context/section_cards.yaml` file
 for a writing project that uses `writing-context-rtfm`.
 
 Paste your manuscript structure, abstract, and any notes below the `---` separator.
@@ -9,9 +9,8 @@ Paste your manuscript structure, abstract, and any notes below the `---` separat
 
 ## The Prompt
 
-```
-You are a writing-context analyst. Your task is to generate a valid
-`.writing-context/section_cards.yaml` file for a manuscript project that uses
+````
+You are a writing-context analyst. Your task is to generate a valid `.writing-context/section_cards.yaml` file for a manuscript project that uses
 the `writing-context-rtfm` MCP extension.
 
 ## What the file is used for
@@ -77,22 +76,22 @@ sections:
       - "<free-form writing constraint, e.g. 'Do not introduce new datasets here'>"
       # constraints end up in the context pack's `constraints` list
       # for proofreading, these are injected as section-specific rules
-```
+````
 
 ## Field guidance
 
-| Field | When to populate | Effect on the packer |
-|---|---|---|
-| `thesis` | Always | Injected as `document_thesis` in the pack — the LLM sees it as the overarching goal |
-| `writing_style.tone` | Always | Informational only in v0.1; used by future style-enforcement pass |
-| `writing_style.avoid` | When global prohibitions exist | Not yet consumed by packer in v0.1; acts as human reminder |
-| `terminology` | For key technical terms and concepts | Defines a global glossary. Used by the `audit` command to verify consistency/drift and injected into the proofreading context pack. |
-| `key_terms` | Always for technical sections | Each term becomes its own RTFM search query |
-| `depends_on` | When a section cites work from another section | Adds +0.4 score boost to dependency file chunks |
-| `must_preserve` | For fixed claims, definitions, caveats | Injected verbatim into `constraints` in the context pack. In proofreading, ensures claims are not altered. |
-| `avoid` | When a key term appears in many wrong sections | Discards retrieved chunks that match these phrases. Filters noisy terminology examples. |
-| `constraints` | For structural or rhetorical rules | Injected into `constraints` in the context pack for writing or proofreading. |
-| `path` | Always | Without a path, the packer cannot apply Target Boost or Key-Term Scope Penalty |
+| Field                 | When to populate                               | Effect on the packer                                                                                                                |
+| --------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `thesis`              | Always                                         | Injected as `document_thesis` in the pack — the LLM sees it as the overarching goal                                                 |
+| `writing_style.tone`  | Always                                         | Informational only in v0.1; used by future style-enforcement pass                                                                   |
+| `writing_style.avoid` | When global prohibitions exist                 | Not yet consumed by packer in v0.1; acts as human reminder                                                                          |
+| `terminology`         | For key technical terms and concepts           | Defines a global glossary. Used by the `audit` command to verify consistency/drift and injected into the proofreading context pack. |
+| `key_terms`           | Always for technical sections                  | Each term becomes its own RTFM search query                                                                                         |
+| `depends_on`          | When a section cites work from another section | Adds +0.4 score boost to dependency file chunks                                                                                     |
+| `must_preserve`       | For fixed claims, definitions, caveats         | Injected verbatim into `constraints` in the context pack. In proofreading, ensures claims are not altered.                          |
+| `avoid`               | When a key term appears in many wrong sections | Discards retrieved chunks that match these phrases. Filters noisy terminology examples.                                             |
+| `constraints`         | For structural or rhetorical rules             | Injected into `constraints` in the context pack for writing or proofreading.                                                        |
+| `path`                | Always                                         | Without a path, the packer cannot apply Target Boost or Key-Term Scope Penalty                                                      |
 
 ## Rules you must follow
 
@@ -135,12 +134,13 @@ for fields you could not derive directly from my input.
 
 [B] Section files and titles:
 <list your sections here, e.g.:
+
 - sections/01_introduction.tex — Introduction
 - sections/02_related_work.tex — Related Work
 - sections/03_methodology.tex — Methodology
 - sections/04_results.tex — Results and Discussion
 - sections/05_conclusion.tex — Conclusion
->
+    >
 
 [C] Fixed claims / must-preserve sentences (optional):
 <list any verbatim sentences that must survive rewrites>
@@ -150,5 +150,11 @@ for fields you could not derive directly from my input.
 
 [E] Key technical terms and definitions/glossary (optional):
 <list any domain-specific terms, their definitions, variants, and deprecated variants to avoid>
+
 ```
 
+```
+
+```
+
+```

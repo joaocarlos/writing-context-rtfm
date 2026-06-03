@@ -1,18 +1,25 @@
-import unittest
-import tempfile
-import shutil
 import json
+import shutil
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
 from writing_context_rtfm.context_pack import ContextPack, ContextPackGenerator
-from writing_context_rtfm.proofread import ProofreadPackGenerator
-from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.server import process_message
-from writing_context_rtfm.utils import scan_latex_commands
 from writing_context_rtfm.features import get_term_context
+from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.schemas import RTFMResult
+from writing_context_rtfm.server import process_message
+from writing_context_rtfm.storage import ExtensionStore
+from writing_context_rtfm.utils import scan_latex_commands
+
 
 class TestMilestone3(unittest.TestCase):
     def setUp(self):
@@ -74,12 +81,15 @@ class TestMilestone3(unittest.TestCase):
             version=1,
             rtfm=RTFMConfig(corpus="test_corpus", project_root=str(self.project_root)),
             context=ContextConfig(default_token_budget=1000, max_source_spans=10),
-            cache=CacheConfig(enabled=False, path=str(self.project_root / ".writing-context" / "cache.sqlite")),
-            section_cards=SectionCardsConfig(path=str(self.sc_file))
+            cache=CacheConfig(
+                enabled=False, path=str(self.project_root / ".writing-context" / "cache.sqlite")
+            ),
+            section_cards=SectionCardsConfig(path=str(self.sc_file)),
         )
 
         # Parse loaded section cards
         from writing_context_rtfm.section_cards import load_section_cards
+
         self.section_cards = load_section_cards(str(self.sc_file))
 
         self.adapter = MagicMock()
@@ -87,8 +97,12 @@ class TestMilestone3(unittest.TestCase):
 
         self.store = ExtensionStore(self.config.cache.path)
         self.store.init_db()
-        self.generator = ContextPackGenerator(self.config, self.section_cards, self.adapter, self.store)
-        self.proofread_generator = ProofreadPackGenerator(self.config, self.section_cards, self.adapter, self.store)
+        self.generator = ContextPackGenerator(
+            self.config, self.section_cards, self.adapter, self.store
+        )
+        self.proofread_generator = ProofreadPackGenerator(
+            self.config, self.section_cards, self.adapter, self.store
+        )
 
     def tearDown(self):
         shutil.rmtree(self.tmp_dir)
@@ -104,13 +118,11 @@ class TestMilestone3(unittest.TestCase):
         self.assertIn("\\begin{equation}x=y\\end{equation}", cmds)
 
         # 2. Test safety warnings appended during ContextPack generation
-        self.target_file.write_text("We propose a new model. See \\cite{test_ref} and equation $y = f(x)$.")
+        self.target_file.write_text(
+            "We propose a new model. See \\cite{test_ref} and equation $y = f(x)$."
+        )
         pack = self.generator.generate(
-            task="Revise intro line 1",
-            target="sec1",
-            token_budget=1000,
-            line_start=1,
-            line_end=1
+            task="Revise intro line 1", target="sec1", token_budget=1000, line_start=1, line_end=1
         )
         self.assertTrue(any("LaTeX Safety" in w for w in pack.warnings))
         self.assertTrue(any("\\cite{test_ref}" in w for w in pack.warnings))
@@ -118,10 +130,7 @@ class TestMilestone3(unittest.TestCase):
 
         # 3. Test safety warnings appended during ProofreadingContextPack generation
         proof_pack = self.proofread_generator.generate(
-            target_file=str(self.target_file),
-            line_start=1,
-            line_end=1,
-            mode="latex_safe"
+            target_file=str(self.target_file), line_start=1, line_end=1, mode="latex_safe"
         )
         self.assertTrue(any("LaTeX Safety" in w for w in proof_pack.warnings))
         self.assertTrue(any("\\cite{test_ref}" in w for w in proof_pack.warnings))
@@ -157,9 +166,7 @@ class TestMilestone3(unittest.TestCase):
 
         # 2. Test terminology population inside generator
         pack = self.generator.generate(
-            task="Draft quantization and latency",
-            target="sec1",
-            token_budget=1000
+            task="Draft quantization and latency", target="sec1", token_budget=1000
         )
         self.assertIn("Quantization", pack.terminology)
         self.assertEqual(pack.terminology["Quantization"], "Reducing precision of weights")
@@ -168,21 +175,45 @@ class TestMilestone3(unittest.TestCase):
 
     def test_role_budgets_allocation(self):
         mock_results = [
-            RTFMResult(path="sec1.md", line_start=1, line_end=10, snippet="B" * 1200, score=0.9, metadata={}),
-            RTFMResult(path="sec1.md", line_start=15, line_end=25, snippet="B" * 1200, score=0.85, metadata={}),
-            RTFMResult(path="sec2.md", line_start=1, line_end=20, snippet="B" * 1200, score=0.8, metadata={}),
-            RTFMResult(path="ref.md", line_start=1, line_end=20, snippet="B" * 1200, score=0.75, metadata={}),
+            RTFMResult(
+                path="sec1.md",
+                line_start=1,
+                line_end=10,
+                snippet="B" * 1200,
+                score=0.9,
+                metadata={},
+            ),
+            RTFMResult(
+                path="sec1.md",
+                line_start=15,
+                line_end=25,
+                snippet="B" * 1200,
+                score=0.85,
+                metadata={},
+            ),
+            RTFMResult(
+                path="sec2.md",
+                line_start=1,
+                line_end=20,
+                snippet="B" * 1200,
+                score=0.8,
+                metadata={},
+            ),
+            RTFMResult(
+                path="ref.md",
+                line_start=1,
+                line_end=20,
+                snippet="B" * 1200,
+                score=0.75,
+                metadata={},
+            ),
         ]
         self.adapter.search.return_value = mock_results
 
         pack = self.generator.generate(
-            task="Draft quantization",
-            target="sec1",
-            token_budget=1000,
-            line_start=1,
-            line_end=10
+            task="Draft quantization", target="sec1", token_budget=1000, line_start=1, line_end=10
         )
-        
+
         selected_roles = [s.source_role for s in pack.source_spans]
         self.assertIn("target_text", selected_roles)
         self.assertIn("local_context", selected_roles)
@@ -197,7 +228,12 @@ class TestMilestone3(unittest.TestCase):
             token_budget=1000,
             line_start=1,
             line_end=10,
-            role_budgets={"target_text": 0.0, "local_context": 0.0, "dependency": 0.0, "reference": 1.0}
+            role_budgets={
+                "target_text": 0.0,
+                "local_context": 0.0,
+                "dependency": 0.0,
+                "reference": 1.0,
+            },
         )
         ref_override_roles = [s.source_role for s in pack_ref_override.source_spans]
         self.assertIn("reference", ref_override_roles)
@@ -213,11 +249,8 @@ class TestMilestone3(unittest.TestCase):
             "method": "tools/call",
             "params": {
                 "name": "get_term_context",
-                "arguments": {
-                    "term": "Quantization",
-                    "project_root": str(self.project_root)
-                }
-            }
+                "arguments": {"term": "Quantization", "project_root": str(self.project_root)},
+            },
         }
         with patch("writing_context_rtfm.server._load_runtime") as mock_load:
             mock_load.return_value = (self.config, self.section_cards, [], self.adapter, self.store)
@@ -230,10 +263,21 @@ class TestMilestone3(unittest.TestCase):
             self.assertEqual(payload["definition"], "Reducing precision of weights")
 
         # 2. CLI Main call for get-term
-        with patch("sys.argv", ["writing-context-rtfm", "get-term", "Quantization", "--project-root", str(self.project_root)]):
-            from writing_context_rtfm.cli import main
+        with patch(
+            "sys.argv",
+            [
+                "writing-context-rtfm",
+                "get-term",
+                "Quantization",
+                "--project-root",
+                str(self.project_root),
+            ],
+        ):
             import io
             from contextlib import redirect_stdout
+
+            from writing_context_rtfm.cli import main
+
             f = io.StringIO()
             with redirect_stdout(f):
                 main()
@@ -251,17 +295,36 @@ class TestMilestone3(unittest.TestCase):
             terminology={},
             constraints=[],
             source_spans=[],
-            estimated_tokens=0
+            estimated_tokens=0,
         )
         mock_generator_instance.generate.return_value = fake_pack
-        
-        with patch("writing_context_rtfm.cli.ContextPackGenerator", return_value=mock_generator_instance), \
-             patch("sys.argv", ["writing-context-rtfm", "pack", "--task", "my task", "--role-budgets", '{"target_text": 0.5, "reference": 0.5}', "--project-root", str(self.project_root)]):
+
+        with (
+            patch(
+                "writing_context_rtfm.cli.ContextPackGenerator",
+                return_value=mock_generator_instance,
+            ),
+            patch(
+                "sys.argv",
+                [
+                    "writing-context-rtfm",
+                    "pack",
+                    "--task",
+                    "my task",
+                    "--role-budgets",
+                    '{"target_text": 0.5, "reference": 0.5}',
+                    "--project-root",
+                    str(self.project_root),
+                ],
+            ),
+        ):
             from writing_context_rtfm.cli import main
+
             main()
             mock_generator_instance.generate.assert_called_once()
             _, kwargs = mock_generator_instance.generate.call_args
             self.assertEqual(kwargs["role_budgets"], {"target_text": 0.5, "reference": 0.5})
+
 
 if __name__ == "__main__":
     unittest.main()

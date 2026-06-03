@@ -1,29 +1,34 @@
 """Context pack schemas and generation."""
-import uuid
+
 import hashlib
-from dataclasses import asdict
-from typing import List, Optional, Dict, Tuple
-from pathlib import Path
+import uuid
 from collections import defaultdict
+from dataclasses import asdict
+from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
-from writing_context_rtfm.section_cards import SectionCards, SectionCard
+from writing_context_rtfm.hashing import compute_rtfm_fingerprint, compute_task_hash, stable_hash
+from writing_context_rtfm.providers.base import BaseContextProvider
+from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import (
+    CacheDiagnostics,
+    ContextPack,
+    PackQuality,
     RTFMResult,
     SourceSpan,
-    CacheDiagnostics,
-    PackQuality,
-    ContextPack,
 )
-from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.hashing import compute_task_hash, stable_hash, compute_rtfm_fingerprint
+from writing_context_rtfm.section_cards import SectionCard, SectionCards
 from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.token_budget import estimate_tokens, estimate_span_tokens
+from writing_context_rtfm.token_budget import estimate_span_tokens, estimate_tokens
+from writing_context_rtfm.utils import (
+    extract_keywords,
+    is_allowed_source,
+    resolve_rtfm_db_path,
+    scan_latex_commands,
+)
 
-from writing_context_rtfm.utils import is_allowed_source, extract_keywords, scan_latex_commands, resolve_rtfm_db_path
-from writing_context_rtfm.providers.base import BaseContextProvider
 
-def _path_matches(path: str, card_path: Optional[str]) -> bool:
+def _path_matches(path: str, card_path: str | None) -> bool:
     """Helper to check if path matches a card's path case-insensitively."""
     if not card_path:
         return False
@@ -31,27 +36,31 @@ def _path_matches(path: str, card_path: Optional[str]) -> bool:
     c_norm = card_path.replace("\\", "/").lower().lstrip("./")
     return p_norm.endswith(c_norm)
 
+
 # ---------------------------------------------------------------------------
 # Schemas
 # ---------------------------------------------------------------------------
 # Imported from writing_context_rtfm.schemas
 
 
-
 # ---------------------------------------------------------------------------
 # Generator
 # ---------------------------------------------------------------------------
 class ContextPackGenerator:
-    def __init__(self, config: AppConfig, section_cards: Optional[SectionCards],
-                 adapter: RTFMAdapter, store: ExtensionStore,
-                 providers: Optional[List[BaseContextProvider]] = None):
+    def __init__(
+        self,
+        config: AppConfig,
+        section_cards: SectionCards | None,
+        adapter: RTFMAdapter,
+        store: ExtensionStore,
+        providers: list[BaseContextProvider] | None = None,
+    ):
         self.config = config
         self.section_cards = section_cards
         self.adapter = adapter
         self.store = store
         self.providers = providers or []
-        self._hash_cache: Dict[Path, Tuple[float, int, str]] = {}
-
+        self._hash_cache: dict[Path, tuple[float, int, str]] = {}
 
     def _get_file_hash(self, path: Path, fallback_val: str) -> str:
         if not path.exists():
@@ -60,18 +69,20 @@ class ContextPackGenerator:
             stat = path.stat()
             mtime = stat.st_mtime
             size = stat.st_size
-            
+
             cached = self._hash_cache.get(path)
             if cached and cached[0] == mtime and cached[1] == size:
                 return cached[2]
-                
+
             file_hash = hashlib.sha256(path.read_bytes()).hexdigest()
             self._hash_cache[path] = (mtime, size, file_hash)
             return file_hash
-        except (OSError, IOError):
+        except OSError:
             return fallback_val
 
-    def _resolve_target(self, target: Optional[str], pr: str) -> Tuple[Optional[str], Optional[SectionCard], Optional[str]]:
+    def _resolve_target(
+        self, target: str | None, pr: str
+    ) -> tuple[str | None, SectionCard | None, str | None]:
         """Resolves target string to (card_key, card, path)."""
         if not target:
             return None, None, None
@@ -79,7 +90,9 @@ class ContextPackGenerator:
         if not self.section_cards or not self.section_cards.sections:
             # Fallback path check if target is a path
             test_path = Path(pr) / target
-            if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
+            if test_path.is_file() or target.endswith(
+                (".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")
+            ):
                 return None, None, target
             return None, None, None
 
@@ -104,17 +117,23 @@ class ContextPackGenerator:
             # Check card title (case-insensitive)
             if card.title and card.title.lower() == target_lower:
                 return key, card, card.path
-            
+
             # Check card path (stem or path matching)
             if card.path:
                 card_path = Path(card.path)
                 # match stem (e.g. abstract to abstract.tex) or exact path or name
-                if card_path.stem.lower() == target_lower or card_path.name.lower() == target_lower or card.path.lower() == target_lower:
+                if (
+                    card_path.stem.lower() == target_lower
+                    or card_path.name.lower() == target_lower
+                    or card.path.lower() == target_lower
+                ):
                     return key, card, card.path
 
         # 5. Check if target is a file path in the workspace
         test_path = Path(pr) / target
-        if test_path.is_file() or target.endswith((".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")):
+        if test_path.is_file() or target.endswith(
+            (".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")
+        ):
             return None, None, target
 
         return None, None, None
@@ -122,10 +141,15 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Fix 4: Query builder
     # -----------------------------------------------------------------------
-    def _build_queries(self, task: str, target: Optional[str],
-                       must_consider: List[str], task_type: Optional[str] = None,
-                       pack_mode: Optional[str] = None,
-                       has_line_range: bool = False) -> Tuple[List[str], Optional[SectionCard], List[SectionCard], Dict[str, str]]:
+    def _build_queries(
+        self,
+        task: str,
+        target: str | None,
+        must_consider: list[str],
+        task_type: str | None = None,
+        pack_mode: str | None = None,
+        has_line_range: bool = False,
+    ) -> tuple[list[str], SectionCard | None, list[SectionCard], dict[str, str]]:
         """Returns (queries, target_card, dep_cards, query_type_map).
 
         query_type_map maps each query string to one of:
@@ -137,10 +161,10 @@ class ContextPackGenerator:
           'must_consider'— explicit user override
           'thesis'       - document thesis
         """
-        queries: List[str] = []
-        query_type_map: Dict[str, str] = {}
-        target_card: Optional[SectionCard] = None
-        dep_cards: List[SectionCard] = []
+        queries: list[str] = []
+        query_type_map: dict[str, str] = {}
+        target_card: SectionCard | None = None
+        dep_cards: list[SectionCard] = []
 
         def _add(q: str, qtype: str):
             if q and q not in query_type_map:
@@ -163,7 +187,7 @@ class ContextPackGenerator:
                     _add(target_card.role, "intent")
                 if target_card.title:
                     _add(target_card.title, "title")
-                
+
                 # Align with previous sections scales down target key terms
                 if task_type == "align_with_previous_sections":
                     max_kt = 2
@@ -181,7 +205,7 @@ class ContextPackGenerator:
                     _add(target_card.title, "title")
 
             # 4. Dependency section intents, titles and key terms (skip key terms if minimal)
-            for dep_id in (target_card.depends_on or []):
+            for dep_id in target_card.depends_on or []:
                 if dep_id in self.section_cards.sections:
                     dep_card = self.section_cards.sections[dep_id]
                     dep_cards.append(dep_card)
@@ -189,7 +213,7 @@ class ContextPackGenerator:
                         _add(dep_card.role, "dep_intent")
                     if dep_card.title:
                         _add(dep_card.title, "dep_title")
-                    
+
                     if pack_mode != "minimal":
                         max_dep_kt = 6 if pack_mode == "deep" else 3
                         for kt in (dep_card.key_terms or [])[:max_dep_kt]:
@@ -209,7 +233,7 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Deduplication
     # -----------------------------------------------------------------------
-    def _deduplicate_spans(self, candidates: List[SourceSpan]) -> List[SourceSpan]:
+    def _deduplicate_spans(self, candidates: list[SourceSpan]) -> list[SourceSpan]:
         if not candidates:
             return []
 
@@ -224,7 +248,7 @@ class ContextPackGenerator:
             # Sort spans by line_start
             spans.sort(key=lambda x: (x.line_start or 1, x.line_end or x.line_start or 1))
 
-            current_merged: List[SourceSpan] = []
+            current_merged: list[SourceSpan] = []
             for span in spans:
                 if not current_merged:
                     current_merged.append(span)
@@ -240,7 +264,7 @@ class ContextPackGenerator:
                 # If current interval starts within or adjacent to previous interval
                 if curr_start <= prev_end + 1:
                     new_end = max(prev_end, curr_end)
-                    
+
                     # Combine reasons
                     reasons = []
                     for r in [prev.reason, span.reason]:
@@ -261,7 +285,7 @@ class ContextPackGenerator:
                     # Reconstruct merged snippet
                     prev_snippet = (prev.metadata or {}).get("snippet", "") if prev.metadata else ""
                     curr_snippet = (span.metadata or {}).get("snippet", "") if span.metadata else ""
-                    
+
                     prev_lines = prev_snippet.splitlines() if prev_snippet else []
                     curr_lines = curr_snippet.splitlines() if curr_snippet else []
 
@@ -290,10 +314,25 @@ class ContextPackGenerator:
 
                     # Combine priority and role based on hierarchy
                     priority_order = {"essential": 3, "supporting": 2, "background": 1}
-                    role_order = {"target_text": 4, "local_context": 3, "dependency": 2, "reference": 1}
-                    
-                    merged_priority = prev.priority if priority_order.get(prev.priority, 0) >= priority_order.get(span.priority, 0) else span.priority
-                    merged_role = prev.source_role if role_order.get(prev.source_role, 0) >= role_order.get(span.source_role, 0) else span.source_role
+                    role_order = {
+                        "target_text": 4,
+                        "local_context": 3,
+                        "dependency": 2,
+                        "reference": 1,
+                    }
+
+                    merged_priority = (
+                        prev.priority
+                        if priority_order.get(prev.priority, 0)
+                        >= priority_order.get(span.priority, 0)
+                        else span.priority
+                    )
+                    merged_role = (
+                        prev.source_role
+                        if role_order.get(prev.source_role, 0)
+                        >= role_order.get(span.source_role, 0)
+                        else span.source_role
+                    )
 
                     # Replace the last element with the merged span
                     current_merged[-1] = SourceSpan(
@@ -305,7 +344,7 @@ class ContextPackGenerator:
                         priority=merged_priority,
                         query=combined_query,
                         metadata=merged_meta,
-                        source_role=merged_role
+                        source_role=merged_role,
                     )
                 else:
                     current_merged.append(span)
@@ -319,9 +358,12 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Fix 3: Score filtering with structural override
     # -----------------------------------------------------------------------
-    def _filter_by_score(self, candidates: List[SourceSpan],
-                         target_card: Optional[SectionCard],
-                         dep_cards: List[SectionCard]) -> Tuple[List[SourceSpan], int]:
+    def _filter_by_score(
+        self,
+        candidates: list[SourceSpan],
+        target_card: SectionCard | None,
+        dep_cards: list[SectionCard],
+    ) -> tuple[list[SourceSpan], int]:
         if not candidates:
             return [], 0
 
@@ -337,7 +379,7 @@ class ContextPackGenerator:
             if dc.path:
                 target_paths.add(dc.path)
 
-        kept: List[SourceSpan] = []
+        kept: list[SourceSpan] = []
         discarded = 0
         for c in candidates:
             if c.score >= threshold:
@@ -353,14 +395,15 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Avoid filter (from section_card.avoid list)
     # -----------------------------------------------------------------------
-    def _filter_avoid(self, candidates: List[SourceSpan],
-                      target_card: Optional[SectionCard]) -> Tuple[List[SourceSpan], int]:
+    def _filter_avoid(
+        self, candidates: list[SourceSpan], target_card: SectionCard | None
+    ) -> tuple[list[SourceSpan], int]:
         """Remove spans whose snippet matches any phrase in the section's avoid list."""
         avoid_phrases = (target_card.avoid or []) if target_card else []
         if not avoid_phrases:
             return candidates, 0
 
-        kept: List[SourceSpan] = []
+        kept: list[SourceSpan] = []
         discarded = 0
         for span in candidates:
             snippet = ((span.metadata or {}).get("snippet") or "").lower()
@@ -391,14 +434,19 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Main generate()
     # -----------------------------------------------------------------------
-    def generate(self, task: str, target: Optional[str], token_budget: int,
-                 must_consider: Optional[List[str]] = None,
-                 project_root: Optional[str] = None,
-                 task_type: Optional[str] = None,
-                 line_start: Optional[int] = None,
-                 line_end: Optional[int] = None,
-                 pack_mode: Optional[str] = None,
-                 role_budgets: Optional[Dict[str, float]] = None) -> ContextPack:
+    def generate(
+        self,
+        task: str,
+        target: str | None,
+        token_budget: int,
+        must_consider: list[str] | None = None,
+        project_root: str | None = None,
+        task_type: str | None = None,
+        line_start: int | None = None,
+        line_end: int | None = None,
+        pack_mode: str | None = None,
+        role_budgets: dict[str, float] | None = None,
+    ) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
         task_type = task_type or "write_new_section"
@@ -414,7 +462,7 @@ class ContextPackGenerator:
             max_spans = self.config.context.max_source_spans
 
         # --- Diagnostics setup (Fix 7) ---
-        warnings: List[str] = []
+        warnings: list[str] = []
         status = "complete"
         quality = PackQuality(
             project_root=pr,
@@ -428,17 +476,21 @@ class ContextPackGenerator:
                 "Ranking used retrieval score only."
             )
             if not target:
-                warnings.append("No --target provided. Query expansion is limited to raw task string.")
+                warnings.append(
+                    "No --target provided. Query expansion is limited to raw task string."
+                )
 
         # --- Cache check ---
         task_hash = compute_task_hash(
-            task, target, token_budget,
+            task,
+            target,
+            token_budget,
             task_type=task_type,
             line_start=line_start,
             line_end=line_end,
-            pack_mode=pack_mode
+            pack_mode=pack_mode,
         )
-        
+
         # Calculate real config file content hash
         config_path = Path(self.config.rtfm.project_root) / ".writing-context" / "config.yaml"
         config_hash = self._get_file_hash(config_path, stable_hash(str(self.config.version)))
@@ -468,7 +520,7 @@ class ContextPackGenerator:
                         task_hash=task_hash,
                         config_hash=config_hash,
                         section_cards_hash=sc_hash,
-                        rtfm_index_fingerprint=fingerprint
+                        rtfm_index_fingerprint=fingerprint,
                     )
                 return ContextPack(
                     task=cached["task"],
@@ -486,17 +538,19 @@ class ContextPackGenerator:
                     run_id=cached.get("run_id"),
                     cache=cd,
                     task_type=cached.get("task_type"),
-                    pack_mode=cached.get("pack_mode")
+                    pack_mode=cached.get("pack_mode"),
                 )
 
         # --- Target Line Range Resolution ---
         resolved_key, target_card, target_path = self._resolve_target(target, pr)
 
-        all_candidates: List[SourceSpan] = []
+        all_candidates: list[SourceSpan] = []
         lines_prepended = False
         if line_start is not None and line_end is not None:
             if not target_path:
-                warnings.append("line_start and line_end provided but target file path could not be resolved.")
+                warnings.append(
+                    "line_start and line_end provided but target file path could not be resolved."
+                )
                 status = "degraded"
             else:
                 try:
@@ -505,14 +559,14 @@ class ContextPackGenerator:
                         file_content = full_path.read_text(encoding="utf-8", errors="replace")
                         lines = file_content.splitlines()
                         num_lines = len(lines)
-                        
+
                         start = max(1, min(line_start, num_lines))
                         end = max(1, min(line_end, num_lines))
                         if start > end:
                             start, end = end, start
-                            
+
                         # Extract target text span
-                        target_snippet = "\n".join(lines[start-1:end])
+                        target_snippet = "\n".join(lines[start - 1 : end])
                         target_span = SourceSpan(
                             path=target_path,
                             line_start=start,
@@ -521,15 +575,15 @@ class ContextPackGenerator:
                             score=1.0,
                             priority="essential",
                             source_role="target_text",
-                            metadata={"snippet": target_snippet}
+                            metadata={"snippet": target_snippet},
                         )
                         all_candidates.append(target_span)
-                        
+
                         # Local context before
                         if start > 1:
                             ctx_start = max(1, start - 15)
                             ctx_end = start - 1
-                            before_snippet = "\n".join(lines[ctx_start-1:ctx_end])
+                            before_snippet = "\n".join(lines[ctx_start - 1 : ctx_end])
                             before_span = SourceSpan(
                                 path=target_path,
                                 line_start=ctx_start,
@@ -538,15 +592,15 @@ class ContextPackGenerator:
                                 score=0.9,
                                 priority="supporting",
                                 source_role="local_context",
-                                metadata={"snippet": before_snippet}
+                                metadata={"snippet": before_snippet},
                             )
                             all_candidates.append(before_span)
-                            
+
                         # Local context after
                         if end < num_lines:
                             ctx_start = end + 1
                             ctx_end = min(num_lines, end + 15)
-                            after_snippet = "\n".join(lines[ctx_start-1:ctx_end])
+                            after_snippet = "\n".join(lines[ctx_start - 1 : ctx_end])
                             after_span = SourceSpan(
                                 path=target_path,
                                 line_start=ctx_start,
@@ -555,13 +609,15 @@ class ContextPackGenerator:
                                 score=0.9,
                                 priority="supporting",
                                 source_role="local_context",
-                                metadata={"snippet": after_snippet}
+                                metadata={"snippet": after_snippet},
                             )
                             all_candidates.append(after_span)
-                            
+
                         lines_prepended = True
                     else:
-                        warnings.append(f"Target file '{target_path}' not found for line range extraction.")
+                        warnings.append(
+                            f"Target file '{target_path}' not found for line range extraction."
+                        )
                         status = "degraded"
                 except Exception as e:
                     warnings.append(f"Failed to read target file '{target_path}': {e}")
@@ -569,10 +625,12 @@ class ContextPackGenerator:
 
         # --- Query expansion (Fix 4) ---
         queries, target_card, dep_cards, query_type_map = self._build_queries(
-            task, resolved_key or target, must_consider,
+            task,
+            resolved_key or target,
+            must_consider,
             task_type=task_type,
             pack_mode=pack_mode,
-            has_line_range=lines_prepended
+            has_line_range=lines_prepended,
         )
         quality.queries_issued = len(queries)
 
@@ -582,15 +640,17 @@ class ContextPackGenerator:
                 results = self.adapter.search(
                     q,
                     corpus=self.config.rtfm.corpus,
-                    limit=self.config.context.max_search_results_per_query
+                    limit=self.config.context.max_search_results_per_query,
                 )
                 for r in results:
-                    if not is_allowed_source(r.path):          # Fix 2
+                    if not is_allowed_source(r.path):  # Fix 2
                         quality.discarded_excluded_path += 1
                         continue
                     # Combined scoring with query-type scoping
                     query_type = query_type_map.get(q, "task_keyword")
-                    score = self._compute_final_score(r, target_card, dep_cards, must_consider, q, query_type, task_type=task_type)
+                    score = self._compute_final_score(
+                        r, target_card, dep_cards, must_consider, q, query_type, task_type=task_type
+                    )
                     span = SourceSpan(
                         path=r.path,
                         line_start=r.line_start,
@@ -598,7 +658,7 @@ class ContextPackGenerator:
                         reason=self._build_reason(r, target_card, dep_cards, query_type, q),
                         score=score,
                         query=q,
-                        metadata={**(r.metadata or {}), "snippet": r.snippet}
+                        metadata={**(r.metadata or {}), "snippet": r.snippet},
                     )
                     all_candidates.append(span)
             except Exception as e:
@@ -609,9 +669,11 @@ class ContextPackGenerator:
             if provider.is_available(self.config):
                 try:
                     p_spans = provider.fetch_context(
-                        queries, target, limit=max_spans, 
-                        query_type_map=query_type_map, 
-                        task_type=task_type
+                        queries,
+                        target,
+                        limit=max_spans,
+                        query_type_map=query_type_map,
+                        task_type=task_type,
                     )
                     all_candidates.extend(p_spans)
                 except Exception as e:
@@ -638,20 +700,22 @@ class ContextPackGenerator:
 
         # --- Classify priority and roles BEFORE selection so we have source_role populated ---
         filtered = self._classify_priority(
-            filtered, target_card, dep_cards,
+            filtered,
+            target_card,
+            dep_cards,
             target_path=target_path,
             line_start=line_start,
-            line_end=line_end
+            line_end=line_end,
         )
 
         # --- Token budget selection ---
         usable_budget = int(token_budget * (1.0 - self.config.context.reserved_generation_margin))
-        selected: List[SourceSpan] = []
+        selected: list[SourceSpan] = []
         current_tokens = 0
-        tokens_by_role = {r: 0 for r in resolved_budgets}
+        tokens_by_role = dict.fromkeys(resolved_budgets, 0)
 
         # Pass 1: Strict allocation based on role fractions (soft guidance)
-        pass2_candidates: List[SourceSpan] = []
+        pass2_candidates: list[SourceSpan] = []
         for span in filtered:
             role = span.source_role
             est = self._estimate_tokens(span)
@@ -672,7 +736,7 @@ class ContextPackGenerator:
                 cap_truncated = True
                 budget_dropped += 1
                 continue
-            
+
             est = self._estimate_tokens(span)
             selected.append(span)
             current_tokens += est
@@ -703,8 +767,8 @@ class ContextPackGenerator:
             )
 
         # --- Build pack metadata ---
-        constraints: List[str] = []
-        doc_thesis: Optional[str] = None
+        constraints: list[str] = []
+        doc_thesis: str | None = None
         if self.section_cards:
             doc_thesis = self.section_cards.document.thesis
             if target_card:
@@ -717,8 +781,12 @@ class ContextPackGenerator:
         if doc_thesis:
             constraint_tokens += estimate_tokens(doc_thesis)
 
-        terminology_pack: Dict[str, str] = {}
-        if self.section_cards and self.section_cards.document and self.section_cards.document.terminology:
+        terminology_pack: dict[str, str] = {}
+        if (
+            self.section_cards
+            and self.section_cards.document
+            and self.section_cards.document.terminology
+        ):
             glossary = self.section_cards.document.terminology
             key_terms = []
             if target_card and target_card.key_terms:
@@ -726,7 +794,7 @@ class ContextPackGenerator:
             for dc in dep_cards:
                 if dc.key_terms:
                     key_terms.extend(dc.key_terms)
-            
+
             canonical_lookup = {}
             variant_lookup = {}
             for canonical_term, details in glossary.items():
@@ -752,7 +820,10 @@ class ContextPackGenerator:
         quality.estimated_tokens = total_tokens
 
         run_id = str(uuid.uuid4())
-        has_degrading = any(not w.startswith("LaTeX Safety:") and not w.startswith("Note: The retrieved context") for w in warnings)
+        has_degrading = any(
+            not w.startswith("LaTeX Safety:") and not w.startswith("Note: The retrieved context")
+            for w in warnings
+        )
         status_str = "degraded" if (has_degrading or status == "degraded") else "complete"
 
         pack = ContextPack(
@@ -775,10 +846,10 @@ class ContextPackGenerator:
                 task_hash=task_hash,
                 config_hash=config_hash,
                 section_cards_hash=sc_hash,
-                rtfm_index_fingerprint=fingerprint
+                rtfm_index_fingerprint=fingerprint,
             ),
             task_type=task_type,
-            pack_mode=pack_mode
+            pack_mode=pack_mode,
         )
 
         # --- Cache write ---
@@ -791,10 +862,10 @@ class ContextPackGenerator:
                 "token_budget": token_budget,
                 "config_hash": config_hash,
                 "section_cards_hash": sc_hash,
-                "rtfm_index_fingerprint": fingerprint
+                "rtfm_index_fingerprint": fingerprint,
             }
             payload = asdict(pack)
-            
+
             sources_to_store = []
             for s in selected:
                 d = asdict(s)
@@ -805,7 +876,7 @@ class ContextPackGenerator:
                 d = asdict(s)
                 d["selected"] = 0
                 sources_to_store.append(d)
-                
+
             self.store.store_pack(run_id, run_data, payload, sources_to_store)
 
         return pack
@@ -813,10 +884,16 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Combined scoring with query-type scoping
     # -----------------------------------------------------------------------
-    def _compute_final_score(self, result: RTFMResult, target_card: Optional[SectionCard],
-                               dep_cards: List[SectionCard], must_consider: List[str],
-                               query: str, query_type: str = "task",
-                               task_type: Optional[str] = None) -> float:
+    def _compute_final_score(
+        self,
+        result: RTFMResult,
+        target_card: SectionCard | None,
+        dep_cards: list[SectionCard],
+        must_consider: list[str],
+        query: str,
+        query_type: str = "task",
+        task_type: str | None = None,
+    ) -> float:
         score = 0.0
         path_lower = result.path.replace("\\", "/").lower()
         content = result.snippet or ""
@@ -859,14 +936,15 @@ class ContextPackGenerator:
         score += 0.5 * min(kw_hits, 3)
 
         # Key-term overlap in content (+0.3 each, up to 3)
-        all_key_terms: List[str] = []
+        all_key_terms: list[str] = []
         if target_card and target_card.key_terms:
             all_key_terms.extend(target_card.key_terms)
         for dc in dep_cards:
             if dc.key_terms:
                 all_key_terms.extend(dc.key_terms)
-        kt_hits = sum(1 for t in all_key_terms
-                      if t.lower() in content.lower() or t.lower() in path_lower)
+        kt_hits = sum(
+            1 for t in all_key_terms if t.lower() in content.lower() or t.lower() in path_lower
+        )
         score += 0.3 * min(kt_hits, 3)
 
         # Explicit must-consider (+1.0)
@@ -883,8 +961,13 @@ class ContextPackGenerator:
     # Semantic reason string
     # -----------------------------------------------------------------------
     @staticmethod
-    def _build_reason(result: RTFMResult, target_card: Optional[SectionCard],
-                       dep_cards: List[SectionCard], query_type: str, query: str) -> str:
+    def _build_reason(
+        result: RTFMResult,
+        target_card: SectionCard | None,
+        dep_cards: list[SectionCard],
+        query_type: str,
+        query: str,
+    ) -> str:
         result.path.replace("\\", "/").lower()
         chapter = (result.metadata or {}).get("chapter_title") or ""
 
@@ -892,11 +975,19 @@ class ContextPackGenerator:
             return f"Target section — {chapter}" if chapter else "Target section"
         for dc in dep_cards:
             if _path_matches(result.path, dc.path):
-                return f"Dependency section '{dc.title or dc.id}' — {chapter}" if chapter else f"Dependency '{dc.id}'"
+                return (
+                    f"Dependency section '{dc.title or dc.id}' — {chapter}"
+                    if chapter
+                    else f"Dependency '{dc.id}'"
+                )
         if query_type == "key_term":
             return f"Key term '{query}' match — {chapter}" if chapter else f"Key term '{query}'"
         if query_type == "dep_key_term":
-            return f"Dependency key term '{query}' match — {chapter}" if chapter else f"Dependency key term '{query}'"
+            return (
+                f"Dependency key term '{query}' match — {chapter}"
+                if chapter
+                else f"Dependency key term '{query}'"
+            )
         if query_type in ("title", "dep_title"):
             return f"Section title match — {chapter}" if chapter else "Section title match"
         return f"Task query match — {chapter}" if chapter else f"Matched query: {query}"
@@ -904,12 +995,15 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Priority classification
     # -----------------------------------------------------------------------
-    def _classify_priority(self, spans: List[SourceSpan],
-                           target_card: Optional[SectionCard],
-                           dep_cards: List[SectionCard],
-                           target_path: Optional[str] = None,
-                           line_start: Optional[int] = None,
-                           line_end: Optional[int] = None) -> List[SourceSpan]:
+    def _classify_priority(
+        self,
+        spans: list[SourceSpan],
+        target_card: SectionCard | None,
+        dep_cards: list[SectionCard],
+        target_path: str | None = None,
+        line_start: int | None = None,
+        line_end: int | None = None,
+    ) -> list[SourceSpan]:
         """Assign priority: essential | supporting | background and source_role: target_text | local_context | dependency | reference."""
         if not spans:
             return spans
@@ -920,7 +1014,7 @@ class ContextPackGenerator:
 
         dep_paths = {dc.path for dc in dep_cards if dc.path}
         top_score = max(s.score for s in spans)
-        high_threshold = top_score * 0.4   # top 40% of score range = essential
+        high_threshold = top_score * 0.4  # top 40% of score range = essential
 
         result = []
         for span in spans:
@@ -935,7 +1029,7 @@ class ContextPackGenerator:
                 if line_start is not None and line_end is not None:
                     span_start = span.line_start if span.line_start is not None else 1
                     span_end = span.line_end if span.line_end is not None else (span_start + 30)
-                    
+
                     target_s = line_start
                     target_e = line_end
                     local_s = max(1, line_start - 15)
@@ -956,30 +1050,26 @@ class ContextPackGenerator:
 
             # Determine priority
             if role == "target_text":
-                if span.score >= high_threshold:
-                    priority = "essential"
-                else:
-                    priority = "supporting"
+                priority = "essential" if span.score >= high_threshold else "supporting"
             elif role == "local_context" or role == "dependency":
                 priority = "supporting"
             else:
-                if span.score >= high_threshold:
-                    priority = "supporting"
-                else:
-                    priority = "background"
+                priority = "supporting" if span.score >= high_threshold else "background"
 
             if span.priority == "essential":
                 priority = "essential"
 
-            result.append(SourceSpan(
-                path=span.path,
-                line_start=span.line_start,
-                line_end=span.line_end,
-                reason=span.reason,
-                score=span.score,
-                priority=priority,
-                query=span.query,
-                metadata=span.metadata,
-                source_role=role
-            ))
+            result.append(
+                SourceSpan(
+                    path=span.path,
+                    line_start=span.line_start,
+                    line_end=span.line_end,
+                    reason=span.reason,
+                    score=span.score,
+                    priority=priority,
+                    query=span.query,
+                    metadata=span.metadata,
+                    source_role=role,
+                )
+            )
         return result

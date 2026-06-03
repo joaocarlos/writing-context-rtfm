@@ -1,10 +1,18 @@
-import pytest
 from unittest.mock import MagicMock
 
-from writing_context_rtfm.config import AppConfig, RTFMConfig, CacheConfig, ContextConfig, SectionCardsConfig
-from writing_context_rtfm.section_cards import SectionCards, DocumentCard, SectionCard
+import pytest
+
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
 from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.schemas import RTFMResult
+from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
+
 
 @pytest.fixture
 def mock_config(tmp_path):
@@ -13,8 +21,9 @@ def mock_config(tmp_path):
         rtfm=RTFMConfig(corpus="test_corpus", project_root=str(tmp_path)),
         context=ContextConfig(),
         cache=CacheConfig(path=str(tmp_path / "cache.sqlite")),
-        section_cards=SectionCardsConfig(path=str(tmp_path / "sections.yaml"))
+        section_cards=SectionCardsConfig(path=str(tmp_path / "sections.yaml")),
     )
+
 
 @pytest.fixture
 def mock_section_cards():
@@ -27,10 +36,11 @@ def mock_section_cards():
                 title="Introduction",
                 path="intro.tex",
                 must_preserve=["Preserve this core claim."],
-                constraints=["Use active voice."]
+                constraints=["Use active voice."],
             )
-        }
+        },
     )
+
 
 @pytest.fixture
 def mock_adapter():
@@ -43,14 +53,16 @@ def mock_adapter():
             line_end=12,
             snippet="Prior usage of the term.",
             score=0.9,
-            metadata={}
+            metadata={},
         )
     ]
     return adapter
 
+
 @pytest.fixture
 def mock_store():
     return MagicMock()
+
 
 @pytest.fixture
 def test_file(tmp_path):
@@ -66,57 +78,57 @@ def test_file(tmp_path):
     p.write_text(content)
     return str(p)
 
-def test_proofread_pack_generation(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+
+def test_proofread_pack_generation(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
     generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
-    
+
     pack = generator.generate(
-        target_file=test_file,
-        line_start=3,
-        line_end=4,
-        mode="latex_safe",
-        strictness="assertive"
+        target_file=test_file, line_start=3, line_end=4, mode="latex_safe", strictness="assertive"
     )
-    
+
     assert pack.target.file_path == test_file
     assert pack.target.line_start == 3
     assert pack.target.line_end == 4
     assert pack.target.section_id == "intro"
-    
+
     # Context extraction
     assert "target paragraph line 1" in pack.local_context.target_span
     assert "target paragraph line 2" in pack.local_context.target_span
     assert pack.local_context.previous_paragraph == "This is the first paragraph."
     assert pack.local_context.next_paragraph == "This is the last paragraph."
-    
+
     # Constraints
     assert pack.constraints.mode == "latex_safe"
     assert "Preserve LaTeX commands" in pack.constraints.general_rules[0]
-    assert "Preserve key claim: Preserve this core claim." in pack.constraints.section_specific_rules
+    assert (
+        "Preserve key claim: Preserve this core claim." in pack.constraints.section_specific_rules
+    )
     assert "Use active voice." in pack.constraints.section_specific_rules
-    
+
     # Terminology
     assert len(pack.constraints.terminology) > 0
     assert pack.constraints.terminology[0].term in pack.local_context.target_span.lower()
     assert "Prior usage" in pack.constraints.terminology[0].usage_examples[0]
 
-def test_token_budget_degraded(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+
+def test_token_budget_degraded(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
     generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
-    
+
     # Set a very low max_tokens
-    pack = generator.generate(
-        target_file=test_file,
-        line_start=3,
-        line_end=4,
-        max_tokens=10
-    )
-    
+    pack = generator.generate(target_file=test_file, line_start=3, line_end=4, max_tokens=10)
+
     assert pack.status == "complete"
     assert any("exceeds the requested max_tokens" in w for w in pack.warnings)
     assert pack.estimated_tokens > 10
 
+
 def test_exclusion_rules(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
     generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
-    
+
     # Mock search result with excluded path
     mock_adapter.search.return_value = [
         RTFMResult(
@@ -125,7 +137,7 @@ def test_exclusion_rules(mock_config, mock_section_cards, mock_adapter, mock_sto
             line_end=1,
             snippet="Should be excluded",
             score=1.0,
-            metadata={}
+            metadata={},
         ),
         RTFMResult(
             path="valid.tex",
@@ -133,95 +145,113 @@ def test_exclusion_rules(mock_config, mock_section_cards, mock_adapter, mock_sto
             line_end=1,
             snippet="Should be included",
             score=0.9,
-            metadata={}
-        )
+            metadata={},
+        ),
     ]
-    
+
     pack = generator.generate(test_file, 3, 4)
-    
+
     # Check that terminology usage only comes from valid.tex
     for term_const in pack.constraints.terminology:
         for usage in term_const.usage_examples:
             assert usage != "Should be excluded"
 
-def test_proofread_clamping_bounds(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+
+def test_proofread_clamping_bounds(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
     generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
-    
+
     # 0 start line should clamp to 1; 999 end line should clamp to file line count (6)
     pack = generator.generate(
         target_file=test_file,
         line_start=0,
         line_end=999,
     )
-    
+
     assert pack.target.line_start == 1
     assert pack.target.line_end == 6
     assert "This is the first paragraph." in pack.local_context.target_span
     assert "This is the last paragraph." in pack.local_context.target_span
 
-def test_proofread_adapter_search_exception(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
+
+def test_proofread_adapter_search_exception(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
     generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
-    
+
     # Force search to raise an exception
     mock_adapter.search.side_effect = Exception("RTFM search failed")
-    
+
     pack = generator.generate(test_file, 3, 4)
-    
+
     # Verify the pack is generated successfully despite search failure
     assert pack.target.file_path == test_file
     assert len(pack.constraints.terminology) == 0
     assert any("RTFM search failed" in w for w in pack.warnings)
 
 
-def test_server_handle_proofread_latex_safety_status(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
-    from writing_context_rtfm.server import handle_get_proofreading_context_pack
+def test_server_handle_proofread_latex_safety_status(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
     import json
     from unittest.mock import patch
+
+    from writing_context_rtfm.server import handle_get_proofreading_context_pack
 
     # Ensure that there is a LaTeX command in the target text (line 4 has \cite{ref})
     # This will trigger a "LaTeX Safety: ..." warning.
     with patch("writing_context_rtfm.server._load_runtime") as mock_load:
         mock_load.return_value = (mock_config, mock_section_cards, [], mock_adapter, mock_store)
-        
+
         args = {
             "target_file": test_file,
             "line_start": 4,
             "line_end": 4,
             "mode": "latex_safe",
-            "strictness": "moderate"
+            "strictness": "moderate",
         }
-        
+
         resp = handle_get_proofreading_context_pack(args)
         assert "content" in resp
         payload = json.loads(resp["content"][0]["text"])
-        
+
         # Check that the LaTeX Safety warning is present
         assert any(w.startswith("LaTeX Safety:") for w in payload["warnings"])
         # Check that status remains "complete" because the only warning is LaTeX Safety
         assert payload["status"] == "complete"
 
 
-def test_server_handle_proofread_real_warning_status(mock_config, mock_section_cards, mock_adapter, mock_store, test_file):
-    from writing_context_rtfm.server import handle_get_proofreading_context_pack
+def test_server_handle_proofread_real_warning_status(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
     import json
     from unittest.mock import patch
 
+    from writing_context_rtfm.server import handle_get_proofreading_context_pack
+
     with patch("writing_context_rtfm.server._load_runtime") as mock_load:
         # Pass a card warning "Invalid card structure"
-        mock_load.return_value = (mock_config, mock_section_cards, ["Invalid card structure"], mock_adapter, mock_store)
-        
+        mock_load.return_value = (
+            mock_config,
+            mock_section_cards,
+            ["Invalid card structure"],
+            mock_adapter,
+            mock_store,
+        )
+
         args = {
             "target_file": test_file,
             "line_start": 4,
             "line_end": 4,
             "mode": "latex_safe",
-            "strictness": "moderate"
+            "strictness": "moderate",
         }
-        
+
         resp = handle_get_proofreading_context_pack(args)
         assert "content" in resp
         payload = json.loads(resp["content"][0]["text"])
-        
+
         # Check that the LaTeX Safety warning is present
         assert any(w.startswith("LaTeX Safety:") for w in payload["warnings"])
         # Check that the card warning is present

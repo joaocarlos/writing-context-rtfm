@@ -4,6 +4,7 @@ Pytest configuration for the tests package.
 Adds the `tests/` directory to sys.path so that intra-test helper packages
 (e.g. `eval.rubric`, `eval.metrics`) can be imported without an install step.
 """
+
 import sys
 from pathlib import Path
 

@@ -1,14 +1,16 @@
-import os
 import json
+import os
 import unittest
-import yaml
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.features import initialize_section_cards, audit_manuscript_terminology
-from writing_context_rtfm.server import process_message
+import yaml
+
 from writing_context_rtfm.config import load_config
+from writing_context_rtfm.features import audit_manuscript_terminology, initialize_section_cards
+from writing_context_rtfm.server import process_message
+from writing_context_rtfm.storage import ExtensionStore
+
 
 class TestNewFeatures(unittest.TestCase):
     def setUp(self):
@@ -17,12 +19,13 @@ class TestNewFeatures(unittest.TestCase):
         self.store.init_db()
         self.project_dir = Path("test_project_temp")
         self.project_dir.mkdir(exist_ok=True)
-        
+
     def tearDown(self):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
         # Clean up temporary project directory
         import shutil
+
         if self.project_dir.exists():
             shutil.rmtree(self.project_dir)
 
@@ -36,13 +39,37 @@ class TestNewFeatures(unittest.TestCase):
             "token_budget": 1000,
             "config_hash": "cfg",
             "section_cards_hash": "sc",
-            "rtfm_index_fingerprint": "print"
+            "rtfm_index_fingerprint": "print",
         }
         payload = {"task": "write summary", "estimated_tokens": 100}
         sources = [
-            {"path": "selected.md", "line_start": 1, "line_end": 5, "score": 0.9, "reason": "R1", "query": "q", "selected": 1},
-            {"path": "unselected.md", "line_start": 6, "line_end": 10, "score": 0.8, "reason": "R2", "query": "q", "selected": 0},
-            {"path": "unselected2.md", "line_start": 11, "line_end": 15, "score": 0.7, "reason": "R3", "query": "q", "selected": 0}
+            {
+                "path": "selected.md",
+                "line_start": 1,
+                "line_end": 5,
+                "score": 0.9,
+                "reason": "R1",
+                "query": "q",
+                "selected": 1,
+            },
+            {
+                "path": "unselected.md",
+                "line_start": 6,
+                "line_end": 10,
+                "score": 0.8,
+                "reason": "R2",
+                "query": "q",
+                "selected": 0,
+            },
+            {
+                "path": "unselected2.md",
+                "line_start": 11,
+                "line_end": 15,
+                "score": 0.7,
+                "reason": "R3",
+                "query": "q",
+                "selected": 0,
+            },
         ]
         self.store.store_pack(run_id, run_data, payload, sources)
 
@@ -59,7 +86,10 @@ class TestNewFeatures(unittest.TestCase):
         self.store.submit_feedback(run_id, "helpfulness", 1.0, "Very accurate context")
         with self.store._connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT metric_name, metric_value, metric_text FROM evaluation_records WHERE run_id=?", (run_id,))
+            cur.execute(
+                "SELECT metric_name, metric_value, metric_text FROM evaluation_records WHERE run_id=?",
+                (run_id,),
+            )
             row = cur.fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row["metric_name"], "helpfulness")
@@ -70,18 +100,18 @@ class TestNewFeatures(unittest.TestCase):
         # Create a mock file structure
         (self.project_dir / "intro.md").write_text("# Intro")
         (self.project_dir / "methods.tex").write_text("Methods content")
-        
+
         # Call initialization
         res = initialize_section_cards(str(self.project_dir))
         self.assertEqual(res["status"], "success")
         self.assertEqual(res["total_sections"], 2)
-        
+
         # Verify the generated section cards YAML
         yaml_path = self.project_dir / ".writing-context" / "section_cards.yaml"
         self.assertTrue(yaml_path.exists())
-        with open(yaml_path, "r") as f:
+        with open(yaml_path) as f:
             data = yaml.safe_load(f)
-            
+
         sections = data["sections"]
         self.assertIn("section_intro", sections)
         self.assertIn("section_methods", sections)
@@ -104,7 +134,7 @@ class TestNewFeatures(unittest.TestCase):
             "document": {
                 "title": "Mock Manuscript",
                 "thesis": "Thesis",
-                "writing_style": {"tone": "academic", "avoid": []}
+                "writing_style": {"tone": "academic", "avoid": []},
             },
             "sections": {
                 "section_intro": {
@@ -112,9 +142,9 @@ class TestNewFeatures(unittest.TestCase):
                     "role": "Intro",
                     "path": "intro.md",
                     "key_terms": ["quantization", "micro-controller"],
-                    "depends_on": []
+                    "depends_on": [],
                 }
-            }
+            },
         }
         with open(sc_file, "w") as f:
             yaml.safe_dump(sc_content, f)
@@ -129,8 +159,10 @@ class TestNewFeatures(unittest.TestCase):
         mock_result.line_end = 2
         mock_result.snippet = "We use quantization on the micro-controller."
 
-        with patch("writing_context_rtfm.config.load_config", return_value=mock_config), \
-             patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter") as MockAdapter:
+        with (
+            patch("writing_context_rtfm.config.load_config", return_value=mock_config),
+            patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter") as MockAdapter,
+        ):
             mock_adapter = MockAdapter.return_value
             mock_adapter.search.return_value = [mock_result]
 
@@ -141,11 +173,7 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_mcp_new_routes(self):
         # 1. Test prompts/list
-        req_list = {
-            "jsonrpc": "2.0",
-            "id": 10,
-            "method": "prompts/list"
-        }
+        req_list = {"jsonrpc": "2.0", "id": 10, "method": "prompts/list"}
         res_list = json.loads(process_message(json.dumps(req_list)))
         self.assertIn("prompts", res_list["result"])
         prompt_names = [p["name"] for p in res_list["result"]["prompts"]]
@@ -153,8 +181,10 @@ class TestNewFeatures(unittest.TestCase):
         self.assertIn("proofread_section", prompt_names)
 
         # 2. Test prompts/get write_section
-        with patch("writing_context_rtfm.server.RTFMAdapter") as MockAdapter, \
-             patch("writing_context_rtfm.server.ExtensionStore") as MockStore:
+        with (
+            patch("writing_context_rtfm.server.RTFMAdapter") as MockAdapter,
+            patch("writing_context_rtfm.server.ExtensionStore") as MockStore,
+        ):
             mock_adapter = MockAdapter.return_value
             mock_adapter.search.return_value = []
             mock_store = MockStore.return_value
@@ -166,27 +196,26 @@ class TestNewFeatures(unittest.TestCase):
                 "method": "prompts/get",
                 "params": {
                     "name": "write_section",
-                    "arguments": {
-                        "task": "Write intro",
-                        "target": "section_intro"
-                    }
-                }
+                    "arguments": {"task": "Write intro", "target": "section_intro"},
+                },
             }
             res_prompt = json.loads(process_message(json.dumps(req_get_prompt)))
             self.assertIn("messages", res_prompt["result"])
             self.assertEqual(res_prompt["result"]["messages"][0]["role"], "user")
-            self.assertIn("Task: Write intro", res_prompt["result"]["messages"][0]["content"]["text"])
+            self.assertIn(
+                "Task: Write intro", res_prompt["result"]["messages"][0]["content"]["text"]
+            )
 
         # 3. Test new tools routing
-        with patch("writing_context_rtfm.server.initialize_section_cards", return_value={"status": "success"}) as mock_init:
+        with patch(
+            "writing_context_rtfm.server.initialize_section_cards",
+            return_value={"status": "success"},
+        ) as mock_init:
             req_call_init = {
                 "jsonrpc": "2.0",
                 "id": 12,
                 "method": "tools/call",
-                "params": {
-                    "name": "initialize_section_cards",
-                    "arguments": {"project_root": "."}
-                }
+                "params": {"name": "initialize_section_cards", "arguments": {"project_root": "."}},
             }
             res_call = json.loads(process_message(json.dumps(req_call_init)))
             self.assertNotIn("isError", res_call.get("result", {}))
@@ -237,7 +266,7 @@ class TestNewFeatures(unittest.TestCase):
             "document": {
                 "title": "Mock",
                 "thesis": "Thesis",
-                "writing_style": {"tone": "academic", "avoid": []}
+                "writing_style": {"tone": "academic", "avoid": []},
             },
             "sections": {
                 "section_intro": {
@@ -245,9 +274,9 @@ class TestNewFeatures(unittest.TestCase):
                     "role": "Intro",
                     "path": "intro.md",
                     "key_terms": ["qu*ant[i]zation?", "controller\\d+", "üñïçødè"],
-                    "depends_on": []
+                    "depends_on": [],
                 }
-            }
+            },
         }
         with open(sc_file, "w") as f:
             yaml.safe_dump(sc_content, f)
@@ -256,8 +285,10 @@ class TestNewFeatures(unittest.TestCase):
         mock_config.section_cards.path = ".writing-context/section_cards.yaml"
         mock_config.rtfm.corpus = "manuscript"
 
-        with patch("writing_context_rtfm.config.load_config", return_value=mock_config), \
-             patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter") as MockAdapter:
+        with (
+            patch("writing_context_rtfm.config.load_config", return_value=mock_config),
+            patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter") as MockAdapter,
+        ):
             mock_adapter = MockAdapter.return_value
             mock_adapter.search.return_value = []
 
@@ -280,12 +311,28 @@ class TestNewFeatures(unittest.TestCase):
             "token_budget": 1000,
             "config_hash": "cfg",
             "section_cards_hash": "sc",
-            "rtfm_index_fingerprint": "print"
+            "rtfm_index_fingerprint": "print",
         }
         payload = {"task": "write section", "estimated_tokens": 10}
         sources = [
-            {"path": "s1.md", "line_start": 1, "line_end": 5, "score": 0.9, "reason": "R", "query": "q", "selected": 0},
-            {"path": "s2.md", "line_start": 6, "line_end": 10, "score": 0.8, "reason": "R", "query": "q", "selected": 0}
+            {
+                "path": "s1.md",
+                "line_start": 1,
+                "line_end": 5,
+                "score": 0.9,
+                "reason": "R",
+                "query": "q",
+                "selected": 0,
+            },
+            {
+                "path": "s2.md",
+                "line_start": 6,
+                "line_end": 10,
+                "score": 0.8,
+                "reason": "R",
+                "query": "q",
+                "selected": 0,
+            },
         ]
         self.store.store_pack(run_id, run_data, payload, sources)
 
@@ -310,7 +357,7 @@ class TestNewFeatures(unittest.TestCase):
             "token_budget": 1000,
             "config_hash": "cfg",
             "section_cards_hash": "sc",
-            "rtfm_index_fingerprint": "print"
+            "rtfm_index_fingerprint": "print",
         }
         self.store.store_pack(run_id, run_data, {}, [])
 
@@ -318,7 +365,9 @@ class TestNewFeatures(unittest.TestCase):
         self.store.submit_feedback(run_id, "extremely-long-metric-name" * 10, -999.0, "A" * 5000)
         with self.store._connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT metric_value, metric_text FROM evaluation_records WHERE run_id=?", (run_id,))
+            cur.execute(
+                "SELECT metric_value, metric_text FROM evaluation_records WHERE run_id=?", (run_id,)
+            )
             row = cur.fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row["metric_value"], -999.0)
@@ -326,8 +375,10 @@ class TestNewFeatures(unittest.TestCase):
 
     def test_prompt_hydration_failures(self):
         # 1. Non-existent target section ID in write_section
-        with patch("writing_context_rtfm.server.RTFMAdapter") as MockAdapter, \
-             patch("writing_context_rtfm.server.ExtensionStore") as MockStore:
+        with (
+            patch("writing_context_rtfm.server.RTFMAdapter") as MockAdapter,
+            patch("writing_context_rtfm.server.ExtensionStore") as MockStore,
+        ):
             mock_adapter = MockAdapter.return_value
             mock_adapter.search.return_value = []
             mock_store = MockStore.return_value
@@ -339,24 +390,25 @@ class TestNewFeatures(unittest.TestCase):
                 "method": "prompts/get",
                 "params": {
                     "name": "write_section",
-                    "arguments": {
-                        "task": "Draft intro",
-                        "target": "section_that_does_not_exist"
-                    }
-                }
+                    "arguments": {"task": "Draft intro", "target": "section_that_does_not_exist"},
+                },
             }
             res_prompt = json.loads(process_message(json.dumps(req_get_prompt)))
             self.assertIn("messages", res_prompt["result"])
-            self.assertIn("Task: Draft intro", res_prompt["result"]["messages"][0]["content"]["text"])
+            self.assertIn(
+                "Task: Draft intro", res_prompt["result"]["messages"][0]["content"]["text"]
+            )
 
         # 2. Inverted bounds in proofread_section
-        with patch("writing_context_rtfm.server.RTFMAdapter") as MockAdapter, \
-             patch("writing_context_rtfm.server.ExtensionStore") as MockStore:
+        with (
+            patch("writing_context_rtfm.server.RTFMAdapter") as MockAdapter,
+            patch("writing_context_rtfm.server.ExtensionStore") as MockStore,
+        ):
             mock_adapter = MockAdapter.return_value
             mock_adapter.search.return_value = []
             mock_store = MockStore.return_value
             mock_store.get_cached_pack.return_value = None
-            
+
             # Write a dummy target file for reading local context
             dummy_file = self.project_dir / "file.md"
             dummy_file.write_text("\n".join(f"Line {i}" for i in range(1, 100)))
@@ -369,10 +421,10 @@ class TestNewFeatures(unittest.TestCase):
                     "name": "proofread_section",
                     "arguments": {
                         "target_file": str(dummy_file),
-                        "line_start": 50, # Inverted bounds
-                        "line_end": 10
-                    }
-                }
+                        "line_start": 50,  # Inverted bounds
+                        "line_end": 10,
+                    },
+                },
             }
             res_proof = json.loads(process_message(json.dumps(req_get_proof)))
             self.assertIn("messages", res_proof["result"])

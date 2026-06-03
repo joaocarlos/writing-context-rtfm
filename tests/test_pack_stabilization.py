@@ -1,20 +1,22 @@
 """Stabilization tests for context_pack.py fixes."""
+
 import unittest
 from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.config import load_config
-from writing_context_rtfm.section_cards import load_section_cards
 from writing_context_rtfm.context_pack import ContextPackGenerator
-from writing_context_rtfm.utils import is_allowed_source, extract_keywords
-from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import RTFMResult
+from writing_context_rtfm.section_cards import load_section_cards
+from writing_context_rtfm.storage import ExtensionStore
+from writing_context_rtfm.utils import extract_keywords, is_allowed_source
 
 FIXTURE_ROOT = "tests/fixtures/mini_latex_project"
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_result(path, line_start, line_end, score, snippet="", chapter_title=""):
     return RTFMResult(
@@ -23,14 +25,17 @@ def make_result(path, line_start, line_end, score, snippet="", chapter_title="")
         line_end=line_end,
         snippet=snippet,
         score=score,
-        metadata={"chapter_title": chapter_title, "book_title": "", "rank": 1}
+        metadata={"chapter_title": chapter_title, "book_title": "", "rank": 1},
     )
 
-def make_generator(project_root=FIXTURE_ROOT, corpus="manuscript", budget=6000,
-                   cache_enabled=False):
+
+def make_generator(
+    project_root=FIXTURE_ROOT, corpus="manuscript", budget=6000, cache_enabled=False
+):
     config = load_config(project_root)
     # Override for tests
     from dataclasses import replace
+
     config = replace(
         config,
         rtfm=replace(config.rtfm, corpus=corpus),
@@ -43,9 +48,11 @@ def make_generator(project_root=FIXTURE_ROOT, corpus="manuscript", budget=6000,
     store.get_cached_pack.return_value = None
     return ContextPackGenerator(config, cards, adapter, store), config, cards
 
+
 # ---------------------------------------------------------------------------
 # Fix 1: project_root resolution
 # ---------------------------------------------------------------------------
+
 
 class TestProjectRootResolution(unittest.TestCase):
     def test_section_cards_loaded_from_fixture_root(self):
@@ -78,13 +85,14 @@ class TestProjectRootResolution(unittest.TestCase):
         self.assertTrue(pack.quality["section_cards_loaded"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
 
 
 # ---------------------------------------------------------------------------
 # Fix 2: Exclusion of non-manuscript paths
 # ---------------------------------------------------------------------------
+
 
 class TestSourceExclusion(unittest.TestCase):
     def test_is_allowed_source(self):
@@ -105,10 +113,22 @@ class TestSourceExclusion(unittest.TestCase):
     def test_section_cards_yaml_not_in_source_spans(self):
         gen, config, _ = make_generator()
         gen.adapter.search.return_value = [
-            make_result(".writing-context/section_cards.yaml", None, None, 2.5,
-                        snippet="version: 1", chapter_title="version, document, sections"),
-            make_result("sections/03_approach.tex", 5, 11, 1.8,
-                        snippet="The MIMII dataset", chapter_title="Dataset"),
+            make_result(
+                ".writing-context/section_cards.yaml",
+                None,
+                None,
+                2.5,
+                snippet="version: 1",
+                chapter_title="version, document, sections",
+            ),
+            make_result(
+                "sections/03_approach.tex",
+                5,
+                11,
+                1.8,
+                snippet="The MIMII dataset",
+                chapter_title="Dataset",
+            ),
         ]
         pack = gen.generate(task="write methodology", target="section_approach", token_budget=1000)
         paths = [s.path for s in pack.source_spans]
@@ -120,14 +140,27 @@ class TestSourceExclusion(unittest.TestCase):
 # Fix 3: Score filtering
 # ---------------------------------------------------------------------------
 
+
 class TestScoreFiltering(unittest.TestCase):
     def test_near_zero_noise_discarded(self):
         gen, config, _ = make_generator()
         gen.adapter.search.return_value = [
-            make_result("sections/03_approach.tex", 15, 20, 2.0,
-                        snippet="quantization", chapter_title="Deployment"),
-            make_result("sections/04_results.tex", 1, 6, 0.000001,
-                        snippet="results discussion", chapter_title="Results"),
+            make_result(
+                "sections/03_approach.tex",
+                15,
+                20,
+                2.0,
+                snippet="quantization",
+                chapter_title="Deployment",
+            ),
+            make_result(
+                "sections/04_results.tex",
+                1,
+                6,
+                0.000001,
+                snippet="results discussion",
+                chapter_title="Results",
+            ),
         ]
         pack = gen.generate(task="write methodology", target="section_approach", token_budget=1000)
         paths = [s.path for s in pack.source_spans]
@@ -137,8 +170,14 @@ class TestScoreFiltering(unittest.TestCase):
         gen, config, _ = make_generator()
         # All spans score very low, but 03_approach.tex IS the target file
         gen.adapter.search.return_value = [
-            make_result("sections/03_approach.tex", 11, 15, 0.000001,
-                        snippet="algorithm selection CNN", chapter_title="Algorithm selection"),
+            make_result(
+                "sections/03_approach.tex",
+                11,
+                15,
+                0.000001,
+                snippet="algorithm selection CNN",
+                chapter_title="Algorithm selection",
+            ),
         ]
         pack = gen.generate(task="write methodology", target="section_approach", token_budget=1000)
         paths = [s.path for s in pack.source_spans]
@@ -159,24 +198,31 @@ class TestScoreFiltering(unittest.TestCase):
 # Fix 4: Query expansion
 # ---------------------------------------------------------------------------
 
+
 class TestQueryExpansion(unittest.TestCase):
     def test_query_expansion_includes_target_title(self):
         gen, config, _ = make_generator()
         captured = []
+
         def fake_search(query, **kwargs):
             captured.append(query)
             return []
+
         gen.adapter.search.side_effect = fake_search
-        gen.generate(task="write the approach section", target="section_approach", token_budget=1000)
+        gen.generate(
+            task="write the approach section", target="section_approach", token_budget=1000
+        )
         # Should include "Proposed approach" (the section title from section_cards)
         assert any("Proposed approach" in q or "approach" in q.lower() for q in captured)
 
     def test_query_expansion_includes_key_terms(self):
         gen, config, _ = make_generator()
         captured = []
+
         def fake_search(query, **kwargs):
             captured.append(query)
             return []
+
         gen.adapter.search.side_effect = fake_search
         gen.generate(task="write approach", target="section_approach", token_budget=1000)
         # section_cards.yaml defines key_terms: MIMII, CNN, quantization
@@ -193,11 +239,17 @@ class TestQueryExpansion(unittest.TestCase):
     def test_multiple_queries_issued(self):
         gen, config, _ = make_generator()
         call_count = []
+
         def fake_search(query, **kwargs):
             call_count.append(query)
             return []
+
         gen.adapter.search.side_effect = fake_search
-        gen.generate(task="write methodology detailing dataset quantization", target="section_approach", token_budget=1000)
+        gen.generate(
+            task="write methodology detailing dataset quantization",
+            target="section_approach",
+            token_budget=1000,
+        )
         assert len(call_count) > 1, "Should issue multiple queries with section cards loaded"
 
 
@@ -205,17 +257,22 @@ class TestQueryExpansion(unittest.TestCase):
 # Fix 6: Token estimation from snippet
 # ---------------------------------------------------------------------------
 
+
 class TestTokenEstimation(unittest.TestCase):
     def test_prefers_snippet_length_over_line_count(self):
         gen, config, _ = make_generator()
         from writing_context_rtfm.context_pack import SourceSpan
+
         # 5-line span, but very long snippet
         long_snippet = "word " * 500  # ~2000 chars → ~500 tokens
         span = SourceSpan(
             path="sections/03_approach.tex",
-            line_start=1, line_end=5,
-            reason="test", score=1.0, query="test",
-            metadata={"snippet": long_snippet}
+            line_start=1,
+            line_end=5,
+            reason="test",
+            score=1.0,
+            query="test",
+            metadata={"snippet": long_snippet},
         )
         est = gen._estimate_tokens(span)
         # Line-count estimate would be 5 * 15 = 75; snippet should give ~500
@@ -226,16 +283,35 @@ class TestTokenEstimation(unittest.TestCase):
 # End-to-end (mocked): correct pack behavior
 # ---------------------------------------------------------------------------
 
+
 class TestPackEndToEnd(unittest.TestCase):
     def test_pack_with_fixture_section_cards(self):
         gen, config, cards = make_generator()
         gen.adapter.search.return_value = [
-            make_result("sections/03_approach.tex", 15, 20, 1.8,
-                        snippet="quantization deployment Int8", chapter_title="Deployment"),
-            make_result("sections/03_approach.tex", 5, 11, 1.6,
-                        snippet="MIMII dataset 456 recordings", chapter_title="Dataset"),
-            make_result("sections/04_results.tex", 1, 6, 0.000001,
-                        snippet="results", chapter_title="Results"),
+            make_result(
+                "sections/03_approach.tex",
+                15,
+                20,
+                1.8,
+                snippet="quantization deployment Int8",
+                chapter_title="Deployment",
+            ),
+            make_result(
+                "sections/03_approach.tex",
+                5,
+                11,
+                1.6,
+                snippet="MIMII dataset 456 recordings",
+                chapter_title="Dataset",
+            ),
+            make_result(
+                "sections/04_results.tex",
+                1,
+                6,
+                0.000001,
+                snippet="results",
+                chapter_title="Results",
+            ),
         ]
         pack = gen.generate(task="write methodology", target="section_approach", token_budget=2000)
 
@@ -248,5 +324,5 @@ class TestPackEndToEnd(unittest.TestCase):
         self.assertTrue(pack.quality["section_cards_loaded"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

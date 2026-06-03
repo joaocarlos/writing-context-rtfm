@@ -1,5 +1,7 @@
-import yaml
 from dataclasses import dataclass
+
+import yaml
+
 
 @dataclass
 class Rubric:
@@ -9,13 +11,14 @@ class Rubric:
     forbidden_claims: list[str]
     style_constraints: list[str]
 
+
 def load_rubric(path: str) -> Rubric:
-    with open(path, 'r') as f:
+    with open(path) as f:
         data = yaml.safe_load(f)
     return Rubric(
-        test_case=data.get('test_case', ''),
-        required_ideas=data.get('required_ideas', []),
-        required_terms=data.get('required_terms', []),
-        forbidden_claims=data.get('forbidden_claims', []),
-        style_constraints=data.get('style_constraints', [])
+        test_case=data.get("test_case", ""),
+        required_ideas=data.get("required_ideas", []),
+        required_terms=data.get("required_terms", []),
+        forbidden_claims=data.get("forbidden_claims", []),
+        style_constraints=data.get("style_constraints", []),
     )

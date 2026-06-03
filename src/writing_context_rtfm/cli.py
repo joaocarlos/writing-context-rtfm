@@ -1,28 +1,32 @@
 """CLI module."""
+
 import argparse
-import sys
+import contextlib
 import json
 import shutil
-import yaml
+import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from writing_context_rtfm.config import load_config
-from writing_context_rtfm.section_cards import load_section_cards
-from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.context_pack import ContextPackGenerator
-from writing_context_rtfm.proofread import ProofreadPackGenerator
-from writing_context_rtfm.hashing import compute_rtfm_fingerprint
-from writing_context_rtfm.features import get_term_context
-from writing_context_rtfm.server import run_server
-from writing_context_rtfm.utils import resolve_rtfm_db_path
+import yaml
+
 from writing_context_rtfm import __version__
+from writing_context_rtfm.config import load_config
+from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.features import get_term_context
+from writing_context_rtfm.hashing import compute_rtfm_fingerprint
+from writing_context_rtfm.proofread import ProofreadPackGenerator
+from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+from writing_context_rtfm.section_cards import load_section_cards
+from writing_context_rtfm.server import run_server
+from writing_context_rtfm.storage import ExtensionStore
+from writing_context_rtfm.utils import resolve_rtfm_db_path
+
 
 def _update_gitignore(root: Path) -> None:
     gitignore_file = root / ".gitignore"
     cache_path = ".writing-context/context_cache.sqlite"
-    
+
     if not gitignore_file.exists():
         gitignore_file.write_text(cache_path + "\n", encoding="utf-8")
         print(f"Created {gitignore_file} with {cache_path} ignored.")
@@ -30,14 +34,19 @@ def _update_gitignore(root: Path) -> None:
 
     content = gitignore_file.read_text(encoding="utf-8")
     lines = [line.strip() for line in content.splitlines()]
-    
+
     ignored = False
     for line in lines:
-        clean = line.split('#')[0].strip()
-        if clean in (cache_path, ".writing-context/*.sqlite", ".writing-context/", ".writing-context/*"):
+        clean = line.split("#")[0].strip()
+        if clean in (
+            cache_path,
+            ".writing-context/*.sqlite",
+            ".writing-context/",
+            ".writing-context/*",
+        ):
             ignored = True
             break
-            
+
     if not ignored:
         if content and not content.endswith("\n"):
             content += "\n"
@@ -45,20 +54,15 @@ def _update_gitignore(root: Path) -> None:
         gitignore_file.write_text(content, encoding="utf-8")
         print(f"Appended {cache_path} to {gitignore_file}")
 
+
 def _update_mcp_json(root: Path) -> None:
     mcp_file = root / ".mcp.json"
-    
+
     if (root / "uv.lock").exists():
-        server_def = {
-            "command": "uv",
-            "args": ["run", "writing-context-rtfm", "serve"]
-        }
+        server_def = {"command": "uv", "args": ["run", "writing-context-rtfm", "serve"]}
     else:
-        server_def = {
-            "command": "writing-context-rtfm",
-            "args": ["serve"]
-        }
-        
+        server_def = {"command": "writing-context-rtfm", "args": ["serve"]}
+
     mcp_data = {}
     if mcp_file.exists():
         try:
@@ -68,22 +72,23 @@ def _update_mcp_json(root: Path) -> None:
         except Exception as e:
             print(f"Warning: Failed to parse existing {mcp_file}: {e}. Overwriting/re-creating.")
             mcp_data = {}
-            
+
     mcp_data.setdefault("mcpServers", {})
     mcp_data["mcpServers"]["writing-context-rtfm"] = server_def
-    
+
     try:
         mcp_file.write_text(json.dumps(mcp_data, indent=2) + "\n", encoding="utf-8")
         print(f"Updated {mcp_file} with writing-context-rtfm MCP server configuration.")
     except Exception as e:
         print(f"Warning: Failed to write {mcp_file}: {e}")
 
+
 def _update_markdown_rules(root: Path, file_name: str, default_title: str) -> None:
     md_file = root / file_name
-    
+
     anchor_start = "<!-- writing-context-rtfm MCP tools -->"
     anchor_end = "<!-- end writing-context-rtfm MCP tools -->"
-    
+
     rules = (
         f"{anchor_start}\n"
         "## Agent Rules of Thumb for Writing Context\n\n"
@@ -131,11 +136,12 @@ def _update_markdown_rules(root: Path, file_name: str, default_title: str) -> No
         except Exception as e:
             print(f"Warning: Failed to append to {md_file}: {e}")
 
+
 def _update_claude_settings(root: Path) -> None:
     claude_dir = root / ".claude"
     claude_dir.mkdir(exist_ok=True)
     settings_file = claude_dir / "settings.json"
-    
+
     settings_data = {}
     if settings_file.exists():
         try:
@@ -143,19 +149,21 @@ def _update_claude_settings(root: Path) -> None:
             if not isinstance(settings_data, dict):
                 settings_data = {}
         except Exception as e:
-            print(f"Warning: Failed to parse existing {settings_file}: {e}. Overwriting/re-creating.")
+            print(
+                f"Warning: Failed to parse existing {settings_file}: {e}. Overwriting/re-creating."
+            )
             settings_data = {}
-            
+
     hooks = settings_data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         hooks = {}
         settings_data["hooks"] = hooks
-        
+
     post_tool_use = hooks.setdefault("PostToolUse", [])
     if not isinstance(post_tool_use, list):
         post_tool_use = []
         hooks["PostToolUse"] = post_tool_use
-        
+
     # Check if our hook already exists
     hook_exists = False
     for hook_entry in post_tool_use:
@@ -167,12 +175,16 @@ def _update_claude_settings(root: Path) -> None:
         for inner in inner_hooks:
             if not isinstance(inner, dict):
                 continue
-            if inner.get("type") == "mcp_tool" and inner.get("server") == "writing-context-rtfm" and inner.get("tool") == "refresh_index":
+            if (
+                inner.get("type") == "mcp_tool"
+                and inner.get("server") == "writing-context-rtfm"
+                and inner.get("tool") == "refresh_index"
+            ):
                 hook_exists = True
                 break
         if hook_exists:
             break
-            
+
     if not hook_exists:
         new_hook = {
             "matcher": "write_to_file|replace_file_content|multi_replace_file_content|write_file|edit_file|edit_file_content|save_file|create_file",
@@ -181,11 +193,9 @@ def _update_claude_settings(root: Path) -> None:
                     "type": "mcp_tool",
                     "server": "writing-context-rtfm",
                     "tool": "refresh_index",
-                    "arguments": {
-                        "project_root": "$CLAUDE_PROJECT_DIR"
-                    }
+                    "arguments": {"project_root": "$CLAUDE_PROJECT_DIR"},
                 }
-            ]
+            ],
         }
         post_tool_use.append(new_hook)
 
@@ -201,22 +211,27 @@ def _update_claude_settings(root: Path) -> None:
 
     session_hook_exists = False
     for entry in session_end:
-        if isinstance(entry, dict) and entry.get("type") == "command" and entry.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup"):
+        if (
+            isinstance(entry, dict)
+            and entry.get("type") == "command"
+            and entry.get("command")
+            in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup")
+        ):
             entry["command"] = cleanup_cmd
             session_hook_exists = True
             break
-            
+
     if not session_hook_exists:
-        session_end.append({
-            "type": "command",
-            "command": cleanup_cmd
-        })
-        
+        session_end.append({"type": "command", "command": cleanup_cmd})
+
     try:
         settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")
-        print(f"Updated {settings_file} with writing-context-rtfm PostToolUse and SessionEnd hooks.")
+        print(
+            f"Updated {settings_file} with writing-context-rtfm PostToolUse and SessionEnd hooks."
+        )
     except Exception as e:
         print(f"Warning: Failed to write {settings_file}: {e}")
+
 
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
@@ -227,17 +242,14 @@ def init_command(args):
     sc_file = wc / "section_cards.yaml"
     if not config_file.exists():
         from writing_context_rtfm.providers.discovery import autodiscover_local_mcps
+
         discovered = autodiscover_local_mcps(str(root))
 
         def _format_mcp_server_config(mcp_server: dict) -> str:
             cmd = mcp_server.get("command", "")
             args = mcp_server.get("args") or []
             env = mcp_server.get("env")
-            lines = [
-                "    mcp_server:",
-                f"      command: {cmd}",
-                f"      args: {json.dumps(args)}"
-            ]
+            lines = ["    mcp_server:", f"      command: {cmd}", f"      args: {json.dumps(args)}"]
             if env:
                 lines.append("      env:")
                 for k, v in env.items():
@@ -259,20 +271,16 @@ def init_command(args):
                 "      command: npx\n"
                 '      args: ["-y", "zotero-mcp"]'
             )
-            
+
         openai_block = (
             "  openai_semantic:\n"
             "    enabled: false\n"
             "    # Set OPENAI_API_KEY environment variable to use this\n"
-            "    model: \"text-embedding-3-small\"\n"
+            '    model: "text-embedding-3-small"\n'
             "    # By default, embeddings are generated lazily when needed. Set to true to embed all files on sync.\n"
             "    auto_sync: false\n"
         )
-        providers_block = (
-            "providers:\n"
-            f"{openai_block}"
-            f"{zotero_block}"
-        )
+        providers_block = f"providers:\n{openai_block}{zotero_block}"
 
         template = (
             "# writing-context-rtfm Configuration File\n"
@@ -319,59 +327,59 @@ def init_command(args):
             "# Document-level global context\n"
             "document:\n"
             "  # The title of your project or paper\n"
-            "  title: \"A New Approach to Manuscript Curation\"\n"
+            '  title: "A New Approach to Manuscript Curation"\n'
             "  # The central thesis statement (injected globally to keep the agent focused)\n"
-            "  thesis: \"Surgical context selection using a gatekeeping protocol reduces LLM token overhead and improves writing accuracy.\"\n"
+            '  thesis: "Surgical context selection using a gatekeeping protocol reduces LLM token overhead and improves writing accuracy."\n'
             "  # Global writing style guide\n"
             "  writing_style:\n"
-            "    tone: \"Academic, precise, concise, third-person\"\n"
-            "    avoid_words: [\"cliché\", \"groundbreaking\", \"revolutionary\", \"game-changing\"]\n"
+            '    tone: "Academic, precise, concise, third-person"\n'
+            '    avoid_words: ["cliché", "groundbreaking", "revolutionary", "game-changing"]\n'
             "  # Global project terminology dictionary\n"
             "  terminology:\n"
             "    # Option A: Simple term-to-definition mapping\n"
-            "    Context Pack: \"A compact JSON structure containing prioritized source spans, token estimates, and constraints.\"\n"
+            '    Context Pack: "A compact JSON structure containing prioritized source spans, token estimates, and constraints."\n'
             "    # Option B: Advanced term definition with variants and avoid matches\n"
             "    RTFM:\n"
-            "      definition: \"Read The Fine Manual: A semantic retrieval and indexing tool.\"\n"
-            "      variants: [\"rtfm-ai\", \"RTFM CLI\"]\n"
-            "      avoid: [\"RTFM database write\", \"modifying library.db\"]\n\n"
+            '      definition: "Read The Fine Manual: A semantic retrieval and indexing tool."\n'
+            '      variants: ["rtfm-ai", "RTFM CLI"]\n'
+            '      avoid: ["RTFM database write", "modifying library.db"]\n\n'
             "# Section cards definitions. Fill these in to outline your paper's structure.\n"
             "# If your files already exist, you can run `writing-context-rtfm init-cards` to auto-scaffold them.\n"
             "sections:\n"
             "  section_abstract:\n"
-            "    title: \"Abstract\"\n"
-            "    role: \"Provide a standalone, 150-word summary of the thesis, approach, and primary results.\"\n"
-            "    path: \"sections/00_abstract.tex\"  # Relative path to your draft file\n"
-            "    key_terms: [\"Surgical context\", \"Gatekeeping protocol\"]\n"
+            '    title: "Abstract"\n'
+            '    role: "Provide a standalone, 150-word summary of the thesis, approach, and primary results."\n'
+            '    path: "sections/00_abstract.tex"  # Relative path to your draft file\n'
+            '    key_terms: ["Surgical context", "Gatekeeping protocol"]\n'
             "    depends_on: []                    # Abstract usually has no direct dependencies\n"
             "    must_preserve: []                 # Specific claims or equations that must not change\n"
-            "    avoid: [\"detailed experimental setups\", \"citations\"]\n"
+            '    avoid: ["detailed experimental setups", "citations"]\n'
             "    constraints:\n"
-            "      - \"Exactly one paragraph\"\n"
-            "      - \"Max 150 words\"\n\n"
+            '      - "Exactly one paragraph"\n'
+            '      - "Max 150 words"\n\n'
             "  section_introduction:\n"
-            "    title: \"Introduction\"\n"
-            "    role: \"Establish the problem context, outline the research gap, and state the main contributions.\"\n"
-            "    path: \"sections/01_introduction.tex\"\n"
-            "    key_terms: [\"LLM token overhead\", \"context curation\"]\n"
+            '    title: "Introduction"\n'
+            '    role: "Establish the problem context, outline the research gap, and state the main contributions."\n'
+            '    path: "sections/01_introduction.tex"\n'
+            '    key_terms: ["LLM token overhead", "context curation"]\n'
             "    depends_on:\n"
             "      - section_abstract             # Tells the agent to look at the abstract first\n"
             "    must_preserve: []\n"
-            "    avoid: [\"premature methodology details\"]\n"
+            '    avoid: ["premature methodology details"]\n'
             "    constraints:\n"
-            "      - \"Ensure main contributions are listed as a bulleted list\"\n\n"
+            '      - "Ensure main contributions are listed as a bulleted list"\n\n'
             "  section_methodology:\n"
-            "    title: \"Proposed Methodology\"\n"
-            "    role: \"Detail the system architecture, mathematical formulations, and context selection algorithms.\"\n"
-            "    path: \"sections/02_methodology.tex\"\n"
-            "    key_terms: [\"Gatekeeping protocol\", \"Token budget\"]\n"
+            '    title: "Proposed Methodology"\n'
+            '    role: "Detail the system architecture, mathematical formulations, and context selection algorithms."\n'
+            '    path: "sections/02_methodology.tex"\n'
+            '    key_terms: ["Gatekeeping protocol", "Token budget"]\n'
             "    depends_on:\n"
             "      - section_introduction\n"
             "    must_preserve:\n"
-            "      - \"Token budget formula is B_usable = B_total * (1 - margin)\"\n"
+            '      - "Token budget formula is B_usable = B_total * (1 - margin)"\n'
             "    avoid: []\n"
             "    constraints:\n"
-            "      - \"Write equations using LaTeX align or equation environments\"\n"
+            '      - "Write equations using LaTeX align or equation environments"\n'
         )
         sc_file.write_text(template_sc, encoding="utf-8")
         print(f"Created {sc_file}")
@@ -390,16 +398,19 @@ def init_command(args):
     # 4. Update Claude/Codex hooks configuration
     _update_claude_settings(root)
 
+
 def init_cards_command(args):
     """Scans the workspace and generates or appends section cards."""
     project_root = getattr(args, "project_root", ".")
     try:
         from writing_context_rtfm.features import initialize_section_cards
+
         res = initialize_section_cards(project_root)
         print(json.dumps(res, indent=2))
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 def init_db_command(args):
     project_root = getattr(args, "project_root", ".")
@@ -408,11 +419,12 @@ def init_db_command(args):
     store.init_db()
     print(f"Initialized database at {config.cache.path}")
 
+
 def sync_command(args):
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
-    
+
     if args.path == "." and args.corpus is None:
         sync_path = None
         corpus = None
@@ -425,25 +437,27 @@ def sync_command(args):
         adapter.sync(sync_path, corpus=corpus, capture_output=False)
         store = ExtensionStore(config.cache.path)
         store.init_db()
-        
+
         # Compute real library.db fingerprint after sync
         rtfm_db = resolve_rtfm_db_path(Path(project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
-            
+
         store.invalidate_for_fingerprint(fingerprint)
-        
+
         from writing_context_rtfm.providers import get_active_providers
+
         for provider in get_active_providers(config):
             if provider.provider_id == "openai_semantic":
                 provider_cfg = config.providers.get("openai_semantic", {})
                 if provider_cfg.get("auto_sync", False):
                     print("[*] Synchronizing OpenAI semantic embeddings...")
                     provider.sync_chunks(store, str(rtfm_db))
-                    
+
         print("Sync completed successfully.")
     except Exception as e:
         print(f"Sync failed: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 def cache_command(args):
     project_root = getattr(args, "project_root", ".")
@@ -461,14 +475,15 @@ def cache_command(args):
             run_count = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM context_pack_sources")
             source_count = cursor.fetchone()[0]
-        
+
         db_file = Path(config.cache.path)
         db_size = db_file.stat().st_size if db_file.exists() else 0
-        
+
         print(f"Cache location: {config.cache.path}")
         print(f"Total runs:     {run_count}")
         print(f"Total sources:  {source_count}")
         print(f"File size:      {db_size} bytes")
+
 
 def pack_command(args):
     project_root = getattr(args, "project_root", ".")
@@ -485,6 +500,7 @@ def pack_command(args):
     store = ExtensionStore(config.cache.path)
     store.init_db()
     from writing_context_rtfm.providers import get_active_providers
+
     providers = get_active_providers(config)
     generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
 
@@ -510,9 +526,10 @@ def pack_command(args):
         line_start=getattr(args, "line_start", None),
         line_end=getattr(args, "line_end", None),
         pack_mode=getattr(args, "pack_mode", None),
-        role_budgets=role_budgets
+        role_budgets=role_budgets,
     )
     print(json.dumps(asdict(pack), indent=2))
+
 
 def proofread_pack_command(args):
     project_root = getattr(args, "project_root", ".")
@@ -530,9 +547,10 @@ def proofread_pack_command(args):
         line_end=args.line_end,
         mode=args.mode,
         strictness=args.strictness,
-        max_tokens=args.max_tokens
+        max_tokens=args.max_tokens,
     )
     print(json.dumps(asdict(pack), indent=2))
+
 
 def get_term_command(args):
     project_root = getattr(args, "project_root", ".")
@@ -543,64 +561,79 @@ def get_term_command(args):
         print(json.dumps({"status": "error", "message": str(e)}), file=sys.stderr)
         sys.exit(1)
 
+
 def auth_command(args):
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
     store = ExtensionStore(config.cache.path)
     store.init_db()
-    
+
     store.set_provider_token(args.provider, args.token)
     print(f"Successfully saved API key for provider '{args.provider}' in local cache database.")
+
 
 def serve_command(args):
     run_server()
 
+
 def doctor_command(args):
     project_root = Path(getattr(args, "project_root", ".")).resolve()
-    
+
     print("Writing Context RTFM Extension Doctor")
     print("======================================")
-    
+
     # 1. RTFM CLI / Package check
     rtfm_cli = shutil.which("rtfm")
     rtfm_pkg = False
     try:
         import rtfm_ai  # type: ignore # noqa: F401
+
         rtfm_pkg = True
     except ImportError:
         try:
             import rtfm  # type: ignore # noqa: F401
+
             rtfm_pkg = True
         except ImportError:
             pass
-            
-    print(f"[*] RTFM CLI:         {'[OK] Found at ' + rtfm_cli if rtfm_cli else '[WARN] Not found in PATH'}")
-    print(f"[*] RTFM Library:     {'[OK] Package rtfm/rtfm-ai importable' if rtfm_pkg else '[FAIL] Package not importable'}")
-    
+
+    print(
+        f"[*] RTFM CLI:         {'[OK] Found at ' + rtfm_cli if rtfm_cli else '[WARN] Not found in PATH'}"
+    )
+    print(
+        f"[*] RTFM Library:     {'[OK] Package rtfm/rtfm-ai importable' if rtfm_pkg else '[FAIL] Package not importable'}"
+    )
+
     # 2. Project config
     config_file = project_root / ".writing-context" / "config.yaml"
     sc_file = project_root / ".writing-context" / "section_cards.yaml"
-    
+
     print(f"[*] Project Root:     {project_root}")
-    
+
     config = None
     if config_file.exists():
         try:
             config = load_config(str(project_root))
             print(f"[*] Config:           [OK] Loaded from {config_file.relative_to(project_root)}")
         except Exception as e:
-            print(f"[*] Config:           [FAIL] Failed to load {config_file.relative_to(project_root)}: {e}")
+            print(
+                f"[*] Config:           [FAIL] Failed to load {config_file.relative_to(project_root)}: {e}"
+            )
     else:
         print("[*] Config:           [WARN] config.yaml not found (using defaults)")
 
     if sc_file.exists():
         try:
-            with open(sc_file, "r") as f:
+            with open(sc_file) as f:
                 yaml.safe_load(f)
             cards = load_section_cards(str(sc_file), required=False)
-            print(f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)}")
+            print(
+                f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)}"
+            )
         except Exception as e:
-            print(f"[*] Section Cards:    [FAIL] Failed to parse {sc_file.relative_to(project_root)}: {e}")
+            print(
+                f"[*] Section Cards:    [FAIL] Failed to parse {sc_file.relative_to(project_root)}: {e}"
+            )
     else:
         print("[*] Section Cards:    [WARN] section_cards.yaml not found")
 
@@ -614,14 +647,14 @@ def doctor_command(args):
     if db_path.exists():
         print(f"[*] RTFM DB:          [OK] Found at {rel_db}")
     else:
-        print(f"[*] RTFM DB:          [FAIL] No RTFM library database found at {rel_db} (Needs sync)")
+        print(
+            f"[*] RTFM DB:          [FAIL] No RTFM library database found at {rel_db} (Needs sync)"
+        )
 
     # 4. Cache Check
     if not config:
-        try:
+        with contextlib.suppress(Exception):
             config = load_config(str(project_root))
-        except Exception:
-            pass
 
     if config:
         cache_db = Path(config.cache.path)
@@ -635,13 +668,18 @@ def doctor_command(args):
                     rel_cache = cache_db
                 print(f"[*] Cache DB:         [OK] Found and initialized at {rel_cache}")
             except Exception as e:
-                print(f"[*] Cache DB:         [FAIL] Cache database at {cache_db} exists but failed to initialize: {e}")
+                print(
+                    f"[*] Cache DB:         [FAIL] Cache database at {cache_db} exists but failed to initialize: {e}"
+                )
         else:
             try:
                 rel_cache = cache_db.relative_to(project_root)
             except ValueError:
                 rel_cache = cache_db
-            print(f"[*] Cache DB:         [OK] Not found (will be automatically created at {rel_cache})")
+            print(
+                f"[*] Cache DB:         [OK] Not found (will be automatically created at {rel_cache})"
+            )
+
 
 def inspect_target_command(args):
     project_root = Path(getattr(args, "project_root", ".")).resolve()
@@ -649,17 +687,17 @@ def inspect_target_command(args):
     sc_path = Path(config.section_cards.path)
     if not sc_path.is_absolute():
         sc_path = project_root / sc_path
-        
+
     if not sc_path.exists():
         print(f"Error: Section cards file not found at '{sc_path}'", file=sys.stderr)
         sys.exit(1)
-        
+
     cards = load_section_cards(str(sc_path), required=True)
     target = args.target
     if target not in cards.sections:
         print(f"Error: Section '{target}' not found in {sc_path}", file=sys.stderr)
         sys.exit(1)
-        
+
     card = cards.sections[target]
     print(f"Target Section ID: {target}")
     print(f"Title:             {card.title}")
@@ -671,18 +709,19 @@ def inspect_target_command(args):
     print(f"Avoid:             {getattr(card, 'avoid', [])}")
     print(f"Constraints:       {getattr(card, 'constraints', [])}")
 
+
 def show_graph_command(args):
     from writing_context_rtfm.latex import build_reference_graph
-    
+
     project_root = Path(args.project_root).resolve()
-    
+
     # 1. Build LaTeX reference graph
     try:
         graph = build_reference_graph(str(project_root))
     except Exception as e:
         print(f"Error building LaTeX reference graph: {e}", file=sys.stderr)
         sys.exit(1)
-        
+
     # 2. Try loading section cards for showing section card dependencies
     cards = None
     try:
@@ -697,16 +736,10 @@ def show_graph_command(args):
 
     if getattr(args, "format", "text") == "json":
         # Output as raw JSON if requested
-        payload = {
-            "graph": graph,
-            "sections": {}
-        }
+        payload = {"graph": graph, "sections": {}}
         if cards and cards.sections:
             for sid, scard in cards.sections.items():
-                payload["sections"][sid] = {
-                    "path": scard.path,
-                    "depends_on": scard.depends_on
-                }
+                payload["sections"][sid] = {"path": scard.path, "depends_on": scard.depends_on}
         print(json.dumps(payload, indent=2))
         return
 
@@ -737,9 +770,9 @@ def show_graph_command(args):
     print("Cross-References & Citations:")
     references = graph.get("references", {})
     citations = graph.get("citations", {})
-    
+
     has_refs_or_cites = False
-    all_files = sorted(list(set(list(references.keys()) + list(citations.keys()))))
+    all_files = sorted(set(list(references.keys()) + list(citations.keys())))
     for f in all_files:
         file_refs = references.get(f, [])
         file_cites = citations.get(f, [])
@@ -750,7 +783,7 @@ def show_graph_command(args):
                 print(f"    References: {', '.join(sorted(file_refs))}")
             if file_cites:
                 print(f"    Citations:  {', '.join(sorted(file_cites))}")
-                
+
     if not has_refs_or_cites:
         print("  (No cross-references or citations found)")
     print("")
@@ -763,7 +796,7 @@ def show_graph_command(args):
         if inclusions:
             has_inclusions = True
             print(f"  - {f} includes: {', '.join(sorted(inclusions))}")
-            
+
     if not has_inclusions:
         print("  (No file inclusions found)")
     print("")
@@ -777,18 +810,19 @@ def show_graph_command(args):
     else:
         print("  (No section cards or section_cards.yaml not found/empty)")
 
+
 def cleanup_command(args):
-    import os
     import json
+    import os
     import time
-    
+
     project_root = Path(getattr(args, "project_root", ".")).resolve()
     pid_file = project_root / ".writing-context" / "active_pids.json"
-    
+
     if not pid_file.exists():
         print("No active processes to cleanup (active_pids.json not found).")
         return
-        
+
     try:
         pids = json.loads(pid_file.read_text(encoding="utf-8"))
         if not isinstance(pids, list):
@@ -796,28 +830,27 @@ def cleanup_command(args):
     except Exception as e:
         print(f"Error reading {pid_file}: {e}")
         pids = []
-        
+
     if not pids:
         print("No active processes recorded in active_pids.json.")
         return
-        
+
     print(f"Cleaning up {len(pids)} registered processes...")
-    
+
     def terminate_process(pid: int) -> None:
         import sys
+
         if sys.platform == "win32":
             import subprocess
-            try:
+
+            with contextlib.suppress(Exception):
                 subprocess.run(["taskkill", "/T", "/PID", str(pid)], capture_output=True)
-            except Exception:
-                pass
             time.sleep(0.5)
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
-            except Exception:
-                pass
         else:
             import signal
+
             # SIGTERM
             try:
                 os.kill(pid, signal.SIGTERM)
@@ -826,7 +859,7 @@ def cleanup_command(args):
                 return
             except Exception as ex:
                 print(f"Error sending SIGTERM to {pid}: {ex}")
-                
+
             # Wait up to 0.5s for process to die
             for _ in range(5):
                 try:
@@ -835,7 +868,7 @@ def cleanup_command(args):
                 except ProcessLookupError:
                     print(f"Process {pid} cleanly terminated.")
                     return
-            
+
             # If still alive, SIGKILL
             try:
                 os.kill(pid, signal.SIGKILL)
@@ -850,13 +883,14 @@ def cleanup_command(args):
             terminate_process(pid)
         except Exception as e:
             print(f"Failed to cleanup process {pid}: {e}")
-            
+
     # Write back empty list to clear
     try:
         pid_file.write_text(json.dumps([]), encoding="utf-8")
         print("Cleanup completed.")
     except Exception as e:
         print(f"Error writing empty list to {pid_file}: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
@@ -868,7 +902,9 @@ def main():
     p_init.add_argument("--project-root", default=".", help="Project root path")
 
     # init-cards
-    p_init_cards = subparsers.add_parser("init-cards", help="Scan project for .tex/.md files and auto-scaffold section cards")
+    p_init_cards = subparsers.add_parser(
+        "init-cards", help="Scan project for .tex/.md files and auto-scaffold section cards"
+    )
     p_init_cards.add_argument("--project-root", default=".", help="Project root path")
 
     # init-db
@@ -879,31 +915,65 @@ def main():
     parser_sync = subparsers.add_parser("sync", help="Trigger RTFM sync")
     parser_sync.add_argument("--path", default=".", help="Project root path to sync")
     parser_sync.add_argument("--corpus", default=None, help="Corpus name")
-    parser_sync.add_argument("--project-root", default=".", help="Project root for config resolution")
+    parser_sync.add_argument(
+        "--project-root", default=".", help="Project root for config resolution"
+    )
 
     # pack
     parser_pack = subparsers.add_parser("pack", help="Generate a context pack")
-    parser_pack.add_argument("--project-root", default=".", help="Project root (resolves config and section_cards)")
+    parser_pack.add_argument(
+        "--project-root", default=".", help="Project root (resolves config and section_cards)"
+    )
     parser_pack.add_argument("--corpus", default=None, help="Override corpus name")
     parser_pack.add_argument("--task", required=True, help="Writing task description")
     parser_pack.add_argument("--target", help="Target section ID")
     parser_pack.add_argument("--budget", type=int, default=6000, help="Token budget")
-    parser_pack.add_argument("--must-consider", nargs="*", help="Explicit files or concepts to consider")
-    parser_pack.add_argument("--task-type", choices=["write_new_section", "revise_existing_section", "proofread", "expand", "condense", "align_with_previous_sections", "review"], help="Writing task type")
+    parser_pack.add_argument(
+        "--must-consider", nargs="*", help="Explicit files or concepts to consider"
+    )
+    parser_pack.add_argument(
+        "--task-type",
+        choices=[
+            "write_new_section",
+            "revise_existing_section",
+            "proofread",
+            "expand",
+            "condense",
+            "align_with_previous_sections",
+            "review",
+        ],
+        help="Writing task type",
+    )
     parser_pack.add_argument("--line-start", type=int, help="Target start line range")
     parser_pack.add_argument("--line-end", type=int, help="Target end line range")
-    parser_pack.add_argument("--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode")
+    parser_pack.add_argument(
+        "--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode"
+    )
     parser_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
 
     # proofread-pack
-    parser_proof = subparsers.add_parser("proofread-pack", help="Generate a proofreading context pack")
+    parser_proof = subparsers.add_parser(
+        "proofread-pack", help="Generate a proofreading context pack"
+    )
     parser_proof.add_argument("target_file", help="The file to proofread")
     parser_proof.add_argument("--line-start", type=int, required=True, help="Start line number")
     parser_proof.add_argument("--line-end", type=int, required=True, help="End line number")
-    parser_proof.add_argument("--mode", default="surface", choices=["surface", "academic_clarity", "consistency", "latex_safe"], help="Proofreading mode")
-    parser_proof.add_argument("--strictness", default="moderate", choices=["conservative", "moderate", "assertive"], help="Correction strictness")
+    parser_proof.add_argument(
+        "--mode",
+        default="surface",
+        choices=["surface", "academic_clarity", "consistency", "latex_safe"],
+        help="Proofreading mode",
+    )
+    parser_proof.add_argument(
+        "--strictness",
+        default="moderate",
+        choices=["conservative", "moderate", "assertive"],
+        help="Correction strictness",
+    )
     parser_proof.add_argument("--max-tokens", type=int, default=4000, help="Maximum token budget")
-    parser_proof.add_argument("--project-root", default=".", help="Project root for config resolution")
+    parser_proof.add_argument(
+        "--project-root", default=".", help="Project root for config resolution"
+    )
 
     # cache
     parser_cache = subparsers.add_parser("cache", help="Manage cache database")
@@ -911,32 +981,48 @@ def main():
     parser_cache.add_argument("--project-root", default=".", help="Project root path")
 
     # doctor
-    p_doc = subparsers.add_parser("doctor", help="Run diagnostic health checks on extension environment")
+    p_doc = subparsers.add_parser(
+        "doctor", help="Run diagnostic health checks on extension environment"
+    )
     p_doc.add_argument("--project-root", default=".", help="Project root path")
 
     # inspect-target
-    p_insp = subparsers.add_parser("inspect-target", help="Inspect configuration details for a target section")
+    p_insp = subparsers.add_parser(
+        "inspect-target", help="Inspect configuration details for a target section"
+    )
     p_insp.add_argument("--target", required=True, help="Target section ID key")
     p_insp.add_argument("--project-root", default=".", help="Project root path")
 
     # get-term
-    parser_get_term = subparsers.add_parser("get-term", help="Look up a term in the terminology glossary")
+    parser_get_term = subparsers.add_parser(
+        "get-term", help="Look up a term in the terminology glossary"
+    )
     parser_get_term.add_argument("term", help="The term to look up")
     parser_get_term.add_argument("--project-root", default=".", help="Project root path")
 
     # show-graph
-    parser_show_graph = subparsers.add_parser("show-graph", help="Show LaTeX reference graph & section card dependencies")
+    parser_show_graph = subparsers.add_parser(
+        "show-graph", help="Show LaTeX reference graph & section card dependencies"
+    )
     parser_show_graph.add_argument("--project-root", default=".", help="Project root path")
-    parser_show_graph.add_argument("--format", default="text", choices=["text", "json"], help="Output format")
+    parser_show_graph.add_argument(
+        "--format", default="text", choices=["text", "json"], help="Output format"
+    )
 
     # auth
-    parser_auth = subparsers.add_parser("auth", help="Store an API key for a provider in the local cache database")
-    parser_auth.add_argument("provider", choices=["openai_semantic"], help="The provider to authenticate")
+    parser_auth = subparsers.add_parser(
+        "auth", help="Store an API key for a provider in the local cache database"
+    )
+    parser_auth.add_argument(
+        "provider", choices=["openai_semantic"], help="The provider to authenticate"
+    )
     parser_auth.add_argument("token", help="The API key/token")
     parser_auth.add_argument("--project-root", default=".", help="Project root path")
 
     # cleanup
-    parser_cleanup = subparsers.add_parser("cleanup", help="Cleanly terminate all tracked background MCP processes")
+    parser_cleanup = subparsers.add_parser(
+        "cleanup", help="Cleanly terminate all tracked background MCP processes"
+    )
     parser_cleanup.add_argument("--project-root", default=".", help="Project root path")
 
     subparsers.add_parser("serve", help="Start the MCP server")
@@ -952,16 +1038,16 @@ def main():
         "proofread-pack": proofread_pack_command,
         "serve": serve_command,
         "cache": cache_command,
-
         "doctor": doctor_command,
         "inspect-target": inspect_target_command,
         "get-term": get_term_command,
         "show-graph": show_graph_command,
         "auth": auth_command,
-        "cleanup": cleanup_command
+        "cleanup": cleanup_command,
     }
 
     commands[args.command](args)
+
 
 if __name__ == "__main__":
     main()

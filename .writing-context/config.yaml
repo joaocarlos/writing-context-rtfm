@@ -50,3 +50,10 @@ providers:
   consensus:
     enabled: true
     sse_url: "https://mcp.consensus.app/mcp"
+
+# Card scaffolding generator configuration
+# generator:
+#   # The model to use (e.g. gpt-4o-mini, Qwen/Qwen2.5-Coder-7B-Instruct, phi3)
+#   # model: gpt-4o-mini
+#   # The API endpoint base URL
+#   # api_base: https://api.openai.com/v1

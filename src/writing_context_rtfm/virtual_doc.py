@@ -1,0 +1,501 @@
+"""Virtual Document Tree and parsing for LaTeX and Markdown manuscripts."""
+
+import hashlib
+import os
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from pylatexenc.latexwalker import (  # type: ignore
+    LatexCharsNode,
+    LatexCommentNode,
+    LatexEnvironmentNode,
+    LatexMacroNode,
+    LatexMathNode,
+    LatexWalker,
+)
+
+from writing_context_rtfm.utils import is_allowed_source
+
+
+@dataclass
+class DocumentNode:
+    node_id: str
+    title: str
+    source_path: str
+    line_start: int
+    line_end: int
+    char_start: int
+    char_end: int
+    level: int
+    selector: str
+    parent: str | None = None
+    children: list[str] = field(default_factory=list)
+    content_hash: str = ""
+    word_count: int = 0
+
+    # Deterministic metadata
+    citations: list[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    figures: list[str] = field(default_factory=list)
+    tables: list[str] = field(default_factory=list)
+    equations: list[str] = field(default_factory=list)
+    algorithms: list[str] = field(default_factory=list)
+
+
+def sanitize_node_id(title: str) -> str:
+    """Sanitize title into a stable node ID."""
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", title).strip("_").lower()
+    if not sanitized.startswith("section_"):
+        sanitized = f"section_{sanitized}"
+    return sanitized
+
+
+def get_clean_arg_text(group_node) -> str:
+    if group_node is None:
+        return ""
+    if not hasattr(group_node, "nodelist") or not group_node.nodelist:
+        val = group_node.latex_verbatim()
+        if val.startswith("{") and val.endswith("}"):
+            return val[1:-1].strip()
+        return val.strip()
+    parts = []
+    for child in group_node.nodelist:
+        if child is not None and child.isNodeType(LatexCharsNode):
+            parts.append(child.chars)
+        elif child is not None:
+            parts.append(child.latex_verbatim())
+    return "".join(parts).strip()
+
+
+def get_braced_arg(node) -> str | None:
+    if not getattr(node, "nodeargs", None):
+        return None
+    for arg in node.nodeargs:
+        if arg is not None and getattr(arg, "delimiters", None) == ("{", "}"):
+            return get_clean_arg_text(arg)
+    return None
+
+
+class VirtualDocumentParser:
+    """Parses manuscripts (LaTeX or Markdown) and constructs a Virtual Document Tree."""
+
+    def __init__(self, project_root: str):
+        self.project_root = Path(project_root).resolve()
+        self.nodes: dict[str, DocumentNode] = {}
+        self.node_order: list[str] = []
+        self.visited_files: set[str] = set()
+
+        self.latex_levels = {
+            "part": 0,
+            "chapter": 1,
+            "section": 2,
+            "subsection": 3,
+            "subsubsection": 4,
+            "paragraph": 5,
+            "subparagraph": 6,
+        }
+
+    def parse(self, entry_file: str) -> dict[str, DocumentNode]:
+        """Entry point to build the tree starting from a root file."""
+        self.nodes.clear()
+        self.node_order.clear()
+        self.visited_files.clear()
+        
+        rel_path = self._to_rel_path(entry_file)
+        if not rel_path:
+            return {}
+
+        if rel_path.endswith(".tex"):
+            self._parse_latex(rel_path)
+        elif rel_path.endswith(".md"):
+            self._parse_markdown(rel_path)
+
+        # Resolve parent-child links globally based on heading levels
+        self._resolve_hierarchy()
+        return self.nodes
+
+    def _to_rel_path(self, path_str: str) -> str | None:
+        try:
+            p = Path(path_str)
+            if p.is_absolute():
+                return str(p.relative_to(self.project_root))
+            return str(p)
+        except ValueError:
+            return None
+
+    def _resolve_include(self, current_file_rel: str, target: str) -> str | None:
+        target = target.strip()
+        if not target:
+            return None
+        current_abs = self.project_root / current_file_rel
+        candidates = [
+            current_abs.parent / target,
+            current_abs.parent / (target + ".tex"),
+            self.project_root / target,
+            self.project_root / (target + ".tex"),
+        ]
+        for cand in candidates:
+            if cand.is_file():
+                try:
+                    return str(cand.relative_to(self.project_root))
+                except ValueError:
+                    pass
+        return None
+
+    def _parse_latex(self, file_rel: str, parent_node_id: str | None = None) -> list[str]:
+        """Recursively parses a LaTeX file and extracts section nodes."""
+        file_abs = self.project_root / file_rel
+        if not file_abs.is_file() or file_rel in self.visited_files:
+            return []
+        self.visited_files.add(file_rel)
+
+        try:
+            content = file_abs.read_text(encoding="utf-8")
+        except Exception:
+            return []
+
+        walker = LatexWalker(content)
+        try:
+            nodes, _, _ = walker.get_latex_nodes()
+        except Exception:
+            return []
+
+        # Find all structural and meta elements
+        headings = []
+        inclusions = []
+        labels = []
+        citations = []
+        references = []
+        environments = []
+
+        def walk(node):
+            if node is None or node.isNodeType(LatexCommentNode):
+                return
+
+            if node.isNodeType(LatexMacroNode):
+                macro = node.macroname
+                if macro in self.latex_levels:
+                    title = get_braced_arg(node) or "Untitled"
+                    headings.append({
+                        "type": "heading",
+                        "macro": macro,
+                        "title": title,
+                        "char_start": node.pos,
+                        "char_end": node.pos + (node.len or 0),
+                    })
+                elif macro in ("input", "include"):
+                    target = get_braced_arg(node)
+                    if target:
+                        inclusions.append({
+                            "type": "inclusion",
+                            "target": target,
+                            "char_start": node.pos,
+                            "char_end": node.pos + (node.len or 0),
+                        })
+                elif macro == "label":
+                    key = get_braced_arg(node)
+                    if key:
+                        labels.append({"key": key, "pos": node.pos})
+                elif macro in ("ref", "cref", "Cref", "autoref") or macro.startswith("ref"):
+                    key_str = get_braced_arg(node)
+                    if key_str:
+                        keys = [k.strip() for k in key_str.split(",") if k.strip()]
+                        for k in keys:
+                            references.append({"key": k, "pos": node.pos})
+                elif macro == "cite" or macro.startswith("cite"):
+                    key_str = get_braced_arg(node)
+                    if key_str:
+                        keys = [k.strip() for k in key_str.split(",") if k.strip()]
+                        for k in keys:
+                            citations.append({"key": k, "pos": node.pos})
+            
+            elif node.isNodeType(LatexEnvironmentNode):
+                env_name = node.envname
+                # Look for label inside environment
+                env_label = None
+                
+                def find_label(n):
+                    nonlocal env_label
+                    if n is None or env_label:
+                        return
+                    if n.isNodeType(LatexMacroNode) and n.macroname == "label":
+                        env_label = get_braced_arg(n)
+                    if hasattr(n, "nodelist") and n.nodelist:
+                        for c in n.nodelist:
+                            find_label(c)
+                
+                if node.nodelist:
+                    for child in node.nodelist:
+                        find_label(child)
+
+                environments.append({
+                    "env_name": env_name,
+                    "label": env_label or f"unlabeled_{env_name}",
+                    "char_start": node.pos,
+                    "char_end": node.pos + (node.len or 0),
+                })
+
+            # Recurse node children
+            if hasattr(node, "nodelist") and node.nodelist:
+                for child in node.nodelist:
+                    walk(child)
+            if hasattr(node, "nodeargs") and node.nodeargs:
+                for arg in node.nodeargs:
+                    if arg is not None and hasattr(arg, "nodelist") and arg.nodelist:
+                        for child in arg.nodelist:
+                            walk(child)
+
+        for n in nodes:
+            walk(n)
+
+        # Sort headings and inclusions by char_start
+        structural = sorted(headings + inclusions, key=lambda x: x["char_start"])
+
+        # Determine boundaries of sections within this file
+        file_nodes = []
+        preamble_end = structural[0]["char_start"] if structural else len(content)
+        
+        # Preamble node (if there are elements before the first heading and no parent node)
+        if preamble_end > 0 and not parent_node_id:
+            first_heading = next((item for item in structural if item["type"] == "heading"), None)
+            preamble_level = self.latex_levels[first_heading["macro"]] if first_heading else 1
+            preamble_title = "Preamble"
+            preamble_id = sanitize_node_id(f"{Path(file_rel).stem}_preamble")
+            preamble_node = DocumentNode(
+                node_id=preamble_id,
+                title=preamble_title,
+                source_path=file_rel,
+                line_start=1,
+                line_end=content.count("\n", 0, preamble_end) + 1,
+                char_start=0,
+                char_end=preamble_end,
+                level=preamble_level,
+                selector=f"/{preamble_title}",
+            )
+            preamble_node.content_hash = hashlib.md5(content[0:preamble_end].encode("utf-8")).hexdigest()
+            preamble_node.word_count = len(content[0:preamble_end].split())
+            self.nodes[preamble_id] = preamble_node
+            self.node_order.append(preamble_id)
+            file_nodes.append(preamble_id)
+            current_active_id = preamble_id
+        else:
+            current_active_id = parent_node_id
+
+        # Generate nodes for each heading
+        for idx, item in enumerate(structural):
+            if item["type"] == "heading":
+                # Find end of this section
+                char_start = item["char_start"]
+                # Section ends at next heading of same or higher level, or next structural element
+                next_headings = [h for h in structural[idx+1:] if h["type"] == "heading"]
+                char_end = next_headings[0]["char_start"] if next_headings else len(content)
+
+                node_id = sanitize_node_id(item["title"])
+                # Handle ID collisions
+                base_id = node_id
+                counter = 1
+                while node_id in self.nodes:
+                    node_id = f"{base_id}_{counter}"
+                    counter += 1
+
+                # Find label defined inside this section
+                sec_label = None
+                for lbl in labels:
+                    if char_start <= lbl["pos"] < char_end:
+                        sec_label = lbl["key"]
+                        break
+
+                selector = sec_label if sec_label else f"/{item['title']}"
+
+                node = DocumentNode(
+                    node_id=node_id,
+                    title=item["title"],
+                    source_path=file_rel,
+                    line_start=content.count("\n", 0, char_start) + 1,
+                    line_end=content.count("\n", 0, char_end) + 1,
+                    char_start=char_start,
+                    char_end=char_end,
+                    level=self.latex_levels[item["macro"]],
+                    selector=selector,
+                )
+                node.content_hash = hashlib.md5(content[char_start:char_end].encode("utf-8")).hexdigest()
+                node.word_count = len(content[char_start:char_end].split())
+                
+                self.nodes[node_id] = node
+                self.node_order.append(node_id)
+                file_nodes.append(node_id)
+                current_active_id = node_id
+
+            elif item["type"] == "inclusion":
+                # Included file inherits parent context
+                resolved = self._resolve_include(file_rel, item["target"])
+                if resolved:
+                    # Recursively parse included file
+                    inc_node_ids = self._parse_latex(resolved, parent_node_id=current_active_id)
+
+        # Assign elements (citations, labels, refs, envs) to sections
+        for node_id in file_nodes:
+            node = self.nodes[node_id]
+            # Citations
+            node.citations = [
+                c["key"] for c in citations if node.char_start <= c["pos"] < node.char_end
+            ]
+            # References
+            node.references = [
+                r["key"] for r in references if node.char_start <= r["pos"] < node.char_end
+            ]
+            # Labels
+            node.labels = [
+                l["key"] for l in labels if node.char_start <= l["pos"] < node.char_end
+            ]
+            # Environments
+            for env in environments:
+                if node.char_start <= env["char_start"] < node.char_end:
+                    lbl = env["label"]
+                    name = env["env_name"].lower()
+                    if "figure" in name:
+                        node.figures.append(lbl)
+                    elif "table" in name:
+                        node.tables.append(lbl)
+                    elif "equation" in name or "align" in name:
+                        node.equations.append(lbl)
+                    elif "algorithm" in name:
+                        node.algorithms.append(lbl)
+
+        # If a file has no headings of its own, we assign its entire contents to the parent section
+        if not headings and parent_node_id and parent_node_id in self.nodes:
+            parent_node = self.nodes[parent_node_id]
+            parent_node.citations.extend([c["key"] for c in citations])
+            parent_node.references.extend([r["key"] for r in references])
+            parent_node.labels.extend([l["key"] for l in labels])
+            for env in environments:
+                lbl = env["label"]
+                name = env["env_name"].lower()
+                if "figure" in name:
+                    parent_node.figures.append(lbl)
+                elif "table" in name:
+                    parent_node.tables.append(lbl)
+                elif "equation" in name or "align" in name:
+                    parent_node.equations.append(lbl)
+                elif "algorithm" in name:
+                    parent_node.algorithms.append(lbl)
+
+        return file_nodes
+
+    def _parse_markdown(self, file_rel: str) -> None:
+        """Parses a Markdown file and extracts section nodes."""
+        file_abs = self.project_root / file_rel
+        if not file_abs.is_file():
+            return
+        
+        try:
+            content = file_abs.read_text(encoding="utf-8")
+        except Exception:
+            return
+
+        lines = content.splitlines()
+        headings = []
+
+        # Find heading lines e.g. "## Introduction"
+        for idx, line in enumerate(lines):
+            match = re.match(r"^(\#{1,6})\s+(.+)$", line)
+            if match:
+                level = len(match.group(1))
+                title_raw = match.group(2).strip()
+                # Parse markdown anchor if exists, e.g. "Heading {#anchor}"
+                anchor_match = re.search(r"\{\#([a-zA-Z0-9_-]+)\}$", title_raw)
+                title = title_raw
+                selector = ""
+                if anchor_match:
+                    selector = anchor_match.group(1)
+                    title = title_raw[:anchor_match.start()].strip()
+                headings.append({
+                    "line_idx": idx,
+                    "level": level,
+                    "title": title,
+                    "selector": selector,
+                })
+
+        if not headings:
+            # Whole file is one node
+            node_id = sanitize_node_id(Path(file_rel).stem)
+            node = DocumentNode(
+                node_id=node_id,
+                title=Path(file_rel).stem.replace("_", " ").title(),
+                source_path=file_rel,
+                line_start=1,
+                line_end=len(lines),
+                char_start=0,
+                char_end=len(content),
+                level=1,
+                selector=f"/{Path(file_rel).stem}",
+            )
+            node.content_hash = hashlib.md5(content.encode("utf-8")).hexdigest()
+            node.word_count = len(content.split())
+            self.nodes[node_id] = node
+            self.node_order.append(node_id)
+            return
+
+        for idx, h in enumerate(headings):
+            line_start = h["line_idx"] + 1
+            # Next heading boundary
+            line_end = headings[idx+1]["line_idx"] if idx + 1 < len(headings) else len(lines)
+            
+            sec_lines = lines[line_start-1:line_end]
+            sec_text = "\n".join(sec_lines)
+            
+            node_id = sanitize_node_id(h["title"])
+            base_id = node_id
+            counter = 1
+            while node_id in self.nodes:
+                node_id = f"{base_id}_{counter}"
+                counter += 1
+
+            selector = h["selector"] if h["selector"] else f"/{h['title']}"
+
+            # Calculate char offsets
+            char_start = sum(len(l) + 1 for l in lines[:line_start-1])
+            char_end = char_start + len(sec_text)
+
+            node = DocumentNode(
+                node_id=node_id,
+                title=h["title"],
+                source_path=file_rel,
+                line_start=line_start,
+                line_end=line_end,
+                char_start=char_start,
+                char_end=char_end,
+                level=h["level"],
+                selector=selector,
+            )
+            node.content_hash = hashlib.md5(sec_text.encode("utf-8")).hexdigest()
+            node.word_count = len(sec_text.split())
+
+            # Parse citations e.g. [@smith2020] or cite{smith2020}
+            node.citations = re.findall(r"@([a-zA-Z0-9_-]+)", sec_text)
+            
+            self.nodes[node_id] = node
+            self.node_order.append(node_id)
+
+    def _resolve_hierarchy(self) -> None:
+        """Walks the parsed nodes and resolves parent-child pointers based on level and document order."""
+        ordered_nodes = [self.nodes[nid] for nid in self.node_order if nid in self.nodes]
+
+        for idx, node in enumerate(ordered_nodes):
+            # Find parent: closest preceding node with level < current level
+            parent_node = None
+            for prev_idx in range(idx - 1, -1, -1):
+                prev_node = ordered_nodes[prev_idx]
+                if prev_node.level < node.level:
+                    parent_node = prev_node
+                    break
+            
+            if parent_node:
+                node.parent = parent_node.node_id
+                if node.node_id not in parent_node.children:
+                    parent_node.children.append(node.node_id)
+            else:
+                node.parent = "document_main"

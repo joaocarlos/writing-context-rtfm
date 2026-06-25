@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.1] - 2026-06-25
+
+### Added
+- **Card Scaffolding Model Fallback Chain**: Implemented an automated fallback chain for `cards build` / `cards infer` semantic extraction. If no OpenAI API key is configured, the system now cascades gracefully from OpenAI -> Hugging Face Serverless Inference API (requires `HF_TOKEN` / `HF_API_TOKEN`, defaulting to `Qwen/Qwen2.5-Coder-7B-Instruct`) -> Local Ollama instance (auto-detects local running server at `http://localhost:11434`, defaulting to `qwen2.5-coder` or `phi3`) -> Deterministic Offline Scan (LaTeX document tree scan) as a final resort.
+- **Hugging Face Auth CLI Support**: Added support for authenticating and caching Hugging Face API tokens via `writing-context-rtfm auth huggingface <token>`.
+- **Custom Card Scaffolding Generator Configuration**: Exposed the `generator` block in `config.yaml` to allow users to explicitly specify the model name, API endpoint base URL, and credentials for card inference.
+
 ## [0.6.0] - 2026-06-01
 
 ### Added

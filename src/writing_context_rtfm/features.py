@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -374,4 +375,504 @@ def get_term_context(term: str, project_root: str | None = None) -> dict[str, An
         "definition": details.get("definition", ""),
         "variants": details.get("variants", []),
         "avoid": details.get("avoid", []),
+    }
+
+
+def find_entry_files(project_root: str) -> list[str]:
+    root_path = Path(project_root).resolve()
+    tex_files = []
+    md_files = []
+    exclude_dirs = {".git", ".venv", ".rtfm", ".writing-context", "node_modules", "build", "dist"}
+    exclude_md_files = {
+        "readme.md", "gemini.md", "claude.md", "agents.md", 
+        "license.md", "contributing.md", "task.md", 
+        "implementation_plan.md", "walkthrough.md"
+    }
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        for fname in filenames:
+            if fname.endswith(".tex"):
+                tex_files.append(Path(dirpath) / fname)
+            elif fname.endswith(".md") and fname.lower() not in exclude_md_files:
+                md_files.append(Path(dirpath) / fname)
+
+    # For LaTeX, find which files are NOT included by others
+    included_files = set()
+    from writing_context_rtfm.latex import build_reference_graph
+    try:
+        graph = build_reference_graph(project_root)
+        for deps in graph.get("file_dependencies", {}).values():
+            for d in deps:
+                included_files.add(str((root_path / d).resolve()))
+    except Exception:
+        pass
+
+    entry_files = []
+    for tf in tex_files:
+        abs_str = str(tf.resolve())
+        if abs_str not in included_files:
+            entry_files.append(str(tf.relative_to(root_path)))
+
+    for mf in md_files:
+        entry_files.append(str(mf.relative_to(root_path)))
+
+    return entry_files
+
+
+def cards_scan_command(project_root: str) -> dict[str, Any]:
+    """Scan manuscript files and output cards.generated.yaml containing structural metadata."""
+    print("Scanning manuscript structure...", file=sys.stderr, flush=True)
+    root = Path(project_root).resolve()
+    
+    # Auto-migrate legacy cards if any
+    from writing_context_rtfm.section_cards import migrate_legacy_cards
+    migrate_legacy_cards(str(root))
+    
+    entry_files = find_entry_files(str(root))
+    if not entry_files:
+        return {"status": "error", "message": "No LaTeX or Markdown entry files found."}
+
+    from writing_context_rtfm.virtual_doc import VirtualDocumentParser
+    parser = VirtualDocumentParser(str(root))
+    
+    all_nodes = {}
+    for ef in entry_files:
+        nodes = parser.parse(ef)
+        all_nodes.update(nodes)
+
+    generated_path = root / ".writing-context" / "cards.generated.yaml"
+    lock_path = root / ".writing-context" / "cards.lock.json"
+    overrides_path = root / ".writing-context" / "cards.overrides.yaml"
+
+    # Load existing generated cards
+    existing_gen = {}
+    if generated_path.exists():
+        try:
+            with open(generated_path, encoding="utf-8") as f:
+                existing_gen = yaml.safe_load(f) or {}
+        except Exception:
+            pass
+
+    existing_sections = existing_gen.get("sections", {}) or {}
+
+    # Build new generated cards structure
+    gen_cards = {
+        "version": 2,
+        "document": existing_gen.get("document", {
+            "title": "My Manuscript",
+            "thesis": "",
+            "writing_style": {"tone": "academic, formal", "avoid": []},
+            "terminology": {}
+        }),
+        "sections": {}
+    }
+
+    # Load lock
+    lock = {"generation_version": 2, "extractor_version": 1, "sections": {}}
+    if lock_path.exists():
+        try:
+            import json
+            with open(lock_path, encoding="utf-8") as f:
+                lock = json.load(f) or {}
+        except Exception:
+            pass
+
+    lock_sections = lock.setdefault("sections", {})
+
+    added = []
+    updated = []
+
+    for sid, node in all_nodes.items():
+        # Keep semantic fields from existing generated card if present
+        ex_sec = existing_sections.get(sid, {}) or {}
+        
+        gen_cards["sections"][sid] = {
+            "identity": {
+                "source": node.source_path,
+                "selector": node.selector,
+                "content_hash": node.content_hash,
+                "char_start": node.char_start,
+                "char_end": node.char_end,
+            },
+            "structure": {
+                "title": node.title,
+                "parent": node.parent or "document_main",
+                "level": node.level,
+                "children": node.children,
+            },
+            "purpose": ex_sec.get("purpose", {"value": "", "confidence": 0.0, "status": "generated"}),
+            "rhetorical_role": ex_sec.get("rhetorical_role", {"value": "", "confidence": 0.0}),
+            "key_terms": ex_sec.get("key_terms", []),
+            "facts": ex_sec.get("facts", []),
+            "constraints": ex_sec.get("constraints", []),
+            "dependencies": ex_sec.get("dependencies", [{"target": dep} for dep in node.references]),
+            "citations": node.citations,
+            "references": node.references,
+            "figures": node.figures,
+            "tables": node.tables,
+            "equations": node.equations,
+            "algorithms": node.algorithms,
+        }
+
+        # Rule-based acronym extraction
+        try:
+            source_file = root / node.source_path
+            if source_file.is_file():
+                text = source_file.read_text(encoding="utf-8")[node.char_start:node.char_end]
+                acronyms = set(re.findall(r"\b[A-Z]{2,6}\b", text))
+                
+                existing_kt_vals = {kt.get("value") for kt in gen_cards["sections"][sid]["key_terms"] if isinstance(kt, dict)}
+                for acr in acronyms:
+                    if acr not in existing_kt_vals:
+                        gen_cards["sections"][sid]["key_terms"].append({
+                            "value": acr,
+                            "confidence": 0.95,
+                            "status": "generated",
+                            "evidence": "Rule-based acronym extraction"
+                        })
+        except Exception:
+            pass
+
+        # Update lock and track stale state
+        ls = lock_sections.setdefault(sid, {"content_hash": "", "decisions": {}, "stale_fields": []})
+        old_hash = ls.get("content_hash", "")
+        if old_hash and old_hash != node.content_hash:
+            stale = ls.setdefault("stale_fields", [])
+            for field in ("purpose", "key_terms", "facts"):
+                if field not in stale:
+                    stale.append(field)
+            updated.append(sid)
+        else:
+            if not old_hash:
+                added.append(sid)
+        
+        ls["content_hash"] = node.content_hash
+
+    # Clean up lock/overrides of orphan section IDs (no longer in document)
+    for orphan in list(lock_sections.keys()):
+        if orphan not in all_nodes:
+            lock_sections.pop(orphan, None)
+
+    # Save files
+    generated_path.parent.mkdir(exist_ok=True)
+    with open(generated_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(gen_cards, f, sort_keys=False)
+
+    import json
+    with open(lock_path, "w", encoding="utf-8") as f:
+        json.dump(lock, f, indent=2)
+
+    # Create default overrides skeleton as cards.overrides.yaml.example if it does not exist
+    example_path = overrides_path.with_name("cards.overrides.yaml.example")
+    if not overrides_path.exists() and not example_path.exists():
+        default_overrides = {
+            "version": 2,
+            "document": {
+                "title": gen_cards["document"]["title"],
+                "thesis": "",
+                "writing_style": {"tone": "academic, formal", "avoid": []},
+                "terminology": {}
+            },
+            "sections": {}
+        }
+        with open(example_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(default_overrides, f, sort_keys=False)
+
+    print("Scan completed successfully.", file=sys.stderr, flush=True)
+    return {
+        "status": "success",
+        "added": added,
+        "updated": updated,
+        "total": len(all_nodes)
+    }
+
+
+def cards_infer_command(project_root: str, force: bool = False) -> dict[str, Any]:
+    """Run model-assisted semantic extraction on section nodes."""
+    print("Running model-assisted semantic extraction on section nodes...", file=sys.stderr, flush=True)
+    root = Path(project_root).resolve()
+    generated_path = root / ".writing-context" / "cards.generated.yaml"
+    lock_path = root / ".writing-context" / "cards.lock.json"
+
+    if not generated_path.exists():
+        return {"status": "error", "message": "No generated cards found. Please run 'cards scan' first."}
+
+    try:
+        with open(generated_path, encoding="utf-8") as f:
+            gen_cards = yaml.safe_load(f) or {}
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to load cards.generated.yaml: {e}"}
+
+    from writing_context_rtfm.config import load_config
+    try:
+        config = load_config(str(root))
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to load config: {e}"}
+
+    lock = {"sections": {}}
+    if lock_path.exists():
+        try:
+            import json
+            with open(lock_path, encoding="utf-8") as f:
+                lock = json.load(f) or {}
+        except Exception:
+            pass
+
+    from writing_context_rtfm.semantic_extractor import extract_semantic_metadata, MissingAPIKeyError
+
+    sections = gen_cards.setdefault("sections", {})
+    inferred_count = 0
+    skipped_count = 0
+
+    for sid, sdata in sections.items():
+        purpose_val = sdata.get("purpose", {}).get("value", "")
+        is_stale = sid in lock.get("sections", {}) and "purpose" in lock["sections"][sid].get("stale_fields", [])
+
+        if purpose_val and not is_stale and not force:
+            skipped_count += 1
+            continue
+
+        source_rel = sdata.get("identity", {}).get("source")
+        if not source_rel:
+            skipped_count += 1
+            continue
+        
+        source_abs = root / source_rel
+        if not source_abs.is_file():
+            skipped_count += 1
+            continue
+
+        try:
+            char_start = sdata.get("identity", {}).get("char_start", 0)
+            char_end = sdata.get("identity", {}).get("char_end", None)
+            
+            full_text = source_abs.read_text(encoding="utf-8")
+            if char_end is not None:
+                text = full_text[char_start:char_end]
+            else:
+                text = full_text
+        except Exception:
+            skipped_count += 1
+            continue
+
+        if not text.strip():
+            skipped_count += 1
+            continue
+
+        print(f"  - Inferring semantic metadata for section '{sid}'...", file=sys.stderr, end="", flush=True)
+        try:
+            metadata = extract_semantic_metadata(text, config)
+            print(" Done.", file=sys.stderr, flush=True)
+        except MissingAPIKeyError as e:
+            print(" Failed (API Key missing).", file=sys.stderr, flush=True)
+            raise e
+        except Exception as e:
+            print(f" Failed: {e}", file=sys.stderr, flush=True)
+            print(f"Warning: Failed to extract metadata for '{sid}': {e}")
+            skipped_count += 1
+            continue
+
+        sdata["rhetorical_role"] = {
+            "value": metadata.get("rhetorical_role", ""),
+            "confidence": 0.90
+        }
+        sdata["purpose"] = {
+            "value": metadata.get("purpose", ""),
+            "confidence": 0.90,
+            "status": "generated",
+            "provenance": [f"{source_rel}"]
+        }
+
+        existing_terms = {kt.get("value") for kt in sdata.get("key_terms", []) if isinstance(kt, dict)}
+        for kt in metadata.get("key_terms", []):
+            val = kt.get("value")
+            if val and val not in existing_terms:
+                sdata["key_terms"].append({
+                    "value": val,
+                    "confidence": kt.get("confidence", 0.8),
+                    "status": "generated"
+                })
+
+        sdata["facts"] = []
+        for i, fact in enumerate(metadata.get("facts", [])):
+            sdata["facts"].append({
+                "id": f"fact_{i}",
+                "value": fact.get("value", ""),
+                "type": fact.get("type", "semantic_claim"),
+                "confidence": fact.get("confidence", 0.8),
+                "status": "generated",
+                "provenance": [f"{source_rel}"]
+            })
+
+        sdata["constraints"] = []
+        for i, const in enumerate(metadata.get("constraints", [])):
+            sdata["constraints"].append({
+                "id": f"constraint_{i}",
+                "value": const.get("value", ""),
+                "type": const.get("type", "rhetorical_boundary"),
+                "confidence": const.get("confidence", 0.8),
+                "status": "generated"
+            })
+
+        if sid in lock.get("sections", {}):
+            stale = lock["sections"][sid].setdefault("stale_fields", [])
+            for field in ("purpose", "key_terms", "facts"):
+                if field in stale:
+                    stale.remove(field)
+
+        inferred_count += 1
+
+    with open(generated_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(gen_cards, f, sort_keys=False)
+
+    import json
+    with open(lock_path, "w", encoding="utf-8") as f:
+        json.dump(lock, f, indent=2)
+
+    print(f"Inference completed. Inferred: {inferred_count}, Skipped: {skipped_count}", file=sys.stderr, flush=True)
+    return {
+        "status": "success",
+        "inferred": inferred_count,
+        "skipped": skipped_count
+    }
+
+
+def cards_review_command(project_root: str) -> dict[str, Any]:
+    """Interactively review candidate card fields in the terminal."""
+    root = Path(project_root).resolve()
+    generated_path = root / ".writing-context" / "cards.generated.yaml"
+    overrides_path = root / ".writing-context" / "cards.overrides.yaml"
+
+    example_path = overrides_path.with_name("cards.overrides.yaml.example")
+    if not generated_path.exists() or (not overrides_path.exists() and not example_path.exists()):
+        return {"status": "error", "message": "Section cards files not found. Run 'scan' and 'infer' first."}
+
+    try:
+        with open(generated_path, encoding="utf-8") as f:
+            gen_cards = yaml.safe_load(f) or {}
+        
+        overrides = {"version": 2, "document": {}, "sections": {}}
+        if overrides_path.exists():
+            with open(overrides_path, encoding="utf-8") as f:
+                overrides = yaml.safe_load(f) or overrides
+        elif example_path.exists():
+            with open(example_path, encoding="utf-8") as f:
+                overrides = yaml.safe_load(f) or overrides
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to load card files: {e}"}
+
+    gen_sections = gen_cards.get("sections", {}) or {}
+    over_sections = overrides.setdefault("sections", {})
+
+    print("\n--- Section Cards Interactive Review ---")
+    reviewed_count = 0
+
+    for sid, gs in gen_sections.items():
+        purpose = gs.get("purpose", {}).get("value", "")
+        role = gs.get("rhetorical_role", {}).get("value", "")
+        key_terms = [kt.get("value") for kt in gs.get("key_terms", []) if isinstance(kt, dict)]
+        facts = [f.get("value") for f in gs.get("facts", []) if isinstance(f, dict)]
+
+        if sid in over_sections and (over_sections[sid].get("purpose") or over_sections[sid].get("role")):
+            continue
+
+        print(f"\nSection ID: {sid}")
+        print(f"Title: {gs.get('structure', {}).get('title')}")
+        print(f"Rhetorical Role: {role}")
+        print(f"Proposed Purpose: {purpose}")
+        print(f"Proposed Key Terms: {', '.join(key_terms)}")
+        print(f"Proposed Facts to Preserve: {facts}")
+
+        ans = input("Accept these candidates? [y/n/e (edit)]: ").strip().lower()
+        if ans == "y":
+            os_data = over_sections.setdefault(sid, {})
+            os_data["purpose"] = purpose
+            os_data["role"] = role
+            os_data["key_terms"] = key_terms
+            os_data["must_preserve"] = facts
+            reviewed_count += 1
+        elif ans == "e":
+            os_data = over_sections.setdefault(sid, {})
+            custom_purpose = input(f"Enter purpose [{purpose}]: ").strip()
+            os_data["purpose"] = custom_purpose if custom_purpose else purpose
+            custom_role = input(f"Enter rhetorical role [{role}]: ").strip()
+            os_data["role"] = custom_role if custom_role else role
+            os_data["key_terms"] = key_terms
+            os_data["must_preserve"] = facts
+            reviewed_count += 1
+
+    with open(overrides_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(overrides, f, sort_keys=False)
+
+    print(f"\nReview completed. Updated {reviewed_count} sections in cards.overrides.yaml.")
+    return {"status": "success", "reviewed": reviewed_count}
+
+
+def cards_update_command(project_root: str, changed_only: bool = False) -> dict[str, Any]:
+    """Scan and update nodes tracking content hash changes."""
+    return cards_scan_command(project_root)
+
+
+def cards_validate_command(project_root: str) -> dict[str, Any]:
+    """Check cards for stale marks, missing files, and inconsistencies."""
+    root = Path(project_root).resolve()
+    generated_path = root / ".writing-context" / "cards.generated.yaml"
+    lock_path = root / ".writing-context" / "cards.lock.json"
+
+    if not generated_path.exists():
+        return {"status": "error", "message": "No generated cards found. Please run 'cards scan' first."}
+
+    lock = {}
+    if lock_path.exists():
+        try:
+            import json
+            with open(lock_path, encoding="utf-8") as f:
+                lock = json.load(f) or {}
+        except Exception:
+            pass
+
+    warnings = []
+    stale_count = 0
+
+    for sid, ls in lock.get("sections", {}).items():
+        stale = ls.get("stale_fields", [])
+        if stale:
+            warnings.append(f"Section '{sid}' has stale fields: {', '.join(stale)}. Re-inference needed.")
+            stale_count += 1
+
+    from writing_context_rtfm.section_cards import load_section_cards, validate_section_cards
+    cards = load_section_cards(str(generated_path))
+    if cards:
+        cons_warnings = validate_section_cards(cards)
+        warnings.extend(cons_warnings)
+
+    return {
+        "status": "success",
+        "stale_count": stale_count,
+        "warnings": warnings
+    }
+
+
+def cards_build_command(project_root: str, review: bool = False) -> dict[str, Any]:
+    """Combined workflow command running scan, infer, and optional review."""
+    print("Starting cards build workflow...", file=sys.stderr, flush=True)
+    scan_res = cards_scan_command(project_root)
+    if scan_res.get("status") == "error":
+        return scan_res
+    
+    try:
+        infer_res = cards_infer_command(project_root)
+    except Exception as e:
+        infer_res = {"status": "warning", "message": f"Semantic inference skipped: {e}"}
+
+    review_res = None
+    if review:
+        review_res = cards_review_command(project_root)
+
+    print("Cards build workflow completed.", file=sys.stderr, flush=True)
+    return {
+        "status": "success",
+        "scan": scan_res,
+        "infer": infer_res,
+        "review": review_res
     }

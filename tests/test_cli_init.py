@@ -26,7 +26,7 @@ class TestCliInit(unittest.TestCase):
 
         # Check standard config yaml/section cards
         self.assertTrue((self.project_root / ".writing-context" / "config.yaml").exists())
-        self.assertTrue((self.project_root / ".writing-context" / "section_cards.yaml").exists())
+        self.assertTrue((self.project_root / ".writing-context" / "cards.overrides.yaml.example").exists())
 
         # Check .gitignore
         gitignore = self.project_root / ".gitignore"

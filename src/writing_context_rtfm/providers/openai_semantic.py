@@ -45,7 +45,15 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
 
     def is_available(self, config: AppConfig) -> bool:
         provider_cfg = config.providers.get("openai_semantic")
-        if not provider_cfg or not provider_cfg.get("enabled", False):
+        if not provider_cfg:
+            return False
+
+        if isinstance(provider_cfg, dict):
+            enabled = provider_cfg.get("enabled", False)
+        else:
+            enabled = getattr(provider_cfg, "enabled", False)
+
+        if not enabled:
             return False
 
         if os.environ.get("OPENAI_API_KEY"):

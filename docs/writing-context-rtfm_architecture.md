@@ -48,14 +48,20 @@ Given this writing task, what previous context does the agent need, and what can
 
 ### 2.3 Use Hybrid Storage
 
-The extension should use three storage layers with clearly separated responsibilities:
+The extension should use four storage layers with clearly separated responsibilities:
 
 ```text
 RTFM SQLite database
   → retrieval index managed by RTFM
 
-.writing-context/section_cards.yaml
-  → human-maintained writing metadata
+.writing-context/cards.generated.yaml
+  → automatically scaffolded writing metadata and section cards
+
+.writing-context/cards.overrides.yaml
+  → human-maintained overrides, thesis, terminology, and specific section edits
+
+.writing-context/cards.lock.json
+  → lock file tracking versioning and checksum metadata for generation integrity
 
 .writing-context/config.yaml
   → human-maintained project configuration
@@ -83,8 +89,14 @@ user-manuscript-repository/
 │   ├── config.yaml
 │   │   └── human-maintained configuration
 │   │
-│   ├── section_cards.yaml
-│   │   └── human-maintained manuscript guidance
+│   ├── cards.generated.yaml
+│   │   └── automatically scaffolded metadata and section cards
+│   │
+│   ├── cards.overrides.yaml
+│   │   └── human-authored overrides, constraints, and thesis
+│   │
+│   ├── cards.lock.json
+│   │   └── lock file for generation integrity
 │   │
 │   └── context_cache.sqlite
 │       └── extension-generated cache and run history
@@ -113,18 +125,16 @@ RTFM is responsible for:
 
 The extension should not mutate RTFM tables.
 
-### 3.3 Human-Owned YAML Files
+### 3.3 Author-Owned and Generated Cards Layout
 
-Human-owned files express author intent. They should be readable and version-controlled.
+Card metadata is split to support both automated scaffolding and manual control:
 
-Use YAML for:
++ **`.writing-context/config.yaml`**: Main configuration file (human-maintained).
++ **`.writing-context/cards.overrides.yaml`**: Author-owned overrides containing custom constraints, terminology, style definitions, and specific section edits.
++ **`.writing-context/cards.generated.yaml`**: Generated and updated automatically via the `cards build` subcommand. Do not edit directly.
++ **`.writing-context/cards.lock.json`**: Lock file for tracking versioning and checksum metadata of parsed manuscript files.
 
-```text
-.writing-context/config.yaml
-.writing-context/section_cards.yaml
-```
-
-These files represent stable writing guidance, not generated indexes.
+These files express intent and project structure, and are designed to be version-controlled.
 
 ### 3.4 Extension-Owned SQLite Database
 
@@ -154,7 +164,7 @@ Agent calls writing-context-rtfm MCP tool
   ↓
 Extension loads config.yaml
   ↓
-Extension loads section_cards.yaml
+Extension merges cards.generated.yaml and cards.overrides.yaml
   ↓
 Extension queries RTFM through adapter
   ↓
@@ -228,7 +238,7 @@ writing-context-rtfm/
 + `pyproject.toml`.
 + Initial README.
 + Example `.writing-context/config.yaml`.
-+ Example `.writing-context/section_cards.yaml`.
++ Example split cards layout.
 
 ### Tests
 
@@ -313,12 +323,14 @@ Use the RTFM CLI or official API first. Direct SQL reads should be optional and 
 
 ### Objective
 
-Define the human-maintained configuration and writing metadata used by the context-pack generator.
+Define the configuration and split-card writing metadata used by the context-pack generator.
 
 ### Inputs
 
 + `.writing-context/config.yaml`.
-+ `.writing-context/section_cards.yaml`.
++ `.writing-context/cards.generated.yaml`.
++ `.writing-context/cards.overrides.yaml`.
++ `.writing-context/cards.lock.json`.
 + Project structure.
 + Author-maintained section information.
 
@@ -327,15 +339,15 @@ Define the human-maintained configuration and writing metadata used by the conte
 Functional requirements:
 
 + Load configuration from YAML.
-+ Load section cards from YAML.
-+ Validate missing and malformed fields.
-+ Provide safe defaults when section cards are absent.
++ Load generated and overrides cards from YAML, using a lock file for integrity checks.
++ Merge split cards at runtime prioritizing user-authored overrides.
++ Provide safe defaults and offline scan fallback when models or keys are absent.
 
 Non-functional requirements:
 
-+ Files must be readable by humans.
++ Split cards must be readable by humans (YAML).
 + Files must be suitable for Git diffs.
-+ Manual editing should not require a database browser or custom UI.
++ Overrides should be cleanly separated from machine-generated output.
 
 ### Functionality
 
@@ -362,63 +374,44 @@ cache:
   invalidate_on_refresh: true
 
 section_cards:
-  path: .writing-context/section_cards.yaml
+  path: .writing-context/section_cards.yaml  # Serves as base directory resolver for split files
   required: false
 ```
 
-Recommended section-card structure:
+#### Cards Merge Dataflow
 
-```yaml
-version: 1
-
-document:
-  title: "Working document title"
-  thesis: "One or two sentences describing the manuscript's central purpose."
-  writing_style:
-    tone: "academic, formal, concise"
-    avoid:
-      - "unsupported claims"
-      - "overly broad conclusions"
-
-sections:
-  section_1:
-    title: "Introduction"
-    role: "Define the problem, motivation, and contribution."
-    path: "sections/01_introduction.tex"
-    key_terms:
-      - "territorial prioritization"
-      - "emergency management"
-    depends_on: []
-    must_preserve:
-      - "The system supports decision-making; it does not replace human judgment."
-    avoid:
-      - "operational deployment claims"
-```
+At runtime, the merge engine reads `cards.generated.yaml`, `cards.overrides.yaml`, and `cards.lock.json` from the target directory and resolves conflicts using the following priority flow:
+1. **Document-Level properties**: Title, thesis, writing style, and terminology glossaries are loaded from `cards.overrides.yaml` first, falling back to `cards.generated.yaml`. Terminology glossaries merge definitions, variants, and words to avoid.
+2. **Sections list**: Evaluates the union of section IDs between overrides and generated cards.
+3. **Properties per Section**: Title, path, purpose/role are taken from overrides if present, falling back to generated values.
+4. **Key Terms & Dependencies**: Overrides completely replace the generated lists if defined. If not defined, candidate values from the generated card are loaded, omitting any marked as `rejected`.
+5. **Facts & Constraints**: High-confidence generated items (marked `accepted` or `verified`) are merged with author-defined facts/constraints in overrides.
 
 ### Architecture Notes
 
-Section cards remain in YAML because they are author-maintained. They should not be stored primarily in SQLite in v0.1.
+Section cards remain in YAML split files because they are author-maintained and machine-generated metadata. They should not be stored primarily in SQLite in v0.1.
 
 ### Artifacts
 
 + `config.py`.
 + `section_cards.py`.
 + Example config file.
-+ Example section cards file.
++ Example generated cards file.
++ Example overrides cards file.
 
 ### Tests
 
 + Missing config uses defaults.
-+ Missing section cards does not fail unless required.
++ Legacy `section_cards.yaml` is migrated to the split structure automatically with backups.
++ Merging generated and overrides produces correct compiled cards.
 + Invalid YAML produces clear errors.
-+ Edited section cards change the section-card hash.
 
 ### Progress Checklist
 
 + [x] Config schema implemented.
-+ [x] Section-card schema implemented.
-+ [x] YAML loaders implemented.
-+ [x] Defaults implemented.
++ [x] Split section-card schema implemented.
++ [x] Runtime merge logic implemented.
++ [x] Backup and migration paths implemented.
 + [x] Tests pass.
 
 ## Step 4: Extension-Owned SQLite Storage

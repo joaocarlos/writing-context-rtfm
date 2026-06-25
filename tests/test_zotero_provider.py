@@ -169,3 +169,65 @@ def test_include_abstract_config(base_config, mock_manager):
     assert len(spans) == 2
     snippet = spans[0].metadata["snippet"]
     assert "This is a long abstract that we want to KEEP" in snippet
+
+
+def test_similarity_score_filtering(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = (
+        "## 1. Good Paper\n"
+        "**Citation Key:** goodKey2023\n"
+        "**Similarity Score:** 0.85\n"
+        "**Matched Content:** Highly relevant.\n\n"
+        "## 2. Bad Paper\n"
+        "**Citation Key:** badKey2023\n"
+        "**Similarity Score:** -0.45\n"
+        "**Matched Content:** Irrelevant match."
+    )
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+
+    spans = provider.fetch_context(
+        ["intent"], target=None, limit=5, query_type_map={"intent": "intent"}
+    )
+
+    assert len(spans) == 1
+    assert spans[0].path == "zotero:goodKey2023"
+
+
+def test_similarity_score_filtering_config(base_config, mock_manager):
+    # Configure custom threshold to -0.5
+    base_config.providers["zotero"] = ProviderConfig(
+        enabled=True,
+        mcp_server=MCPServerConfig(command="zotero-mcp", args=["serve"]),
+        extra={"similarity_threshold": -0.5},
+    )
+    provider = ZoteroProvider(base_config)
+
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = (
+        "## 1. Good Paper\n"
+        "**Citation Key:** goodKey2023\n"
+        "**Similarity Score:** -0.45\n"
+        "**Matched Content:** Keep this because -0.45 > -0.5.\n\n"
+        "## 2. Bad Paper\n"
+        "**Citation Key:** badKey2023\n"
+        "**Similarity Score:** -0.55\n"
+        "**Matched Content:** Drop this because -0.55 < -0.5."
+    )
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+
+    spans = provider.fetch_context(
+        ["intent"], target=None, limit=5, query_type_map={"intent": "intent"}
+    )
+
+    assert len(spans) == 1
+    assert spans[0].path == "zotero:goodKey2023"
+
+

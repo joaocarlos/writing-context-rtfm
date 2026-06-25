@@ -11,8 +11,14 @@ RTFM SQLite database
 .writing-context/config.yaml
   → human-maintained configuration
 
-.writing-context/section_cards.yaml
-  → human-maintained manuscript guidance
+.writing-context/cards.generated.yaml
+  → automatically scaffolded writing metadata and section cards
+
+.writing-context/cards.overrides.yaml
+  → human-maintained overrides, thesis, terminology, and specific section edits
+
+.writing-context/cards.lock.json
+  → lock file tracking versioning and checksum metadata for generation integrity
 
 .writing-context/context_cache.sqlite
   → extension-generated cache, run history, retrieval events, and evaluation records
@@ -92,7 +98,9 @@ writing-context-rtfm/
 └── examples/
     └── .writing-context/
         ├── config.yaml
-        └── section_cards.yaml
+        ├── cards.generated.yaml
+        ├── cards.overrides.yaml
+        └── cards.lock.json
 ```
 
 ## 3.2 Local Project Layout
@@ -105,7 +113,9 @@ my-paper/
 │   └── library.db
 ├── .writing-context/
 │   ├── config.yaml
-│   ├── section_cards.yaml
+│   ├── cards.generated.yaml
+│   ├── cards.overrides.yaml
+│   ├── cards.lock.json
 │   └── context_cache.sqlite
 ├── sections/
 │   ├── 01_introduction.tex
@@ -182,7 +192,7 @@ writing-context-rtfm serve
 
 Command behavior:
 
-+ `init`: creates `.writing-context/config.yaml` and `.writing-context/section_cards.yaml` examples if they do not exist.
++ `init`: creates `.writing-context/config.yaml` and `.writing-context/cards.overrides.yaml.example` examples if they do not exist.
 + `init-db`: creates `.writing-context/context_cache.sqlite` and applies migrations.
 + `sync`: calls RTFM sync and invalidates context cache when configured.
 + `pack`: generates a context pack from the CLI for debugging.
@@ -219,8 +229,17 @@ cache:
   invalidate_on_refresh: true
 
 section_cards:
-  path: .writing-context/section_cards.yaml
+  path: .writing-context/section_cards.yaml  # Serves as base directory resolver for split files
   required: false
+
+providers:
+  zotero:
+    enabled: true
+    mcp_server:
+      command: node
+      args: ["/path/to/zotero-mcp/dist/index.js"]
+    extra:
+      similarity_threshold: -0.4  # Swept threshold to retain related network papers while pruning noise
 ```
 
 ## 5.3 Python Schema
@@ -254,91 +273,150 @@ class SectionCardsConfig:
     required: bool = False
 
 @dataclass(frozen=True)
+class MCPServerConfig:
+    command: str
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] | None = None
+
+@dataclass(frozen=True)
+class ProviderConfig:
+    enabled: bool = False
+    mcp_server: MCPServerConfig | None = None
+    sse_url: str | None = None
+    headers: dict[str, str] | None = None
+    extra: dict[str, Any] | None = None
+
+@dataclass(frozen=True)
 class AppConfig:
     version: int
     rtfm: RTFMConfig
     context: ContextConfig
     cache: CacheConfig
     section_cards: SectionCardsConfig
+    providers: dict[str, ProviderConfig] = field(default_factory=dict)
 ```
 
-## 6. Section Cards Schema
+## 6. Section Cards (Split Architecture)
 
-## 6.1 File Location
+## 6.1 File Locations
 
 ```text
-.writing-context/section_cards.yaml
+.writing-context/cards.generated.yaml
+.writing-context/cards.overrides.yaml
+.writing-context/cards.lock.json
 ```
 
 ## 6.2 Rationale
 
-Section cards are stored in YAML because they are human-authored writing guidance. They should be easy to edit manually, inspect in Git diffs, and version with the manuscript.
+Separating generated structure (`cards.generated.yaml`) from user overrides (`cards.overrides.yaml`) prevents automated scans from wiping out custom guidelines, terminology glossaries, or manually defined constraints. The lock file (`cards.lock.json`) ensures that user decisions (such as accepting or rejecting machine-extracted cards/fields) are saved persistently, avoiding repeated suggestions.
 
-They should not be stored primarily in SQLite in v0.1 because that would require custom editing, migration, import/export, and review tooling before the project has validated its core value.
+## 6.3 Recommended Schemas
 
-## 6.3 Recommended Schema
+### 1. `cards.generated.yaml` (Machine-Written)
+Stores automatically extracted section cards, mapped rhetorical roles, and candidate constraints.
 
 ```yaml
-version: 1
-
+version: 2
 document:
-  title: "Working document title"
-  thesis: "One or two sentences describing the manuscript's central purpose."
+  title: "Urban Emergency Routing"
+  thesis: "Optimal routing reduces response times under resource-load conditions."
+  writing_style:
+    tone: "academic, formal, concise"
+  terminology:
+    territorial prioritization:
+      definition: "Ranking geographic sectors based on risk profile."
+      variants: ["sector prioritization", "zone ranking"]
+      avoid: ["geosectoring"]
+sections:
+  section_1:
+    identity:
+      source: "sections/01_introduction.tex"
+    structure:
+      title: "Introduction"
+    purpose:
+      value: "Define the emergency routing problem."
+      status: "verified"
+    rhetorical_role:
+      value: "problem definition"
+    key_terms:
+      - value: "emergency routing"
+        status: "accepted"
+      - value: "dynamic prioritisation"
+        status: "generated"
+    dependencies:
+      - target: "section_2"
+        status: "accepted"
+    facts:
+      - value: "Response delay grows exponentially with traffic congestion."
+        status: "verified"
+    constraints:
+      - value: "Do not describe routing algorithms in detail."
+        type: "scope_exclusion"
+        status: "accepted"
+```
+
+### 2. `cards.overrides.yaml` (Author-Owned)
+Author-owned file containing custom guidelines and overrides.
+
+```yaml
+version: 2
+document:
+  title: "Urban Emergency Routing & Territorial Prioritization"
+  thesis: "Optimal routing reduces response times under resource-load conditions, supported by territorial prioritization."
   writing_style:
     tone: "academic, formal, concise"
     avoid:
-      - "unsupported claims"
-      - "unnecessary cross-references"
-      - "overly broad conclusions"
-
+      - "loose terminology"
+  terminology:
+    territorial prioritization:
+      definition: "Ranking emergency regions based on vulnerability parameters."
 sections:
   section_1:
-    title: "Introduction"
-    role: "Define the problem, motivation, and contribution."
-    path: "sections/01_introduction.tex"
+    title: "Introduction & Context"
+    purpose: "Establish emergency planning context and project scope."
     key_terms:
-      - "urban emergency management"
       - "territorial prioritization"
+      - "urban emergency routing"
     depends_on: []
     must_preserve:
-      - "The system supports decision-making; it does not replace human judgment."
+      - "Human operators make final dispatching decisions."
     avoid:
-      - "operational deployment claims"
+      - "deployment claims"
+```
 
-  section_4:
-    title: "Methodological Demonstration"
-    role: "Explain and demonstrate the workflow."
-    path: "sections/04_methodology.tex"
-    key_terms:
-      - "fixed train-test split"
-      - "harmonized event types"
-      - "resource-load attributes"
-    depends_on:
-      - section_3
-    must_preserve:
-      - "The train-test split occurs after preprocessing and feature construction."
+### 3. `cards.lock.json` (Lock State)
+Stores status parameters and checksums of original files.
 
-  section_6:
-    title: "Research Agenda"
-    role: "Synthesize future directions without exceeding the chapter evidence."
-    path: "sections/06_research_agenda.tex"
-    depends_on:
-      - section_2
-      - section_4
-      - section_5
-    constraints:
-      - "Do not introduce unsupported new claims."
-      - "Use Section 5 limitations as framing."
+```json
+{
+  "generation_version": 2,
+  "extractor_version": 1,
+  "sections": {
+    "section_1": {
+      "content_hash": "a1b2c3d4e5f6g7h8",
+      "decisions": {
+        "key_terms": {
+          "dynamic prioritisation": "rejected"
+        }
+      },
+      "stale_fields": []
+    }
+  }
+}
 ```
 
 ## 6.4 Python Schema
 
 ```python
+from dataclasses import dataclass
+from typing import Any
+
 @dataclass(frozen=True)
 class DocumentCard:
     title: str | None = None
     thesis: str | None = None
     writing_style: dict[str, object] | None = None
+    terminology: dict[str, Any] | None = None
 
 @dataclass(frozen=True)
 class SectionCard:
@@ -880,7 +958,7 @@ test_token_budget_limits_selected_spans
 5. Verify selected spans include expected files.
 6. Generate the same context pack again.
 7. Verify cache hit.
-8. Edit section_cards.yaml.
+8. Edit cards.overrides.yaml.
 9. Generate pack again.
 10. Verify cache miss.
 ```

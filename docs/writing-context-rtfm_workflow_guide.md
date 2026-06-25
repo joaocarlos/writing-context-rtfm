@@ -13,11 +13,13 @@ This guide outlines the standard workflow, commands, and Agent Rules of Engageme
 
 ```mermaid
 graph TD
-    A[Manuscript Workspace] -->|Index & Sync| B[RTFM library.db]
-    C[section_cards.yaml] -->|Define Thesis & Dependencies| D[Writing Context MCP Server]
-    B -->|Semantic Spans| D
-    D -->|Filter & Token Cap| E[Compact Writing Context Pack]
-    E -->|Write / Edit| F[AI Agent / Client]
+    A[Manuscript Workspace] -->|cards build| B[cards.generated.yaml]
+    C[cards.overrides.yaml] -->|User Overrides| D[Runtime Merge Engine]
+    B -->|Generated Cards| D
+    D -->|Merged Cards| E[Writing Context MCP Server]
+    F[RTFM library.db] -->|Semantic Spans| E
+    E -->|Filter & Token Cap| G[Compact Writing Context Pack]
+    G -->|Write / Edit| H[AI Agent / Client]
 ```
 
 ---
@@ -38,18 +40,21 @@ Run the initialization command at the root of your project:
 writing-context-rtfm init
 ```
 This command non-destructively initializes:
-1. **`.writing-context/config.yaml`**: The main configuration pointing to the RTFM corpus.
-2. **`.writing-context/section_cards.yaml`**: A placeholder metadata file.
-3. **`.gitignore`**: Append `.writing-context/context_cache.sqlite` to prevent tracking of local runs.
-4. **`.mcp.json`**: An MCP server registry configuration for integration into editors.
-5. **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**: Guidelines appended with the **Agent Rules of Thumb** block.
+1. **`.writing-context/config.yaml`**: The main configuration pointing to your RTFM corpus.
+2. **`.writing-context/cards.overrides.yaml.example`**: A sample template containing overrides formatting (document title, global thesis, terminology glossaries, style constraints, and section overrides).
+3. **`.gitignore`**: Appends cache database files to keep run history untracked.
+4. **`.mcp.json`**: Editor server definition.
+5. **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**: Appends agent guidelines.
 
 ### Step 3: Scaffold Section Cards
-Generate the dependency mapping automatically by scanning LaTeX files:
+Scan your project to compile the section metadata:
 ```bash
-writing-context-rtfm init-cards
+writing-context-rtfm cards build
 ```
-This scans all `.tex` and `.md` files, parses LaTeX `\input` structures and label references, and registers sections with their automatic `depends_on` links inside `.writing-context/section_cards.yaml`.
+Under the hood, this scans your LaTeX files for hierarchy and cross-references, uses model-assisted inference to extract purposes and constraints, and saves them to `.writing-context/cards.generated.yaml`.
+
+* **Model Inference Fallback Chain**: If no OpenAI API key is configured, `cards build` automatically attempts to resolve card extraction using a model fallback chain (OpenAI API -> Hugging Face serverless API using `HF_TOKEN` -> local Ollama server running at `http://localhost:11434` -> deterministic offline scan of LaTeX cross-references).
+* **Refining Card Properties**: Copy `.writing-context/cards.overrides.yaml.example` to `.writing-context/cards.overrides.yaml` and add your custom guidelines or section tweaks. The server merges overrides on top of the generated file at runtime.
 
 ### Step 4: Install the RTFM CLI (Retrieval Engine)
 Since this extension uses RTFM to search and index files, ensure you install `rtfm-ai` globally or in your virtual environment:
@@ -83,9 +88,9 @@ Because `writing-context-rtfm` analyzes the LaTeX file structure of your project
 
 #### A. Starting a New Project (Empty Repository)
 If your repository is empty:
-1. `writing-context-rtfm init` will run successfully, but `init-cards` won't find any LaTeX files to parse.
+1. `writing-context-rtfm init` will run successfully, but `cards build` won't find any LaTeX files to parse.
 2. Create your root LaTeX file (e.g., `main.tex`) and any modular sections (e.g., `sections/01_introduction.tex`).
-3. Run `writing-context-rtfm init-cards` to automatically build your `.writing-context/section_cards.yaml`.
+3. Run `writing-context-rtfm cards build` to automatically build your `.writing-context/cards.generated.yaml`.
 
 #### B. Working with Overleaf Manuscripts
 If your manuscript is hosted on Overleaf, you must bridge it to your local environment for the local MCP server:
@@ -94,7 +99,7 @@ If your manuscript is hosted on Overleaf, you must bridge it to your local envir
    - *GitHub Sync (Free)*: Enable GitHub Sync inside Overleaf and clone the target GitHub repository locally.
    - *Manual Download*: Download the project ZIP from Overleaf, extract it, and run `git init` locally.
 2. **Setup the extension**:
-   - Run the onboarding sequence (`writing-context-rtfm init`, `init-cards`, `rtfm init`, and `rtfm sync`) inside the local folder.
+   - Run the onboarding sequence (`writing-context-rtfm init`, `cards build`, `rtfm init`, and `rtfm sync`) inside the local folder.
 3. **Synchronize Changes**:
    - Let your AI agent write files locally. Commit and push the changes back to Overleaf or GitHub to automatically sync your Overleaf project.
 
@@ -105,7 +110,7 @@ If your manuscript is hosted on Overleaf, you must bridge it to your local envir
 | Command | Purpose | Key Arguments |
 | :--- | :--- | :--- |
 | `init` | Initial setup of configuration, gitignore, and agent guidelines. | None |
-| `init-cards` | Discovers files and automatically maps out section card dependencies. | None |
+| `cards build` | Discovers files, infers metadata, and compiles section card structures. | None |
 | `sync` | Manually updates the underlying RTFM index. | None |
 | `pack` | Generates a context pack for draft/revise tasks. | `--task`, `--target`, `--budget`, `--pack-mode` |
 | `proofread-pack` | Generates a context pack optimized for grammar/style edits. | `target_file`, `--line-start`, `--line-end`, `--max-tokens` |

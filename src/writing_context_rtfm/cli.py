@@ -239,7 +239,7 @@ def init_command(args):
     wc = root / ".writing-context"
     wc.mkdir(exist_ok=True)
     config_file = wc / "config.yaml"
-    sc_file = wc / "section_cards.yaml"
+    sc_file = wc / "cards.overrides.yaml.example"
     if not config_file.exists():
         from writing_context_rtfm.providers.discovery import autodiscover_local_mcps
 
@@ -313,18 +313,23 @@ def init_command(args):
             "  # enabled: true\n"
             "  # Invalidate cached context packs when the index is synced/refreshed.\n"
             "  # invalidate_on_refresh: true\n\n"
+            "# Card scaffolding generator configuration\n"
+            "# generator:\n"
+            "  # The model to use (e.g. gpt-4o-mini, Qwen/Qwen2.5-Coder-7B-Instruct, phi3)\n"
+            "  # model: gpt-4o-mini\n"
+            "  # The API endpoint base URL\n"
+            "  # api_base: https://api.openai.com/v1\n\n"
             "# External context providers configuration (Zotero)\n"
             f"{providers_block}\n"
         )
         config_file.write_text(template, encoding="utf-8")
         print(f"Created {config_file}")
-    if not sc_file.exists():
+    if not sc_file.exists() and not (wc / "cards.overrides.yaml").exists():
         template_sc = (
-            "# writing-context-rtfm Section Cards Configuration\n"
-            "# This file acts as your manuscript roadmap, helping the AI agent\n"
-            "# keep track of the global thesis, terminology, section layout, and dependencies.\n"
-            "version: 1\n\n"
-            "# Document-level global context\n"
+            "# writing-context-rtfm Section Cards Overrides Template\n"
+            "# Use this file to define manual overrides for document settings and section metadata.\n"
+            "version: 2\n\n"
+            "# Document-level global context overrides\n"
             "document:\n"
             "  # The title of your project or paper\n"
             '  title: "A New Approach to Manuscript Curation"\n'
@@ -336,19 +341,16 @@ def init_command(args):
             '    avoid_words: ["cliché", "groundbreaking", "revolutionary", "game-changing"]\n'
             "  # Global project terminology dictionary\n"
             "  terminology:\n"
-            "    # Option A: Simple term-to-definition mapping\n"
             '    Context Pack: "A compact JSON structure containing prioritized source spans, token estimates, and constraints."\n'
-            "    # Option B: Advanced term definition with variants and avoid matches\n"
             "    RTFM:\n"
             '      definition: "Read The Fine Manual: A semantic retrieval and indexing tool."\n'
             '      variants: ["rtfm-ai", "RTFM CLI"]\n'
             '      avoid: ["RTFM database write", "modifying library.db"]\n\n'
-            "# Section cards definitions. Fill these in to outline your paper's structure.\n"
-            "# If your files already exist, you can run `writing-context-rtfm init-cards` to auto-scaffold them.\n"
+            "# Section overrides definitions. Edit these to override generated metadata.\n"
             "sections:\n"
             "  section_abstract:\n"
             '    title: "Abstract"\n'
-            '    role: "Provide a standalone, 150-word summary of the thesis, approach, and primary results."\n'
+            '    purpose: "Provide a standalone, 150-word summary of the thesis, approach, and primary results."\n'
             '    path: "sections/00_abstract.tex"  # Relative path to your draft file\n'
             '    key_terms: ["Surgical context", "Gatekeeping protocol"]\n'
             "    depends_on: []                    # Abstract usually has no direct dependencies\n"
@@ -359,7 +361,7 @@ def init_command(args):
             '      - "Max 150 words"\n\n'
             "  section_introduction:\n"
             '    title: "Introduction"\n'
-            '    role: "Establish the problem context, outline the research gap, and state the main contributions."\n'
+            '    purpose: "Establish the problem context, outline the research gap, and state the main contributions."\n'
             '    path: "sections/01_introduction.tex"\n'
             '    key_terms: ["LLM token overhead", "context curation"]\n'
             "    depends_on:\n"
@@ -370,7 +372,7 @@ def init_command(args):
             '      - "Ensure main contributions are listed as a bulleted list"\n\n'
             "  section_methodology:\n"
             '    title: "Proposed Methodology"\n'
-            '    role: "Detail the system architecture, mathematical formulations, and context selection algorithms."\n'
+            '    purpose: "Detail the system architecture, mathematical formulations, and context selection algorithms."\n'
             '    path: "sections/02_methodology.tex"\n'
             '    key_terms: ["Gatekeeping protocol", "Token budget"]\n'
             "    depends_on:\n"
@@ -892,6 +894,53 @@ def cleanup_command(args):
         print(f"Error writing empty list to {pid_file}: {e}")
 
 
+def cards_command(args):
+    subcmd = args.subcommand
+    project_root = getattr(args, "project_root", ".")
+    
+    from writing_context_rtfm.features import (
+        cards_scan_command,
+        cards_infer_command,
+        cards_review_command,
+        cards_update_command,
+        cards_validate_command,
+        cards_build_command,
+    )
+    
+    try:
+        if subcmd == "scan":
+            res = cards_scan_command(project_root)
+        elif subcmd == "infer":
+            res = cards_infer_command(project_root, force=getattr(args, "force", False))
+        elif subcmd == "review":
+            res = cards_review_command(project_root)
+        elif subcmd == "update":
+            res = cards_update_command(project_root, changed_only=getattr(args, "changed_only", False))
+        elif subcmd == "validate":
+            res = cards_validate_command(project_root)
+        elif subcmd == "build":
+            res = cards_build_command(project_root, review=getattr(args, "review", False))
+        else:
+            print(f"Error: Unknown cards subcommand '{subcmd}'")
+            sys.exit(1)
+            
+        if res.get("status") == "error":
+            print(f"Error: {res.get('message')}")
+            sys.exit(1)
+        elif res.get("status") == "warning":
+            print(f"Warning: {res.get('message')}")
+        else:
+            print(json.dumps(res, indent=2))
+    except Exception as e:
+        from writing_context_rtfm.semantic_extractor import MissingAPIKeyError
+        if isinstance(e, MissingAPIKeyError) or "MissingAPIKeyError" in type(e).__name__:
+            print(f"Error: {e}")
+            sys.exit(1)
+        else:
+            print(f"Error: Command failed: {e}")
+            sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
@@ -1014,7 +1063,7 @@ def main():
         "auth", help="Store an API key for a provider in the local cache database"
     )
     parser_auth.add_argument(
-        "provider", choices=["openai_semantic"], help="The provider to authenticate"
+        "provider", choices=["openai_semantic", "huggingface"], help="The provider to authenticate"
     )
     parser_auth.add_argument("token", help="The API key/token")
     parser_auth.add_argument("--project-root", default=".", help="Project root path")
@@ -1024,6 +1073,37 @@ def main():
         "cleanup", help="Cleanly terminate all tracked background MCP processes"
     )
     parser_cleanup.add_argument("--project-root", default=".", help="Project root path")
+
+    # cards
+    p_cards = subparsers.add_parser("cards", help="Manage section cards build workflow")
+    cards_sub = p_cards.add_subparsers(dest="subcommand", required=True)
+
+    # cards scan
+    p_scan = cards_sub.add_parser("scan", help="Scan manuscript structure and extract deterministic metadata")
+    p_scan.add_argument("--project-root", default=".", help="Project root path")
+
+    # cards infer
+    p_infer = cards_sub.add_parser("infer", help="Run model-assisted semantic extraction on section nodes")
+    p_infer.add_argument("--project-root", default=".", help="Project root path")
+    p_infer.add_argument("--force", action="store_true", help="Force re-inference of all sections")
+
+    # cards review
+    p_review = cards_sub.add_parser("review", help="Interactively review candidate card fields")
+    p_review.add_argument("--project-root", default=".", help="Project root path")
+
+    # cards update
+    p_update = cards_sub.add_parser("update", help="Update cards following manuscript changes, marking modified fields as stale")
+    p_update.add_argument("--project-root", default=".", help="Project root path")
+    p_update.add_argument("--changed-only", action="store_true", help="Only scan changed files")
+
+    # cards validate
+    p_validate = cards_sub.add_parser("validate", help="Check for stale fields, missing references, and inconsistencies")
+    p_validate.add_argument("--project-root", default=".", help="Project root path")
+
+    # cards build
+    p_build = cards_sub.add_parser("build", help="Run scan, infer, and update in sequence")
+    p_build.add_argument("--project-root", default=".", help="Project root path")
+    p_build.add_argument("--review", action="store_true", help="Run review after build")
 
     subparsers.add_parser("serve", help="Start the MCP server")
 
@@ -1044,6 +1124,7 @@ def main():
         "show-graph": show_graph_command,
         "auth": auth_command,
         "cleanup": cleanup_command,
+        "cards": cards_command,
     }
 
     commands[args.command](args)

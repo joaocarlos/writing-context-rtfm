@@ -458,6 +458,131 @@ def get_tools_list():
                     },
                 },
             },
+            {
+                "name": "review_card_candidates",
+                "description": "List all pending section card candidates from cards.generated.yaml with status 'generated'.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path. Defaults to current workspace."
+                        }
+                    }
+                }
+            },
+            {
+                "name": "accept_card_candidate",
+                "description": "Approve a candidate field value for a section. Writes the approved value to cards.overrides.yaml and updates the status to 'accepted' in lock.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string",
+                            "description": "The target section ID (e.g. 'section_introduction')."
+                        },
+                        "field": {
+                            "type": "string",
+                            "enum": ["purpose", "key_terms", "facts", "constraints"],
+                            "description": "The field of the candidate to accept."
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The specific candidate value to accept. For list fields, specifies the item value."
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path. Defaults to current workspace."
+                        }
+                    },
+                    "required": ["section_id", "field", "value"]
+                }
+            },
+            {
+                "name": "reject_card_candidate",
+                "description": "Reject a candidate field value for a section. Marks the candidate status as 'rejected' in cards.lock.json and cards.generated.yaml.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string",
+                            "description": "The target section ID."
+                        },
+                        "field": {
+                            "type": "string",
+                            "enum": ["purpose", "key_terms", "facts", "constraints"],
+                            "description": "The field of the candidate to reject."
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The specific candidate value to reject. For list fields, specifies the item value."
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path. Defaults to current workspace."
+                        }
+                    },
+                    "required": ["section_id", "field", "value"]
+                }
+            },
+            {
+                "name": "edit_card_field",
+                "description": "Directly modify or set a field value in cards.overrides.yaml for a specific section.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string",
+                            "description": "The target section ID."
+                        },
+                        "field": {
+                            "type": "string",
+                            "enum": ["purpose", "role", "key_terms", "depends_on", "must_preserve", "avoid", "constraints", "path", "title"],
+                            "description": "The overrides field to update."
+                        },
+                        "value": {
+                            "description": "The new value to assign to the overrides field. Can be a string or a list of strings depending on the field.",
+                            "anyOf": [
+                                { "type": "string" },
+                                { "type": "array", "items": { "type": "string" } },
+                                { "type": "null" }
+                            ]
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path. Defaults to current workspace."
+                        }
+                    },
+                    "required": ["section_id", "field", "value"]
+                }
+            },
+            {
+                "name": "explain_card_candidate",
+                "description": "Provide extraction details/evidence/provenance for a specific card candidate.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string",
+                            "description": "The target section ID."
+                        },
+                        "field": {
+                            "type": "string",
+                            "enum": ["purpose", "key_terms", "facts", "constraints"],
+                            "description": "The candidate field."
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The specific candidate value to explain."
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path. Defaults to current workspace."
+                        }
+                    },
+                    "required": ["section_id", "field", "value"]
+                }
+            },
         ]
     }
 
@@ -782,6 +907,509 @@ def handle_get_manuscript_reference_graph(args):
         )
 
 
+def handle_review_card_candidates(args):
+    project_root = args.get("project_root")
+    try:
+        root = Path(project_root) if project_root else WORKSPACE_ROOT
+        generated_path = root / ".writing-context" / "cards.generated.yaml"
+        if not generated_path.exists():
+            return _error_response(
+                ERROR_CONFIG, "No generated cards found. Please run 'cards scan' first."
+            )
+
+        import yaml
+        with open(generated_path, encoding="utf-8") as f:
+            gen_data = yaml.safe_load(f) or {}
+
+        candidates = []
+        sections = gen_data.get("sections", {}) or {}
+        for sid, sdata in sections.items():
+            # Check purpose candidate
+            purpose = sdata.get("purpose")
+            if isinstance(purpose, dict) and purpose.get("status") == "generated":
+                candidates.append({
+                    "section_id": sid,
+                    "field": "purpose",
+                    "value": purpose.get("value"),
+                    "confidence": purpose.get("confidence", 0.0),
+                    "provenance": purpose.get("provenance", [])
+                })
+
+            # Check key_terms candidates
+            for kt in sdata.get("key_terms", []):
+                if isinstance(kt, dict) and kt.get("status") == "generated":
+                    candidates.append({
+                        "section_id": sid,
+                        "field": "key_terms",
+                        "value": kt.get("value"),
+                        "confidence": kt.get("confidence", 0.0),
+                        "evidence": kt.get("evidence")
+                    })
+
+            # Check facts candidates
+            for fact in sdata.get("facts", []):
+                if isinstance(fact, dict) and fact.get("status") == "generated":
+                    candidates.append({
+                        "section_id": sid,
+                        "field": "facts",
+                        "value": fact.get("value"),
+                        "confidence": fact.get("confidence", 0.0),
+                        "provenance": fact.get("provenance", [])
+                    })
+
+            # Check constraints candidates
+            for const in sdata.get("constraints", []):
+                if isinstance(const, dict) and const.get("status") == "generated":
+                    candidates.append({
+                        "section_id": sid,
+                        "field": "constraints",
+                        "value": const.get("value"),
+                        "confidence": const.get("confidence", 0.0)
+                    })
+
+        return _success_response({"candidates": candidates})
+    except Exception as e:
+        logger.exception("Failed to review card candidates")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to review card candidates: {e}", type(e).__name__
+        )
+
+
+def handle_accept_card_candidate(args):
+    section_id = args.get("section_id")
+    field = args.get("field")
+    value = args.get("value")
+    project_root = args.get("project_root")
+
+    if not section_id or not field or value is None:
+        return _error_response(
+            ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
+        )
+    if field not in ("purpose", "key_terms", "facts", "constraints"):
+        return _error_response(
+            ERROR_INVALID_INPUT, f"Invalid candidate field: {field}"
+        )
+
+    try:
+        root = Path(project_root) if project_root else WORKSPACE_ROOT
+        generated_path = root / ".writing-context" / "cards.generated.yaml"
+        overrides_path = root / ".writing-context" / "cards.overrides.yaml"
+        lock_path = root / ".writing-context" / "cards.lock.json"
+
+        if not generated_path.exists():
+            return _error_response(
+                ERROR_CONFIG, "No generated cards found. Please run 'cards scan' first."
+            )
+
+        import yaml
+        with open(generated_path, encoding="utf-8") as f:
+            gen_data = yaml.safe_load(f) or {}
+
+        sections = gen_data.get("sections", {}) or {}
+        if section_id not in sections:
+            return _error_response(
+                ERROR_INVALID_INPUT, f"Section ID '{section_id}' not found in generated cards."
+            )
+
+        sdata = sections[section_id]
+        found = False
+
+        # Find and update candidate status in generated
+        if field == "purpose":
+            purpose = sdata.get("purpose")
+            if isinstance(purpose, dict) and purpose.get("value") == value:
+                purpose["status"] = "accepted"
+                found = True
+        elif field == "key_terms":
+            for kt in sdata.get("key_terms", []):
+                if isinstance(kt, dict) and kt.get("value") == value:
+                    kt["status"] = "accepted"
+                    found = True
+                    break
+        elif field == "facts":
+            for fact in sdata.get("facts", []):
+                if isinstance(fact, dict) and fact.get("value") == value:
+                    fact["status"] = "accepted"
+                    found = True
+                    break
+        elif field == "constraints":
+            for const in sdata.get("constraints", []):
+                if isinstance(const, dict) and const.get("value") == value:
+                    const["status"] = "accepted"
+                    found = True
+                    break
+
+        if not found:
+            return _error_response(
+                ERROR_INVALID_INPUT, f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'."
+            )
+
+        # Update overrides
+        overrides_data = {"version": 2, "document": {}, "sections": {}}
+        if overrides_path.exists():
+            try:
+                with open(overrides_path, encoding="utf-8") as f:
+                    overrides_data = yaml.safe_load(f) or overrides_data
+            except Exception:
+                pass
+
+        over_sections = overrides_data.setdefault("sections", {})
+        sec_over = over_sections.setdefault(section_id, {})
+
+        if field == "purpose":
+            sec_over["purpose"] = value
+        elif field == "key_terms":
+            sec_over.setdefault("key_terms", [])
+            if sec_over["key_terms"] is None:
+                sec_over["key_terms"] = []
+            if value not in sec_over["key_terms"]:
+                sec_over["key_terms"].append(value)
+        elif field == "facts":
+            sec_over.setdefault("must_preserve", [])
+            if sec_over["must_preserve"] is None:
+                sec_over["must_preserve"] = []
+            if value not in sec_over["must_preserve"]:
+                sec_over["must_preserve"].append(value)
+        elif field == "constraints":
+            sec_over.setdefault("constraints", [])
+            if sec_over["constraints"] is None:
+                sec_over["constraints"] = []
+            if value not in sec_over["constraints"]:
+                sec_over["constraints"].append(value)
+
+        # Update lock decisions
+        lock_data = {"sections": {}}
+        if lock_path.exists():
+            try:
+                with open(lock_path, encoding="utf-8") as f:
+                    lock_data = json.load(f) or lock_data
+            except Exception:
+                pass
+
+        lock_sections = lock_data.setdefault("sections", {})
+        sec_lock = lock_sections.setdefault(section_id, {"content_hash": "", "decisions": {}, "stale_fields": []})
+        decisions = sec_lock.setdefault("decisions", {})
+        
+        if field == "purpose":
+            decisions["purpose"] = "accepted"
+        else:
+            decisions[f"{field}:{value}"] = "accepted"
+
+        # Save files
+        overrides_path.parent.mkdir(exist_ok=True, parents=True)
+        with open(generated_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(gen_data, f, sort_keys=False)
+        with open(overrides_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(overrides_data, f, sort_keys=False)
+        with open(lock_path, "w", encoding="utf-8") as f:
+            json.dump(lock_data, f, indent=2)
+
+        # Invalidate runtime cache
+        global _RUNTIME_CACHE
+        _RUNTIME_CACHE = None
+
+        return _success_response({
+            "status": "accepted",
+            "section_id": section_id,
+            "field": field,
+            "value": value
+        })
+
+    except Exception as e:
+        logger.exception("Failed to accept card candidate")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to accept card candidate: {e}", type(e).__name__
+        )
+
+
+def handle_reject_card_candidate(args):
+    section_id = args.get("section_id")
+    field = args.get("field")
+    value = args.get("value")
+    project_root = args.get("project_root")
+
+    if not section_id or not field or value is None:
+        return _error_response(
+            ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
+        )
+    if field not in ("purpose", "key_terms", "facts", "constraints"):
+        return _error_response(
+            ERROR_INVALID_INPUT, f"Invalid candidate field: {field}"
+        )
+
+    try:
+        root = Path(project_root) if project_root else WORKSPACE_ROOT
+        generated_path = root / ".writing-context" / "cards.generated.yaml"
+        overrides_path = root / ".writing-context" / "cards.overrides.yaml"
+        lock_path = root / ".writing-context" / "cards.lock.json"
+
+        if not generated_path.exists():
+            return _error_response(
+                ERROR_CONFIG, "No generated cards found. Please run 'cards scan' first."
+            )
+
+        import yaml
+        with open(generated_path, encoding="utf-8") as f:
+            gen_data = yaml.safe_load(f) or {}
+
+        sections = gen_data.get("sections", {}) or {}
+        if section_id not in sections:
+            return _error_response(
+                ERROR_INVALID_INPUT, f"Section ID '{section_id}' not found in generated cards."
+            )
+
+        sdata = sections[section_id]
+        found = False
+
+        # Find and update candidate status in generated
+        if field == "purpose":
+            purpose = sdata.get("purpose")
+            if isinstance(purpose, dict) and purpose.get("value") == value:
+                purpose["status"] = "rejected"
+                found = True
+        elif field == "key_terms":
+            for kt in sdata.get("key_terms", []):
+                if isinstance(kt, dict) and kt.get("value") == value:
+                    kt["status"] = "rejected"
+                    found = True
+                    break
+        elif field == "facts":
+            for fact in sdata.get("facts", []):
+                if isinstance(fact, dict) and fact.get("value") == value:
+                    fact["status"] = "rejected"
+                    found = True
+                    break
+        elif field == "constraints":
+            for const in sdata.get("constraints", []):
+                if isinstance(const, dict) and const.get("value") == value:
+                    const["status"] = "rejected"
+                    found = True
+                    break
+
+        if not found:
+            return _error_response(
+                ERROR_INVALID_INPUT, f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'."
+            )
+
+        # Update overrides (remove if present)
+        overrides_data = {"version": 2, "document": {}, "sections": {}}
+        if overrides_path.exists():
+            try:
+                with open(overrides_path, encoding="utf-8") as f:
+                    overrides_data = yaml.safe_load(f) or overrides_data
+            except Exception:
+                pass
+
+        over_sections = overrides_data.setdefault("sections", {})
+        sec_over = over_sections.setdefault(section_id, {})
+
+        if field == "purpose":
+            if "purpose" in sec_over:
+                del sec_over["purpose"]
+        elif field == "key_terms":
+            if "key_terms" in sec_over and sec_over["key_terms"]:
+                if value in sec_over["key_terms"]:
+                    sec_over["key_terms"].remove(value)
+        elif field == "facts":
+            if "must_preserve" in sec_over and sec_over["must_preserve"]:
+                if value in sec_over["must_preserve"]:
+                    sec_over["must_preserve"].remove(value)
+        elif field == "constraints":
+            if "constraints" in sec_over and sec_over["constraints"]:
+                if value in sec_over["constraints"]:
+                    sec_over["constraints"].remove(value)
+
+        # Update lock decisions
+        lock_data = {"sections": {}}
+        if lock_path.exists():
+            try:
+                with open(lock_path, encoding="utf-8") as f:
+                    lock_data = json.load(f) or lock_data
+            except Exception:
+                pass
+
+        lock_sections = lock_data.setdefault("sections", {})
+        sec_lock = lock_sections.setdefault(section_id, {"content_hash": "", "decisions": {}, "stale_fields": []})
+        decisions = sec_lock.setdefault("decisions", {})
+        
+        if field == "purpose":
+            decisions["purpose"] = "rejected"
+        else:
+            decisions[f"{field}:{value}"] = "rejected"
+
+        # Save files
+        with open(generated_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(gen_data, f, sort_keys=False)
+        with open(overrides_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(overrides_data, f, sort_keys=False)
+        with open(lock_path, "w", encoding="utf-8") as f:
+            json.dump(lock_data, f, indent=2)
+
+        # Invalidate runtime cache
+        global _RUNTIME_CACHE
+        _RUNTIME_CACHE = None
+
+        return _success_response({
+            "status": "rejected",
+            "section_id": section_id,
+            "field": field,
+            "value": value
+        })
+
+    except Exception as e:
+        logger.exception("Failed to reject card candidate")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to reject card candidate: {e}", type(e).__name__
+        )
+
+
+def handle_edit_card_field(args):
+    section_id = args.get("section_id")
+    field = args.get("field")
+    value = args.get("value")
+    project_root = args.get("project_root")
+
+    if not section_id or not field:
+        return _error_response(
+            ERROR_INVALID_INPUT, "Missing required arguments: section_id, field"
+        )
+
+    try:
+        root = Path(project_root) if project_root else WORKSPACE_ROOT
+        overrides_path = root / ".writing-context" / "cards.overrides.yaml"
+
+        import yaml
+        overrides_data = {"version": 2, "document": {}, "sections": {}}
+        if overrides_path.exists():
+            try:
+                with open(overrides_path, encoding="utf-8") as f:
+                    overrides_data = yaml.safe_load(f) or overrides_data
+            except Exception:
+                pass
+
+        over_sections = overrides_data.setdefault("sections", {})
+        sec_over = over_sections.setdefault(section_id, {})
+
+        if value is None:
+            # Delete field if value is null
+            if field in sec_over:
+                del sec_over[field]
+        else:
+            sec_over[field] = value
+
+        overrides_path.parent.mkdir(exist_ok=True, parents=True)
+        with open(overrides_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(overrides_data, f, sort_keys=False)
+
+        # Invalidate runtime cache
+        global _RUNTIME_CACHE
+        _RUNTIME_CACHE = None
+
+        return _success_response({
+            "status": "updated",
+            "section_id": section_id,
+            "field": field,
+            "value": value
+        })
+
+    except Exception as e:
+        logger.exception("Failed to edit card field")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to edit card field: {e}", type(e).__name__
+        )
+
+
+def handle_explain_card_candidate(args):
+    section_id = args.get("section_id")
+    field = args.get("field")
+    value = args.get("value")
+    project_root = args.get("project_root")
+
+    if not section_id or not field or value is None:
+        return _error_response(
+            ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
+        )
+    if field not in ("purpose", "key_terms", "facts", "constraints"):
+        return _error_response(
+            ERROR_INVALID_INPUT, f"Invalid candidate field: {field}"
+        )
+
+    try:
+        root = Path(project_root) if project_root else WORKSPACE_ROOT
+        generated_path = root / ".writing-context" / "cards.generated.yaml"
+
+        if not generated_path.exists():
+            return _error_response(
+                ERROR_CONFIG, "No generated cards found. Please run 'cards scan' first."
+            )
+
+        import yaml
+        with open(generated_path, encoding="utf-8") as f:
+            gen_data = yaml.safe_load(f) or {}
+
+        sections = gen_data.get("sections", {}) or {}
+        if section_id not in sections:
+            return _error_response(
+                ERROR_INVALID_INPUT, f"Section ID '{section_id}' not found in generated cards."
+            )
+
+        sdata = sections[section_id]
+        candidate_info = None
+
+        if field == "purpose":
+            purpose = sdata.get("purpose")
+            if isinstance(purpose, dict) and purpose.get("value") == value:
+                candidate_info = purpose
+        elif field == "key_terms":
+            for kt in sdata.get("key_terms", []):
+                if isinstance(kt, dict) and kt.get("value") == value:
+                    candidate_info = kt
+                    break
+        elif field == "facts":
+            for fact in sdata.get("facts", []):
+                if isinstance(fact, dict) and fact.get("value") == value:
+                    candidate_info = fact
+                    break
+        elif field == "constraints":
+            for const in sdata.get("constraints", []):
+                if isinstance(const, dict) and const.get("value") == value:
+                    candidate_info = const
+                    break
+
+        if not candidate_info:
+            return _error_response(
+                ERROR_INVALID_INPUT, f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'."
+            )
+
+        confidence = candidate_info.get("confidence", 0.0)
+        evidence = candidate_info.get("evidence")
+        provenance = candidate_info.get("provenance", [])
+
+        explanation = (
+            f"Candidate '{value}' for field '{field}' in section '{section_id}' was extracted with confidence {confidence}."
+        )
+        if evidence:
+            explanation += f" Evidence: {evidence}."
+        if provenance:
+            explanation += f" Provenance: {provenance}."
+
+        return _success_response({
+            "section_id": section_id,
+            "field": field,
+            "value": value,
+            "confidence": confidence,
+            "evidence": evidence,
+            "provenance": provenance,
+            "explanation": explanation
+        })
+
+    except Exception as e:
+        logger.exception("Failed to explain card candidate")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to explain card candidate: {e}", type(e).__name__
+        )
+
+
 def process_message(line):
     global WORKSPACE_ROOT, _RUNTIME_CACHE
     try:
@@ -1032,6 +1660,16 @@ def process_message(line):
                     result = handle_get_term_context(args)
                 elif name == "get_manuscript_reference_graph":
                     result = handle_get_manuscript_reference_graph(args)
+                elif name == "review_card_candidates":
+                    result = handle_review_card_candidates(args)
+                elif name == "accept_card_candidate":
+                    result = handle_accept_card_candidate(args)
+                elif name == "reject_card_candidate":
+                    result = handle_reject_card_candidate(args)
+                elif name == "edit_card_field":
+                    result = handle_edit_card_field(args)
+                elif name == "explain_card_candidate":
+                    result = handle_explain_card_candidate(args)
                 else:
                     response = json.dumps(
                         {

@@ -43,6 +43,7 @@ class ZoteroProvider(BaseContextProvider):
         args = provider_cfg.mcp_server.args or []
         extra_cfg = provider_cfg.extra or {}
         include_abstract = extra_cfg.get("include_abstract", False)
+        similarity_threshold = extra_cfg.get("similarity_threshold", -0.4)
 
         manager = get_shared_manager(self.config.rtfm.project_root)
         spans = []
@@ -204,6 +205,16 @@ class ZoteroProvider(BaseContextProvider):
 
                 # Re-add a visual header for the snippet
                 snippet = f"## {item_text}"
+
+                # Filter out low-confidence semantic matches (e.g. negative similarity score)
+                score_match = re.search(r"\*\*Similarity Score:\*\*\s*([-\d.]+)", snippet)
+                if score_match:
+                    try:
+                        sim_score = float(score_match.group(1))
+                        if sim_score < similarity_threshold:
+                            continue
+                    except ValueError:
+                        pass
 
                 # Try to extract a specific citation key for the path
                 cite_match = re.search(r"\*\*Citation Key:\*\*\s*([\w-]+)", snippet)

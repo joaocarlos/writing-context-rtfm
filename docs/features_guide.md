@@ -4,31 +4,53 @@ This guide details the design, usage, and schema of the five new feature modules
 
 ---
 
-## 1. Interactive Section Card Scaffolding
+## 1. Split-Card Scaffolding & Overrides Framework
 
 ### Objective
 
-Automates the creation and extension of `section_cards.yaml` by scanning files within the workspace and appending default skeleton structures for untracked sections, ensuring that human-maintained section cards remain up to date.
+Allows users to manage manuscript metadata without manual file maintenance. The system automatically builds cards from the LaTeX source code tree, while preserving human-authored thesis, style, glossary, and section overrides in a separate file.
+
+### CLI Subcommand Suite: `cards`
+
+- **`cards scan`**: Recursively scans `.tex` and `.md` drafts, parses inputs/cross-references, maps section hierarchies, and writes deterministic structures to `.writing-context/cards.generated.yaml`.
+- **`cards infer`**: Runs generative LLM semantic extraction on new/modified sections to identify their purpose, facts, and constraints (requires an OpenAI API key, automatically skipped offline).
+- **`cards review`**: Interactively reviews, accepts, or rejects model-generated section candidates.
+- **`cards update`**: Re-evaluates manuscript files, marking modified sections as stale to trigger targeted re-inference.
+- **`cards validate`**: Verifies configuration files for stale fields, missing LaTeX paths, and cross-reference dependencies.
+- **`cards build`**: Combined pipeline command that executes scan, infer, and update in sequence.
 
 ### Tool: `initialize_section_cards`
-
-- **Behavior**: Recursively scans the workspace directory for `.tex` and `.md` files (excluding standard ignore patterns). Compares them to existing sections declared in `section_cards.yaml` by matching their paths. For any new files, generates a unique, sanitized `section_id` and adds a skeleton card entry containing defaults for keywords, dependencies, preserve rules, and avoid conditions.
-- **Arguments**:
-    - `project_root`: (Optional) Custom project root path.
+- **Behavior**: Scans workspace files, maps dependencies, and initializes configuration skeletons inside `.writing-context/cards.generated.yaml`.
+- **Arguments**: `project_root` (Optional).
 - **Output JSON**:
     ```json
     {
         "status": "success",
-        "sc_path": ".writing-context/section_cards.yaml",
-        "added": [{ "id": "section_intro", "path": "sections/intro.md" }],
-        "preserved_count": 5,
-        "total_sections": 6
+        "sc_path": ".writing-context/cards.generated.yaml",
+        "added": [{ "id": "section_methodology", "path": "sections/methodology.tex" }],
+        "preserved_count": 4,
+        "total_sections": 5
     }
     ```
 
 ---
 
-## 2. Context Pack Pagination ("Progressive Expansion")
+## 2. Configurable Zotero Grounding
+
+### Objective
+
+Allows writing agents to fetch related literature context directly from your local Zotero library, while preventing out-of-domain search results from polluting the context token budget.
+
+### Configuration: `similarity_threshold`
+
+- **Behavior**: When Zotero semantic search is queried, the provider filters out paper snippets that do not match the target query's context. It parses the returned similarity score and drops any results below the threshold.
+- **Tuning**: Configurable under `providers.zotero.extra` in `.writing-context/config.yaml`:
+  * **`similarity_threshold` (Default: `-0.4`)**: Swept and optimized to preserve relevant priority scheduling and queueing papers (scores `-0.19` to `-0.3`) while successfully discarding unrelated topics.
+  * **`include_abstract` (Default: `false`)**: Configures whether full document abstracts are packed into retrieved citation spans.
+
+---
+
+## 3. Context Pack Pagination ("Progressive Expansion")
 
 ### Objective
 
@@ -60,7 +82,7 @@ Allows agents to fetch context in multiple stages or "tiers" when the initial to
 
 ---
 
-## 3. Generation Feedback Loop & Cache Optimization
+## 4. Generation Feedback Loop & Cache Optimization
 
 ### Objective
 
@@ -84,7 +106,7 @@ Allows client agents to submit automated evaluations of context packs (e.g. help
 
 ---
 
-## 4. Semantic Drift & Terminology Auditing
+## 5. Semantic Drift & Terminology Auditing
 
 ### Objective
 
@@ -124,22 +146,7 @@ Ensures consistent technical terms are used across sections and detects semantic
 
 ---
 
-## 5. Native MCP Prompts Integration
-
-### Objective
-
-Exposes pre-defined prompt templates to the MCP client that automate the retrieval-pack generation and package it directly into user messages.
-
-### Prompts
-
-1. **`write_section`**: Hydrates a prompt for drafting or editing a section with context spans, document thesis, and constraint files.
-    - **Arguments**: `task` (required), `target` (required), `token_budget` (optional).
-2. **`proofread_section`**: Hydrates a prompt for grammar correction, styling consistency, and terminology check.
-    - **Arguments**: `target_file` (required), `line_start` (required), `line_end` (required), `mode` (optional), `strictness` (optional).
-
----
-
-## 5. Native MCP Prompts Integration
+## 6. Native MCP Prompts Integration
 
 ### Objective
 

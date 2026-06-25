@@ -16,7 +16,7 @@ def test_imports():
     import writing_context_rtfm.token_budget
     import writing_context_rtfm.utils
 
-    assert writing_context_rtfm.__version__ == "0.6.0"
+    assert writing_context_rtfm.__version__ == "0.6.1"
     print("All imports successful! Basic tests passed.")
 
 

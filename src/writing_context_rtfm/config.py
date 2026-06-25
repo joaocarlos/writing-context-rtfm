@@ -48,6 +48,13 @@ class SectionCardsConfig:
 
 
 @dataclass(frozen=True)
+class GeneratorConfig:
+    model: str = "gpt-4o-mini"
+    api_base: str = "https://api.openai.com/v1"
+    api_key: str | None = None
+
+
+@dataclass(frozen=True)
 class AppConfig:
     version: int
     rtfm: RTFMConfig
@@ -55,6 +62,7 @@ class AppConfig:
     cache: CacheConfig
     section_cards: SectionCardsConfig
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    generator: GeneratorConfig = field(default_factory=GeneratorConfig)
 
 
 def load_config(project_root: str = ".") -> AppConfig:
@@ -72,6 +80,7 @@ def load_config(project_root: str = ".") -> AppConfig:
             path=str(root / ".writing-context" / "section_cards.yaml")
         ),
         providers=default_providers,
+        generator=GeneratorConfig(),
     )
 
     if not config_path.exists():
@@ -81,7 +90,7 @@ def load_config(project_root: str = ".") -> AppConfig:
         data = yaml.safe_load(f) or {}
 
     # Ensure sections are dictionaries if present
-    for key in ("cache", "section_cards", "rtfm", "context", "providers"):
+    for key in ("cache", "section_cards", "rtfm", "context", "providers", "generator"):
         val = data.get(key)
         if val is not None and not isinstance(val, dict):
             raise TypeError(
@@ -179,6 +188,8 @@ def load_config(project_root: str = ".") -> AppConfig:
             enabled=enabled, mcp_server=mcp_server, sse_url=sse_url, headers=headers, extra=extra
         )
 
+    generator_data = dict(data.get("generator") or {})
+
     return AppConfig(
         version=data.get("version", 1),
         rtfm=RTFMConfig(**rtfm_data),
@@ -186,4 +197,5 @@ def load_config(project_root: str = ".") -> AppConfig:
         cache=CacheConfig(**cache_data) if cache_data else defaults.cache,
         section_cards=SectionCardsConfig(**sc_data) if sc_data else defaults.section_cards,
         providers=parsed_providers,
+        generator=GeneratorConfig(**generator_data) if generator_data else defaults.generator,
     )

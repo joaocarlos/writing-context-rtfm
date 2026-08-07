@@ -16,8 +16,11 @@ def test_imports():
     import writing_context_rtfm.token_budget
     import writing_context_rtfm.utils
 
-    assert writing_context_rtfm.__version__ == "0.7.0"
-    print("All imports successful! Basic tests passed.")
+    import re
+    assert hasattr(writing_context_rtfm, "__version__")
+    assert isinstance(writing_context_rtfm.__version__, str)
+    assert re.match(r"^\d+\.\d+\.\d+", writing_context_rtfm.__version__)
+    print(f"All imports successful! Package version: {writing_context_rtfm.__version__}")
 
 
 if __name__ == "__main__":

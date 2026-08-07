@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.2] - 2026-08-07
+
+### Fixed
+- **Claude MCP Server Auto-Approval**: `writing-context-rtfm init` now automatically registers `"writing-context-rtfm"` in `.claude/settings.json` under `enabledMcpjsonServers`, ensuring MCP tools are exposed and authorized without manual configuration.
+- **MCP Tool Hook Schema (`input` Key)**: Updated `PostToolUse` MCP hook generation in `.claude/settings.json` to use `"input": {}` instead of `"arguments"`, matching Claude Code hook payload specifications and defaulting cleanly to the project root.
+- **SessionEnd Hook Clean Schema**: Omitted unnecessary `matcher` from `SessionEnd` hook definitions in `settings.json`.
+
 ## [0.7.1] - 2026-08-07
 
 ### Fixed

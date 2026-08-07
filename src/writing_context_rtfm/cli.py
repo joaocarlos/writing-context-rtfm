@@ -154,6 +154,14 @@ def _update_claude_settings(root: Path) -> None:
             )
             settings_data = {}
 
+    # Ensure writing-context-rtfm is in enabledMcpjsonServers
+    enabled_servers = settings_data.setdefault("enabledMcpjsonServers", [])
+    if not isinstance(enabled_servers, list):
+        enabled_servers = []
+        settings_data["enabledMcpjsonServers"] = enabled_servers
+    if "writing-context-rtfm" not in enabled_servers:
+        enabled_servers.append("writing-context-rtfm")
+
     hooks = settings_data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         hooks = {}
@@ -180,6 +188,11 @@ def _update_claude_settings(root: Path) -> None:
                 and inner.get("server") == "writing-context-rtfm"
                 and inner.get("tool") == "refresh_index"
             ):
+                # Ensure input key is used instead of deprecated arguments key
+                if "arguments" in inner and "input" not in inner:
+                    inner["input"] = inner.pop("arguments")
+                elif "input" not in inner:
+                    inner["input"] = {}
                 hook_exists = True
                 break
         if hook_exists:
@@ -193,7 +206,7 @@ def _update_claude_settings(root: Path) -> None:
                     "type": "mcp_tool",
                     "server": "writing-context-rtfm",
                     "tool": "refresh_index",
-                    "arguments": {"project_root": "$CLAUDE_PROJECT_DIR"},
+                    "input": {},
                 }
             ],
         }
@@ -226,7 +239,6 @@ def _update_claude_settings(root: Path) -> None:
             sanitized_session_end.append(entry)
         elif entry.get("type") == "command" and entry.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup"):
             sanitized_session_end.append({
-                "matcher": "",
                 "hooks": [{"type": "command", "command": cleanup_cmd}]
             })
             session_hook_exists = True
@@ -235,7 +247,6 @@ def _update_claude_settings(root: Path) -> None:
 
     if not session_hook_exists:
         sanitized_session_end.append({
-            "matcher": "",
             "hooks": [{"type": "command", "command": cleanup_cmd}]
         })
 

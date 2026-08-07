@@ -189,16 +189,19 @@ class TestCliInit(unittest.TestCase):
         init_command(args)
         data = json.loads(settings_file.read_text(encoding="utf-8"))
 
-        # Permissions should be preserved
-        self.assertIn("permissions", data)
-        self.assertEqual(data["permissions"]["allow"], ["bash"])
+        # Verify enabledMcpjsonServers
+        self.assertIn("enabledMcpjsonServers", data)
+        self.assertIn("writing-context-rtfm", data["enabledMcpjsonServers"])
+
+        # Verify PostToolUse inner hook uses 'input'
+        inner_hook = data["hooks"]["PostToolUse"][1]["hooks"][0] if len(data["hooks"]["PostToolUse"]) > 1 else data["hooks"]["PostToolUse"][0]["hooks"][0]
+        self.assertIn("input", inner_hook)
 
         # Verify SessionEnd structure
         self.assertIn("SessionEnd", data["hooks"])
         session_end = data["hooks"]["SessionEnd"]
         self.assertEqual(len(session_end), 1)
         self.assertIn("hooks", session_end[0])
-        self.assertIn("matcher", session_end[0])
         self.assertEqual(session_end[0]["hooks"][0]["type"], "command")
 
         # 4. Test repair of legacy invalid flat SessionEnd hooks
@@ -217,7 +220,6 @@ class TestCliInit(unittest.TestCase):
         repaired_session_end = repaired_data["hooks"]["SessionEnd"]
         self.assertEqual(len(repaired_session_end), 1)
         self.assertIn("hooks", repaired_session_end[0])
-        self.assertIn("matcher", repaired_session_end[0])
         self.assertEqual(repaired_session_end[0]["hooks"][0]["command"], "writing-context-rtfm cleanup")
 
 

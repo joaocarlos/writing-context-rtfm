@@ -193,12 +193,32 @@ class TestCliInit(unittest.TestCase):
         self.assertIn("permissions", data)
         self.assertEqual(data["permissions"]["allow"], ["bash"])
 
-        # Both hooks should exist
-        post_hooks = data["hooks"]["PostToolUse"]
-        self.assertEqual(len(post_hooks), 2)
-        matchers = [h["matcher"] for h in post_hooks]
-        self.assertIn("git_commit", matchers)
-        self.assertTrue(any("write_to_file" in m for m in matchers))
+        # Verify SessionEnd structure
+        self.assertIn("SessionEnd", data["hooks"])
+        session_end = data["hooks"]["SessionEnd"]
+        self.assertEqual(len(session_end), 1)
+        self.assertIn("hooks", session_end[0])
+        self.assertIn("matcher", session_end[0])
+        self.assertEqual(session_end[0]["hooks"][0]["type"], "command")
+
+        # 4. Test repair of legacy invalid flat SessionEnd hooks
+        settings_file.unlink()
+        invalid_legacy = {
+            "hooks": {
+                "SessionEnd": [
+                    {"type": "command", "command": "writing-context-rtfm cleanup"}
+                ]
+            }
+        }
+        settings_file.write_text(json.dumps(invalid_legacy), encoding="utf-8")
+        init_command(args)
+
+        repaired_data = json.loads(settings_file.read_text(encoding="utf-8"))
+        repaired_session_end = repaired_data["hooks"]["SessionEnd"]
+        self.assertEqual(len(repaired_session_end), 1)
+        self.assertIn("hooks", repaired_session_end[0])
+        self.assertIn("matcher", repaired_session_end[0])
+        self.assertEqual(repaired_session_end[0]["hooks"][0]["command"], "writing-context-rtfm cleanup")
 
 
 if __name__ == "__main__":

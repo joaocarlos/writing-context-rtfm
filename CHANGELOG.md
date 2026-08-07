@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.1] - 2026-08-07
+
+### Fixed
+- **Claude Settings Hooks Format**: Fixed `SessionEnd` hook schema generated in `.claude/settings.json` during project initialization (`init`). Every hook array item now includes a `matcher` string and a `hooks` array, resolving Claude Code schema validation errors (`hooks.SessionEnd.0.hooks: Expected array, but received undefined`) and auto-repairing existing flat legacy entries.
+
 ## [0.7.0] - 2026-08-07
 
 ### Added

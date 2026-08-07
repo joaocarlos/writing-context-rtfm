@@ -209,20 +209,37 @@ def _update_claude_settings(root: Path) -> None:
         session_end = []
         hooks["SessionEnd"] = session_end
 
+    sanitized_session_end = []
     session_hook_exists = False
     for entry in session_end:
-        if (
-            isinstance(entry, dict)
-            and entry.get("type") == "command"
-            and entry.get("command")
-            in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup")
-        ):
-            entry["command"] = cleanup_cmd
+        if not isinstance(entry, dict):
+            continue
+        if "hooks" in entry and isinstance(entry["hooks"], list):
+            for inner in entry["hooks"]:
+                if (
+                    isinstance(inner, dict)
+                    and inner.get("type") == "command"
+                    and inner.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup")
+                ):
+                    inner["command"] = cleanup_cmd
+                    session_hook_exists = True
+            sanitized_session_end.append(entry)
+        elif entry.get("type") == "command" and entry.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup"):
+            sanitized_session_end.append({
+                "matcher": "",
+                "hooks": [{"type": "command", "command": cleanup_cmd}]
+            })
             session_hook_exists = True
-            break
+        else:
+            sanitized_session_end.append(entry)
 
     if not session_hook_exists:
-        session_end.append({"type": "command", "command": cleanup_cmd})
+        sanitized_session_end.append({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": cleanup_cmd}]
+        })
+
+    hooks["SessionEnd"] = sanitized_session_end
 
     try:
         settings_file.write_text(json.dumps(settings_data, indent=2) + "\n", encoding="utf-8")

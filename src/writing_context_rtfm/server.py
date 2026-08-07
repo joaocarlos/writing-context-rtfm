@@ -170,13 +170,13 @@ def get_tools_list():
                 "description": (
                     "Generate a compact, prioritized writing context pack for a specific writing task. "
                     "Use this BEFORE drafting, rewriting, or expanding any section of the manuscript. "
-                    "Returns the document thesis, hard constraints from the section card, and a ranked "
-                    "list of source spans (each tagged essential | supporting | background) — never full "
-                    "files. Prefer this over reading the manuscript directly: the pack is scoped to the "
-                    "task, deduplicated, and stays within the requested token budget. "
+                    "Returns the document thesis, hard constraints from the section card, a ranked "
+                    "list of source spans (each tagged essential | supporting | background), a pre-rendered "
+                    "'formatted_prompt', and an execution 'guidance' string. Prefer this over reading the manuscript directly: "
+                    "the pack is scoped to the task, deduplicated, and stays within token budgets. "
                     "Output shape: {task, target, document_thesis, prior_claims, terminology, constraints, "
-                    "source_spans[], estimated_tokens, status ('complete' | 'degraded'), warnings[], quality, "
-                    "summary}. When status='degraded', inspect warnings before proceeding."
+                    "source_spans[], estimated_tokens, formatted_prompt, guidance, status ('complete' | 'degraded'), warnings[]}. "
+                    "When status='degraded', inspect warnings before proceeding."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -192,7 +192,7 @@ def get_tools_list():
                         "target": {
                             "type": "string",
                             "description": (
-                                "section_id from .writing-context/section_cards.yaml (e.g., 'section_approach'). "
+                                "section_id from .writing-context/section_cards.yaml (e.g., 'section_methodology'). "
                                 "Activates: target-file score boost, dependency-section expansion, key-term scoping, "
                                 "must_preserve/avoid constraints. Omitting this disables section-card-driven "
                                 "expansion and the pack will have status='degraded'."
@@ -228,7 +228,7 @@ def get_tools_list():
                                 "review",
                             ],
                             "description": "The specific type of writing task.",
-                        },
+                            },
                         "line_start": {
                             "type": "integer",
                             "description": "Optional starting line range in the target file.",
@@ -261,11 +261,11 @@ def get_tools_list():
                     "Generate a context pack for proofreading or editing a SPECIFIC line range of a "
                     "manuscript file. Use this instead of get_writing_context_pack when the task is "
                     "to refine existing text rather than write new text. Returns the target span, "
-                    "the surrounding paragraphs (previous + next), mode/strictness rules, section-specific "
-                    "constraints, and a terminology map showing how key terms have been used elsewhere "
-                    "in the manuscript so edits remain consistent. "
+                    "surrounding paragraphs (previous + next co-text), mode/strictness rules, section "
+                    "constraints, prior term usage examples, a pre-rendered 'formatted_prompt', and "
+                    "an execution 'guidance' string. "
                     "Output shape: {target, local_context, constraints{mode, strictness, general_rules, "
-                    "section_specific_rules, terminology[]}, estimated_tokens, status}."
+                    "section_specific_rules, terminology[]}, estimated_tokens, formatted_prompt, guidance, status}."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -287,11 +287,11 @@ def get_tools_list():
                             "enum": ["surface", "academic_clarity", "consistency", "latex_safe"],
                             "default": "surface",
                             "description": (
-                                "Editing mode:\n"
+                                "Editing mode (auto-select based on task intent):\n"
                                 "  surface — grammar, spelling, punctuation only; preserve structure and tone.\n"
                                 "  academic_clarity — sharpen precision and formal vocabulary; improve logical flow.\n"
                                 "  consistency — enforce terminology and formatting consistency across the manuscript.\n"
-                                "  latex_safe — same as surface but treats \\cite, \\ref, \\label and math envs as immutable."
+                                "  latex_safe — default when LaTeX commands, \\cite, \\ref, \\label or math environments exist."
                             ),
                         },
                         "strictness": {
@@ -309,9 +309,8 @@ def get_tools_list():
                             "type": "integer",
                             "default": 4000,
                             "description": (
-                                "Upper bound on tokens in the assembled pack. If the local context plus "
-                                "constraints exceeds this, status becomes 'degraded' (the pack is still "
-                                "returned, but the client should be aware)."
+                                "Upper bound on tokens in the assembled pack. If local context plus "
+                                "constraints exceeds this, status becomes 'degraded'."
                             ),
                         },
                     },
@@ -734,6 +733,12 @@ def handle_get_writing_context_pack(args):
         return _error_response(ERROR_RETRIEVAL, "Context pack generation failed.", type(e).__name__)
 
     payload = asdict(pack)
+    payload["formatted_prompt"] = _format_write_section_prompt(pack)
+    payload["guidance"] = (
+        f"Writing Context Pack generated for task: '{task}'. "
+        f"Target section: '{target or 'General'}'. "
+        f"Use formatted_prompt or source_spans to draft/revise content aligned with section constraints."
+    )
     all_warnings = list(pack.warnings or [])
     if card_warnings:
         all_warnings.extend(card_warnings)
@@ -778,6 +783,13 @@ def handle_get_proofreading_context_pack(args):
         )
 
     payload = asdict(pack)
+    payload["formatted_prompt"] = _format_proofread_section_prompt(pack)
+    if not payload.get("guidance"):
+        payload["guidance"] = (
+            f"Proofreading Context Pack generated for '{args.get('target_file')}' (lines {args.get('line_start')}-{args.get('line_end')}). "
+            f"Mode: '{args.get('mode', 'surface')}', Strictness: '{args.get('strictness', 'moderate')}'. "
+            f"Use formatted_prompt to execute inline revisions with exact line replacements."
+        )
     all_warnings = list(pack.warnings or [])
     if card_warnings:
         all_warnings.extend(card_warnings)

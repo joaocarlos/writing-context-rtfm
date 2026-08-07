@@ -876,3 +876,45 @@ def cards_build_command(project_root: str, review: bool = False) -> dict[str, An
         "infer": infer_res,
         "review": review_res
     }
+
+
+def cards_rebuild_command(project_root: str, review: bool = False) -> dict[str, Any]:
+    """Cleanly rebuild main section cards from scratch (clears cards.generated.yaml and runs scan + infer --force)."""
+    print("Rebuilding main section cards from scratch...", file=sys.stderr, flush=True)
+    root = Path(project_root).resolve()
+    generated_path = root / ".writing-context" / "cards.generated.yaml"
+    lock_path = root / ".writing-context" / "cards.lock.json"
+
+    if generated_path.exists():
+        try:
+            generated_path.unlink()
+        except Exception:
+            pass
+
+    if lock_path.exists():
+        try:
+            lock_path.unlink()
+        except Exception:
+            pass
+
+    scan_res = cards_scan_command(project_root)
+    if scan_res.get("status") == "error":
+        return scan_res
+
+    try:
+        infer_res = cards_infer_command(project_root, force=True)
+    except Exception as e:
+        infer_res = {"status": "warning", "message": f"Semantic inference skipped: {e}"}
+
+    review_res = None
+    if review:
+        review_res = cards_review_command(project_root)
+
+    print("Cards rebuild completed successfully.", file=sys.stderr, flush=True)
+    return {
+        "status": "success",
+        "scan": scan_res,
+        "infer": infer_res,
+        "review": review_res
+    }
+

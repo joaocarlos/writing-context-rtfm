@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-08-07
+
+### Added
+- **Main-Section Card Architecture**: Consolidated section card creation to exclusively organize cards by top-level main sections (`\section` in papers/articles, `\chapter` in books/theses). Each main section card's character span encompasses its full content including all child subsections, concentrating context and eliminating subsection duplication.
+- **`cards rebuild` Command**: Added `writing-context-rtfm cards rebuild` command to cleanly clear existing generated section cards and perform a fresh scan + inference pass.
+- **Pre-Formatted Prompt & Guidance Returns**: MCP tools `get_writing_context_pack` and `get_proofreading_context_pack` now return a pre-rendered `formatted_prompt` template string and high-level execution `guidance` hints for instant downstream AI execution.
+- **Explicit LaTeX Immutability Rules**: Scanned LaTeX commands (`\cite`, `\ref`, `\label`, math environments) in proofread target spans are now explicitly embedded as immutable rules in section constraints.
+
 ## [0.6.1] - 2026-06-25
 
 ### Added

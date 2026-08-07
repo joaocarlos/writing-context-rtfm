@@ -97,12 +97,14 @@ class VirtualDocumentParser:
             "paragraph": 5,
             "subparagraph": 6,
         }
+        self.main_level: int | None = None
 
     def parse(self, entry_file: str) -> dict[str, DocumentNode]:
         """Entry point to build the tree starting from a root file."""
         self.nodes.clear()
         self.node_order.clear()
         self.visited_files.clear()
+        self.main_level = None
         
         rel_path = self._to_rel_path(entry_file)
         if not rel_path:
@@ -254,14 +256,23 @@ class VirtualDocumentParser:
         # Sort headings and inclusions by char_start
         structural = sorted(headings + inclusions, key=lambda x: x["char_start"])
 
+        # Filter headings to main sections only (minimum heading level found in file, e.g. \section or \chapter)
+        all_headings = [item for item in structural if item["type"] == "heading"]
+        if all_headings:
+            if self.main_level is None:
+                self.main_level = min(self.latex_levels[h["macro"]] for h in all_headings)
+            main_headings = [h for h in all_headings if self.latex_levels[h["macro"]] <= self.main_level]
+        else:
+            main_headings = []
+
         # Determine boundaries of sections within this file
         file_nodes = []
-        preamble_end = structural[0]["char_start"] if structural else len(content)
+        first_main = main_headings[0] if main_headings else None
+        preamble_end = first_main["char_start"] if first_main else len(content)
         
-        # Preamble node (if there are elements before the first heading and no parent node)
+        # Preamble node (if there are elements before the first main section heading and no parent node)
         if preamble_end > 0 and not parent_node_id:
-            first_heading = next((item for item in structural if item["type"] == "heading"), None)
-            preamble_level = self.latex_levels[first_heading["macro"]] if first_heading else 1
+            preamble_level = self.main_level if self.main_level is not None else 1
             preamble_title = "Preamble"
             preamble_id = sanitize_node_id(f"{Path(file_rel).stem}_preamble")
             preamble_node = DocumentNode(
@@ -284,14 +295,13 @@ class VirtualDocumentParser:
         else:
             current_active_id = parent_node_id
 
-        # Generate nodes for each heading
+        # Generate nodes for each main section heading
         for idx, item in enumerate(structural):
-            if item["type"] == "heading":
-                # Find end of this section
+            if item["type"] == "heading" and item in main_headings:
+                # Find end of this main section (at next main heading or end of content)
                 char_start = item["char_start"]
-                # Section ends at next heading of same or higher level, or next structural element
-                next_headings = [h for h in structural[idx+1:] if h["type"] == "heading"]
-                char_end = next_headings[0]["char_start"] if next_headings else len(content)
+                next_mains = [h for h in main_headings if h["char_start"] > char_start]
+                char_end = next_mains[0]["char_start"] if next_mains else len(content)
 
                 node_id = sanitize_node_id(item["title"])
                 # Handle ID collisions
@@ -365,8 +375,8 @@ class VirtualDocumentParser:
                     elif "algorithm" in name:
                         node.algorithms.append(lbl)
 
-        # If a file has no headings of its own, we assign its entire contents to the parent section
-        if not headings and parent_node_id and parent_node_id in self.nodes:
+        # If a file has no main headings of its own, we assign its entire contents to the parent section
+        if not main_headings and parent_node_id and parent_node_id in self.nodes:
             parent_node = self.nodes[parent_node_id]
             parent_node.citations.extend([c["key"] for c in citations])
             parent_node.references.extend([r["key"] for r in references])
@@ -386,7 +396,7 @@ class VirtualDocumentParser:
         return file_nodes
 
     def _parse_markdown(self, file_rel: str) -> None:
-        """Parses a Markdown file and extracts section nodes."""
+        """Parses a Markdown file and extracts main section nodes."""
         file_abs = self.project_root / file_rel
         if not file_abs.is_file():
             return
@@ -439,10 +449,14 @@ class VirtualDocumentParser:
             self.node_order.append(node_id)
             return
 
-        for idx, h in enumerate(headings):
+        # Main section headings only (minimum heading level e.g. # or ##)
+        min_level = min(h["level"] for h in headings)
+        main_headings = [h for h in headings if h["level"] == min_level]
+
+        for idx, h in enumerate(main_headings):
             line_start = h["line_idx"] + 1
-            # Next heading boundary
-            line_end = headings[idx+1]["line_idx"] if idx + 1 < len(headings) else len(lines)
+            # Next main heading boundary
+            line_end = main_headings[idx+1]["line_idx"] if idx + 1 < len(main_headings) else len(lines)
             
             sec_lines = lines[line_start-1:line_end]
             sec_text = "\n".join(sec_lines)
@@ -481,21 +495,10 @@ class VirtualDocumentParser:
             self.node_order.append(node_id)
 
     def _resolve_hierarchy(self) -> None:
-        """Walks the parsed nodes and resolves parent-child pointers based on level and document order."""
-        ordered_nodes = [self.nodes[nid] for nid in self.node_order if nid in self.nodes]
-
-        for idx, node in enumerate(ordered_nodes):
-            # Find parent: closest preceding node with level < current level
-            parent_node = None
-            for prev_idx in range(idx - 1, -1, -1):
-                prev_node = ordered_nodes[prev_idx]
-                if prev_node.level < node.level:
-                    parent_node = prev_node
-                    break
-            
-            if parent_node:
-                node.parent = parent_node.node_id
-                if node.node_id not in parent_node.children:
-                    parent_node.children.append(node.node_id)
-            else:
+        """Walks the parsed nodes and sets parent to document_main for all main section nodes."""
+        for nid in self.node_order:
+            if nid in self.nodes:
+                node = self.nodes[nid]
                 node.parent = "document_main"
+                node.children = []
+

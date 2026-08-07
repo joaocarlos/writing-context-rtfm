@@ -49,6 +49,7 @@ class ProofreadingContextPack:
     local_context: LocalContext
     constraints: ProofreadingConstraints
     estimated_tokens: int
+    guidance: str = ""
     status: str = "complete"
     warnings: list[str] = field(default_factory=list)
 
@@ -137,8 +138,18 @@ class ProofreadPackGenerator:
         key_terms = extract_keywords(local_ctx.target_span)
         terminology = self._get_prior_usage(key_terms, target_file, warnings)
 
+        # LaTeX safety layer scanning
+        latex_commands = scan_latex_commands(local_ctx.target_span)
+        if latex_commands:
+            warnings.append(
+                "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
+                f"and must not be modified or deleted: {', '.join(latex_commands)}"
+            )
+
         # 4. Generate constraints
-        constraints = self._generate_constraints(mode, strictness, section_card, terminology)
+        constraints = self._generate_constraints(
+            mode, strictness, section_card, terminology, latex_commands=latex_commands
+        )
 
         # 5. Assemble and estimate tokens
         total_text = (
@@ -148,25 +159,27 @@ class ProofreadPackGenerator:
         )
         est = estimate_tokens(total_text) + estimate_tokens(json.dumps(asdict(constraints)))
 
-        # LaTeX safety layer scanning
-        latex_commands = scan_latex_commands(local_ctx.target_span)
-        if latex_commands:
-            warnings.append(
-                "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
-                f"and must not be modified or deleted: {', '.join(latex_commands)}"
-            )
-
         if est > max_tokens:
             warnings.append(
                 f"Note: Estimated tokens ({est}) exceeds the requested max_tokens ({max_tokens}). "
                 f"The full context was preserved to prevent context bloat."
             )
 
+        guidance = (
+            f"Target: {target_file} (lines {line_start}-{line_end}). "
+            f"Mode: '{mode}', Strictness: '{strictness}'. "
+            f"Follow general rules and section constraints strictly. "
+            f"Preserve immutable LaTeX commands: {', '.join(latex_commands)}."
+            if latex_commands
+            else f"Target: {target_file} (lines {line_start}-{line_end}). Mode: '{mode}', Strictness: '{strictness}'."
+        )
+
         return ProofreadingContextPack(
             target=target_info,
             local_context=local_ctx,
             constraints=constraints,
             estimated_tokens=est,
+            guidance=guidance,
             status="complete",
             warnings=warnings,
         )
@@ -277,6 +290,7 @@ class ProofreadPackGenerator:
         strictness: str,
         section_card: SectionCard | None,
         terminology: list[TerminologyConstraint],
+        latex_commands: list[str] | None = None,
     ) -> ProofreadingConstraints:
 
         general_rules = MODE_CONSTRAINTS.get(mode, MODE_CONSTRAINTS["surface"]).copy()
@@ -292,6 +306,11 @@ class ProofreadPackGenerator:
                 section_rules.extend([f"Avoid: {a}" for a in section_card.avoid])
             if section_card.constraints:
                 section_rules.extend(section_card.constraints)
+
+        if latex_commands:
+            section_rules.append(
+                f"Immutable LaTeX commands/math environments in target: {', '.join(latex_commands)}"
+            )
 
         return ProofreadingConstraints(
             mode=mode,

@@ -905,6 +905,7 @@ def cards_command(args):
         cards_update_command,
         cards_validate_command,
         cards_build_command,
+        cards_rebuild_command,
     )
     
     try:
@@ -920,6 +921,8 @@ def cards_command(args):
             res = cards_validate_command(project_root)
         elif subcmd == "build":
             res = cards_build_command(project_root, review=getattr(args, "review", False))
+        elif subcmd == "rebuild":
+            res = cards_rebuild_command(project_root, review=getattr(args, "review", False))
         else:
             print(f"Error: Unknown cards subcommand '{subcmd}'")
             sys.exit(1)
@@ -1104,6 +1107,11 @@ def main():
     p_build = cards_sub.add_parser("build", help="Run scan, infer, and update in sequence")
     p_build.add_argument("--project-root", default=".", help="Project root path")
     p_build.add_argument("--review", action="store_true", help="Run review after build")
+
+    # cards rebuild
+    p_rebuild = cards_sub.add_parser("rebuild", help="Cleanly rebuild main section cards from scratch")
+    p_rebuild.add_argument("--project-root", default=".", help="Project root path")
+    p_rebuild.add_argument("--review", action="store_true", help="Run review after rebuild")
 
     subparsers.add_parser("serve", help="Start the MCP server")
 

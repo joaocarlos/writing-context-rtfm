@@ -56,38 +56,91 @@ def _format_write_section_prompt(pack: Any) -> str:
 
 
 def _format_proofread_section_prompt(pack: Any) -> str:
+    constraints = getattr(pack, "constraints", None)
+    mode = "surface"
+    strictness = "moderate"
+    general_rules = []
+    section_specific_rules = []
+    terminology = []
+
+    if isinstance(constraints, dict):
+        mode = constraints.get("mode", "surface")
+        strictness = constraints.get("strictness", "moderate")
+        general_rules = constraints.get("general_rules") or []
+        section_specific_rules = constraints.get("section_specific_rules") or []
+        terminology = constraints.get("terminology") or []
+    elif hasattr(constraints, "mode"):
+        mode = getattr(constraints, "mode", "surface")
+        strictness = getattr(constraints, "strictness", "moderate")
+        general_rules = getattr(constraints, "general_rules", []) or []
+        section_specific_rules = getattr(constraints, "section_specific_rules", []) or []
+        terminology = getattr(constraints, "terminology", []) or []
+    elif isinstance(constraints, list):
+        section_specific_rules = constraints
+
     terminology_txt = []
-    for t in pack.constraints.terminology or []:
+    for t in terminology or []:
+        if isinstance(t, dict):
+            term = t.get("term", "")
+            examples = t.get("usage_examples", [])
+        elif hasattr(t, "term"):
+            term = getattr(t, "term", "")
+            examples = getattr(t, "usage_examples", [])
+        else:
+            term = str(t)
+            examples = []
         examples_str = (
-            "; ".join(f"'{ex}'" for ex in t.usage_examples) if t.usage_examples else "None"
+            "; ".join(f"'{ex}'" for ex in examples) if examples else "None"
         )
-        terminology_txt.append(f"- '{t.term}': used in: {examples_str}")
+        terminology_txt.append(f"- '{term}': used in: {examples_str}")
     terminology_joined = "\n".join(terminology_txt) if terminology_txt else "None"
 
     constraints_joined = (
-        "\n".join(f"- {c}" for c in pack.constraints.section_specific_rules)
-        if pack.constraints.section_specific_rules
+        "\n".join(f"- {c}" for c in section_specific_rules)
+        if section_specific_rules
         else "None"
     )
     general_joined = (
-        "\n".join(f"- {c}" for c in pack.constraints.general_rules)
-        if pack.constraints.general_rules
+        "\n".join(f"- {c}" for c in general_rules)
+        if general_rules
         else "None"
     )
 
+    local_ctx = getattr(pack, "local_context", None)
     local_txt = ""
-    if pack.local_context.previous_paragraph:
-        local_txt += f"[Previous Context Paragraph]:\n{pack.local_context.previous_paragraph}\n\n"
-    local_txt += f"[Target Text to Revise]:\n{pack.local_context.target_span}\n\n"
-    if pack.local_context.next_paragraph:
-        local_txt += f"[Next Context Paragraph]:\n{pack.local_context.next_paragraph}\n\n"
+    if local_ctx:
+        prev_para = getattr(local_ctx, "previous_paragraph", None) if not isinstance(local_ctx, dict) else local_ctx.get("previous_paragraph")
+        target_span = getattr(local_ctx, "target_span", "") if not isinstance(local_ctx, dict) else local_ctx.get("target_span", "")
+        next_para = getattr(local_ctx, "next_paragraph", None) if not isinstance(local_ctx, dict) else local_ctx.get("next_paragraph")
+        if prev_para:
+            local_txt += f"[Previous Context Paragraph]:\n{prev_para}\n\n"
+        if target_span:
+            local_txt += f"[Target Text to Revise]:\n{target_span}\n\n"
+        if next_para:
+            local_txt += f"[Next Context Paragraph]:\n{next_para}\n\n"
+
+    target = getattr(pack, "target", None)
+    file_path = "Unknown"
+    line_start = "?"
+    line_end = "?"
+    if target:
+        if isinstance(target, dict):
+            file_path = target.get("file_path", target.get("file", "Unknown"))
+            line_start = target.get("line_start", "?")
+            line_end = target.get("line_end", "?")
+        elif hasattr(target, "file_path"):
+            file_path = getattr(target, "file_path", "Unknown")
+            line_start = getattr(target, "line_start", "?")
+            line_end = getattr(target, "line_end", "?")
+        else:
+            file_path = str(target)
 
     return (
         f"You are proofreading and refining the following segment of the manuscript.\n\n"
-        f"Target file: {pack.target.file_path} (Lines {pack.target.line_start}-{pack.target.line_end})\n"
-        f"Mode: {pack.constraints.mode} | Strictness: {pack.constraints.strictness}\n\n"
+        f"Target file: {file_path} (Lines {line_start}-{line_end})\n"
+        f"Mode: {mode} | Strictness: {strictness}\n\n"
         f"[Local Context surrounding Target]:\n{local_txt}"
-        f"[General Rules for {pack.constraints.mode}]:\n{general_joined}\n\n"
+        f"[General Rules for {mode}]:\n{general_joined}\n\n"
         f"[Section Constraints]:\n{constraints_joined}\n\n"
         f"[Terminology Usage Examples (Prior Context)]:\n{terminology_joined}\n\n"
         f"Instruction: Revise the target segment strictly following the mode and constraints above. Maintain terminology consistency as shown in the examples."

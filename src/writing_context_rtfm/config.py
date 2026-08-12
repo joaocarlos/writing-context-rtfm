@@ -173,7 +173,8 @@ def load_config(project_root: str = ".") -> AppConfig:
                 if not isinstance(k, str) or not isinstance(v, str):
                     raise TypeError(f"Provider '{name}' 'headers' keys and values must be strings")
 
-        if enabled and not mcp_server and not sse_url:
+        NON_MCP_PROVIDERS = {"openai_semantic", "huggingface"}
+        if enabled and name not in NON_MCP_PROVIDERS and not mcp_server and not sse_url:
             raise ValueError(
                 f"Provider '{name}' must configure either 'mcp_server' or 'sse_url' if enabled."
             )

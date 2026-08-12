@@ -70,6 +70,29 @@ class TestConfig(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_config(tmpdir)
 
+    def test_load_non_mcp_provider_openai_semantic(self):
+        import tempfile
+        import yaml
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wc_dir = Path(tmpdir) / ".writing-context"
+            wc_dir.mkdir()
+            config_yaml = wc_dir / "config.yaml"
+
+            yaml_content = {
+                "version": 1,
+                "providers": {
+                    "openai_semantic": {
+                        "enabled": True,
+                        "model": "text-embedding-3-small",
+                    }
+                },
+            }
+            config_yaml.write_text(yaml.dump(yaml_content))
+
+            config = load_config(tmpdir)
+            self.assertTrue(config.providers["openai_semantic"].enabled)
+
     def test_load_providers_with_headers(self):
         import tempfile
 

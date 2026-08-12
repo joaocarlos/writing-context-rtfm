@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.3] - 2026-08-12
+
+### Fixed
+- **Direct API Provider Configuration**: Exempted non-MCP direct API providers (such as `openai_semantic` and `huggingface`) from requiring `mcp_server` or `sse_url` configuration when `enabled: true` in `.writing-context/config.yaml`.
+
 ## [0.7.2] - 2026-08-07
 
 ### Fixed

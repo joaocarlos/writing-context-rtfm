@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.4] - 2026-08-13
+
+### Added
+- **Module Execution (`__main__.py`)**: Added package `__main__.py` entrypoint allowing direct execution via `python -m writing_context_rtfm`.
+- **Comprehensive Agent Rules**: Updated `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` rule generators to document the complete 17-tool MCP capability suite.
+
 ## [0.7.3] - 2026-08-12
 
 ### Fixed

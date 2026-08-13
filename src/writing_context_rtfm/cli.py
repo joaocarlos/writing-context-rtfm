@@ -95,10 +95,11 @@ def _update_markdown_rules(root: Path, file_name: str, default_title: str) -> No
         "1. **Always retrieve context first**: Never read manuscript files raw. Use `get_writing_context_pack` or `get_proofreading_context_pack` before writing, rewriting, expanding, or proofreading text.\n"
         "2. **Specify Task & Depth**: Use `task_type` and `pack_mode` parameters when calling `get_writing_context_pack` to optimize context weightings and token budgets.\n"
         "3. **Respect LaTeX Safety Warnings**: Pay attention to safety warnings in the pack. Never edit/alter the detected LaTeX citations (`\\cite`), labels (`\\label`), references (`\\ref`), or math environments.\n"
-        "4. **Use Terminology Lookup**: Use the `get_term_context` tool to retrieve definitions, variants, and words to avoid for specific terms.\n"
+        "4. **Use Terminology Lookup**: Use `get_term_context` or `audit_manuscript_terminology` to retrieve definitions, variants, and words to avoid for specific terms.\n"
         "5. **Handle Pagination**: If you need more context, call `request_more_context` with the `run_id`. Do not guess or read files.\n"
         "6. **Log Feedback**: Always evaluate retrieved context using `submit_generation_feedback` so subsequent caching is optimized.\n"
-        "7. **Initialize configurations**: Use `initialize_section_cards` to scaffold cards for untracked sections.\n"
+        "7. **Initialize & Review Cards**: Use `initialize_section_cards`, `review_card_candidates`, `accept_card_candidate`, `reject_card_candidate`, or `edit_card_field` to scaffold and refine cards.\n"
+        "8. **Inspect Graph & Section Details**: Use `get_manuscript_reference_graph`, `inspect_target_section`, `get_card_field_diff`, `get_section_card_history`, or `explain_card_candidate` for deep section inspection.\n"
         f"{anchor_end}"
     )
 

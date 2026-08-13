@@ -262,6 +262,52 @@ def _update_claude_settings(root: Path) -> None:
         print(f"Warning: Failed to write {settings_file}: {e}")
 
 
+def _update_codex_config() -> None:
+    codex_dir = Path.home() / ".codex"
+    if not codex_dir.exists():
+        return
+    config_file = codex_dir / "config.toml"
+    if not config_file.exists():
+        return
+
+    try:
+        content = config_file.read_text(encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: Failed to read {config_file}: {e}")
+        return
+
+    if "[mcp_servers.writing-context-rtfm]" not in content:
+        return
+
+    binary_path = shutil.which("writing-context-rtfm") or "writing-context-rtfm"
+    lines = content.splitlines()
+    new_lines = []
+    in_wc_block = False
+    updated = False
+    for line in lines:
+        if line.strip() == "[mcp_servers.writing-context-rtfm]":
+            in_wc_block = True
+            new_lines.append(line)
+            continue
+        elif in_wc_block and line.startswith("["):
+            in_wc_block = False
+
+        if in_wc_block and line.strip().startswith("command ="):
+            current_cmd = line.split("=", 1)[1].strip().strip('"\'')
+            if ".venv" in current_cmd or not Path(current_cmd).exists():
+                new_lines.append(f'command = "{binary_path}"')
+                updated = True
+                continue
+        new_lines.append(line)
+
+    if updated:
+        try:
+            config_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            print(f"Auto-repaired stale writing-context-rtfm command in {config_file}")
+        except Exception as e:
+            print(f"Warning: Failed to update {config_file}: {e}")
+
+
 def init_command(args):
     """Creates .writing-context/ directory with sample config and section cards if missing."""
     root = Path(getattr(args, "project_root", ".")).resolve()
@@ -428,6 +474,9 @@ def init_command(args):
 
     # 4. Update Claude/Codex hooks configuration
     _update_claude_settings(root)
+
+    # 5. Check and repair Codex global config.toml if present
+    _update_codex_config()
 
 
 def init_cards_command(args):

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.5] - 2026-08-13
+
+### Added
+- **Auto-Repair Codex Config**: `writing-context-rtfm init` now automatically inspects `~/.codex/config.toml` and repairs stale `.venv` command paths for `writing-context-rtfm`, ensuring seamless MCP tool loading in Codex sessions.
+
 ## [0.7.4] - 2026-08-13
 
 ### Added

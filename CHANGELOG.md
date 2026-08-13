@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.6] - 2026-08-13
+
+### Changed
+- **Modernized Prompt Template (`prompts/generate_section_cards.md`)**: Updated the prompt template to use `version: 2` main-section card schema, incorporating in-workspace file auto-discovery and optional targeted file parameter overrides.
+
 ## [0.7.5] - 2026-08-13
 
 ### Added

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.8.0] - 2026-08-19
+## [0.8.1] - 2026-08-19
 
 ### Added
 - **Native Offline BibTeX Provider**: Introduced `BibTeXProvider` to resolve local bibliography `.bib` files directly without requiring an external Zotero instance or active network connection. Automatically extracts title, authors, year, abstract, venue, and DOI metadata.

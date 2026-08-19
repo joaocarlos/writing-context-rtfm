@@ -4,7 +4,7 @@ from typing import Any
 
 _ENCODING: Any | None = None
 try:
-    import tiktoken
+    import tiktoken  # type: ignore[import-not-found]
 
     _ENCODING = tiktoken.get_encoding("cl100k_base")
 except ImportError:

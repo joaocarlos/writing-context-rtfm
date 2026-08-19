@@ -25,6 +25,13 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+# Testing & Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
 uv.lock
 
 # SQLite / Local Databases

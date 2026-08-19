@@ -173,20 +173,23 @@ def load_config(project_root: str = ".") -> AppConfig:
                 if not isinstance(k, str) or not isinstance(v, str):
                     raise TypeError(f"Provider '{name}' 'headers' keys and values must be strings")
 
-        NON_MCP_PROVIDERS = {"openai_semantic", "huggingface"}
+        extra = dict(p_data.get("extra") or {})
+        for k, v in p_data.items():
+            if k not in ("enabled", "mcp_server", "sse_url", "headers", "extra"):
+                extra.setdefault(k, v)
+
+        NON_MCP_PROVIDERS = {"openai_semantic", "huggingface", "local_embeddings", "bibtex"}
         if enabled and name not in NON_MCP_PROVIDERS and not mcp_server and not sse_url:
             raise ValueError(
                 f"Provider '{name}' must configure either 'mcp_server' or 'sse_url' if enabled."
             )
 
-        extra = p_data.get("extra")
-        if extra is not None and not isinstance(extra, dict):
-            raise TypeError(
-                f"Provider '{name}' 'extra' must be a dictionary, got {type(extra).__name__}"
-            )
-
         parsed_providers[name] = ProviderConfig(
-            enabled=enabled, mcp_server=mcp_server, sse_url=sse_url, headers=headers, extra=extra
+            enabled=enabled,
+            mcp_server=mcp_server,
+            sse_url=sse_url,
+            headers=headers,
+            extra=extra or None,
         )
 
     generator_data = dict(data.get("generator") or {})

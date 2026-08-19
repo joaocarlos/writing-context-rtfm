@@ -1,0 +1,722 @@
+version: 2
+document:
+  title: My Manuscript
+  thesis: ''
+  writing_style:
+    tone: academic, formal
+    avoid: []
+  terminology: {}
+sections:
+  section_access_preamble:
+    identity:
+      source: access.tex
+      selector: /Preamble
+      content_hash: 7a35eeddcd0c9f91074eb9d7cb5b6651
+      char_start: 0
+      char_end: 3332
+    structure:
+      title: Preamble
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: ACCESS
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: LLM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BD
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FCT
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: DOI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: AI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: JSON
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: SYSTEC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: IEEE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: CETEC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ARISE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies: []
+    citations: []
+    references: []
+    figures: []
+    tables: []
+    equations: []
+    algorithms: []
+  section_introduction:
+    identity:
+      source: access.tex
+      selector: /Introduction
+      content_hash: fedc3a8745eabee432f46d12dc2ce4d4
+      char_start: 3332
+      char_end: 9218
+    structure:
+      title: Introduction
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: RISC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: SLM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: GPT
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: NLP
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: AI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies:
+    - target: sec:related_works
+    - target: sec:method
+    - target: sec:exp_setup
+    - target: sec:results
+    - target: sec:conclusion
+    citations:
+    - shakhadri2025shakti
+    - shakhadri2025shakti
+    - theroad
+    - automotiveSensors
+    - automotiveSensors
+    - electronics13244972
+    - park2024maqa
+    - lee2023llmchatbot
+    - yang2024privacy
+    - he2025securitysurvey
+    - iiot
+    - wu2021tiny
+    - strubell2019energy
+    - yi2025edgemoe
+    - islam2024characterizing
+    - qin2025empirical
+    - 10.1145/3636534.3697466
+    - scherer2024deeploy
+    references:
+    - sec:related_works
+    - sec:method
+    - sec:exp_setup
+    - sec:results
+    - sec:conclusion
+    figures: []
+    tables: []
+    equations: []
+    algorithms: []
+  section_related_work:
+    identity:
+      source: access.tex
+      selector: sec:related_works
+      content_hash: 036a840dfe86733a3a10d1200258fd3e
+      char_start: 9218
+      char_end: 15979
+    structure:
+      title: Related Work
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: KV
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RISC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: SLM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: LLM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BERT
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: NPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: GPT
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: NAS
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ECG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: LM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: HMI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: AI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies:
+    - target: tab:related_work
+    citations:
+    - zhang2024tinyllama
+    - mobilellm2024
+    - yang2023tinyformer
+    - 10.1145/3676536.3676747
+    - JungOptimizing2025
+    - scherer2024deeploy
+    - liang2023mcuformer
+    - BusiaTinyTransformer2025
+    - scherer2024deeploy
+    - varshni2025embedded
+    - yauri2024generative
+    - https://doi.org/10.1002/er.7713
+    - s22145174
+    - yang2023tinyformer
+    - 10.1145/3676536.3676747
+    - liang2023mcuformer
+    - scherer2024deeploy
+    - JungOptimizing2025
+    - BusiaTinyTransformer2025
+    - zhang2024tinyllama
+    - mobilellm2024
+    - CaoEmbedAgent
+    - edgeLM2024
+    - varshni2025embedded
+    - yauri2024generative
+    references:
+    - tab:related_work
+    figures: []
+    tables:
+    - tab:related_work
+    equations: []
+    algorithms: []
+  section_methodology:
+    identity:
+      source: access.tex
+      selector: sec:method
+      content_hash: 6f755828d98d1226376319df75d4d171
+      char_start: 15979
+      char_end: 35268
+    structure:
+      title: Methodology
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: RISC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: SLM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BERT
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ARM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: GPT
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: PDF
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: AVR
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: DANGER
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: JSONL
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: JSON
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies:
+    - target: fig:pipeline
+    - target: tab:qa_examples
+    - target: fig:model_architecture
+    - target: fig:model_architecture
+    - target: sec:knowledge_extraction
+    citations:
+    - llama3
+    references:
+    - fig:pipeline
+    - tab:qa_examples
+    - fig:model_architecture
+    - fig:model_architecture
+    - sec:knowledge_extraction
+    figures:
+    - fig:pipeline
+    - fig:model_architecture
+    tables:
+    - tab:qa_examples
+    equations: []
+    algorithms: []
+  section_proposed_evaluation_scenario:
+    identity:
+      source: access.tex
+      selector: sec:exp_setup
+      content_hash: 344b984e5e479b80ea1e5f6c625fb603
+      char_start: 35268
+      char_end: 42414
+    structure:
+      title: Proposed Evaluation Scenario
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: SLM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ARM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ESP
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: HR
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: KB
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ROUGE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: UR
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: WROOM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLEU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: GB
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MB
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies:
+    - target: tab:microcontrollers
+    citations:
+    - tinygpt
+    references:
+    - tab:microcontrollers
+    figures: []
+    tables:
+    - tab:microcontrollers
+    equations:
+    - unlabeled_equation
+    - unlabeled_equation
+    - unlabeled_equation
+    - unlabeled_equation
+    algorithms: []
+  section_results_and_discussions:
+    identity:
+      source: access.tex
+      selector: sec:results
+      content_hash: 12b9f5ac3c328b0cb3de2d7522cdefdf
+      char_start: 42414
+      char_end: 59442
+    structure:
+      title: Results and Discussions
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: NPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: ARM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: HR
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: QA
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: KB
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: UR
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MAC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: NAS
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLEU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: DSP
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: AI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies:
+    - target: fig:parallel_coordinates
+    - target: tab:safety_metrics
+    - target: fig:hardware_performance
+    - target: fig:tinygpt_landscape
+    citations:
+    - 10.1145/3676536.3676747
+    - yang2023tinyformer
+    - liang2023mcuformer
+    - scherer2024deeploy
+    - varshni2025embedded
+    - yauri2024generative
+    references:
+    - fig:parallel_coordinates
+    - tab:safety_metrics
+    - fig:hardware_performance
+    - fig:tinygpt_landscape
+    figures:
+    - fig:parallel_coordinates
+    - fig:hardware_performance
+    - fig:tinygpt_landscape
+    tables:
+    - tab:safety_metrics
+    equations: []
+    algorithms: []
+  section_conclusion:
+    identity:
+      source: access.tex
+      selector: sec:conclusion
+      content_hash: 42665df0f5a56f3e3fff73949b8e0941
+      char_start: 59442
+      char_end: 66486
+    structure:
+      title: Conclusion
+      parent: document_main
+      level: 2
+      children: []
+    purpose:
+      value: ''
+      confidence: 0.0
+      status: generated
+    rhetorical_role:
+      value: ''
+      confidence: 0.0
+    key_terms:
+    - value: FPU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: DEEC
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: UFPB
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: OBD
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: DCA
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: NLP
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: II
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: EOD
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: MCU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: RAG
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: SRAM
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: FEUP
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: IEEE
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: BLEU
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: AI
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    - value: UFRN
+      confidence: 0.95
+      status: generated
+      evidence: Rule-based acronym extraction
+    facts: []
+    constraints: []
+    dependencies: []
+    citations:
+    - 10.1145/3662009.3662020
+    - electronics13112012
+    references: []
+    figures: []
+    tables: []
+    equations: []
+    algorithms: []

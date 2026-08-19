@@ -1,0 +1,41 @@
+{
+  "generation_version": 2,
+  "extractor_version": 1,
+  "sections": {
+    "section_access_preamble": {
+      "content_hash": "7a35eeddcd0c9f91074eb9d7cb5b6651",
+      "decisions": {},
+      "stale_fields": []
+    },
+    "section_introduction": {
+      "content_hash": "fedc3a8745eabee432f46d12dc2ce4d4",
+      "decisions": {},
+      "stale_fields": []
+    },
+    "section_related_work": {
+      "content_hash": "036a840dfe86733a3a10d1200258fd3e",
+      "decisions": {},
+      "stale_fields": []
+    },
+    "section_methodology": {
+      "content_hash": "6f755828d98d1226376319df75d4d171",
+      "decisions": {},
+      "stale_fields": []
+    },
+    "section_proposed_evaluation_scenario": {
+      "content_hash": "344b984e5e479b80ea1e5f6c625fb603",
+      "decisions": {},
+      "stale_fields": []
+    },
+    "section_results_and_discussions": {
+      "content_hash": "12b9f5ac3c328b0cb3de2d7522cdefdf",
+      "decisions": {},
+      "stale_fields": []
+    },
+    "section_conclusion": {
+      "content_hash": "42665df0f5a56f3e3fff73949b8e0941",
+      "decisions": {},
+      "stale_fields": []
+    }
+  }
+}

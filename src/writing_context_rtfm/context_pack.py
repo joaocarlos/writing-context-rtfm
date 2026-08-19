@@ -1,9 +1,11 @@
 """Context pack schemas and generation."""
 
+import contextlib
 import hashlib
+import re
 import uuid
 from collections import defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
@@ -26,6 +28,7 @@ from writing_context_rtfm.utils import (
     resolve_rtfm_db_path,
     scan_latex_commands,
 )
+from writing_context_rtfm.virtual_doc import VirtualDocumentParser
 
 
 def _path_matches(path: str, card_path: str | None) -> bool:
@@ -35,6 +38,95 @@ def _path_matches(path: str, card_path: str | None) -> bool:
     p_norm = path.replace("\\", "/").lower()
     c_norm = card_path.replace("\\", "/").lower().lstrip("./")
     return p_norm.endswith(c_norm)
+
+
+def compute_jaccard_similarity(text_a: str, text_b: str) -> float:
+    """Compute word-level Jaccard similarity between two texts."""
+    words_a = {w for w in re.sub(r"[^\w\s]", " ", text_a.lower()).split() if len(w) >= 3}
+    words_b = {w for w in re.sub(r"[^\w\s]", " ", text_b.lower()).split() if len(w) >= 3}
+    if not words_a or not words_b:
+        return 0.0
+    intersection = len(words_a & words_b)
+    union = len(words_a | words_b)
+    return intersection / max(1, union)
+
+
+def apply_reciprocal_rank_fusion(
+    candidates_by_stream: dict[str, list[SourceSpan]],
+    weights: dict[str, float] | None = None,
+    k: int = 60,
+) -> list[SourceSpan]:
+    """Fuse multiple ranked streams of SourceSpan using Reciprocal Rank Fusion (RRF)."""
+    weights = weights or {}
+    rrf_scores: dict[tuple[str, int | None, int | None, str], float] = defaultdict(float)
+    span_map: dict[tuple[str, int | None, int | None, str], SourceSpan] = {}
+
+    for stream_name, stream_spans in candidates_by_stream.items():
+        w = weights.get(stream_name, 1.0)
+        for rank, span in enumerate(stream_spans, start=1):
+            key = (span.path, span.line_start, span.line_end, span.source_role)
+            rrf_scores[key] += w / (k + rank)
+            if key not in span_map or span.score > span_map[key].score:
+                span_map[key] = span
+
+    if not span_map:
+        return []
+
+    max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
+    fused: list[SourceSpan] = []
+    for key, base_span in span_map.items():
+        normalized_score = round(min(1.0, 0.4 + (rrf_scores[key] / max(1e-6, max_rrf)) * 0.6), 3)
+        updated_span = SourceSpan(
+            path=base_span.path,
+            line_start=base_span.line_start,
+            line_end=base_span.line_end,
+            reason=base_span.reason,
+            score=normalized_score,
+            priority=base_span.priority,
+            query=base_span.query,
+            metadata=base_span.metadata,
+            source_role=base_span.source_role,
+        )
+        fused.append(updated_span)
+
+    fused.sort(key=lambda s: (-s.score, s.path, s.line_start or 0))
+    return fused
+
+
+def apply_mmr_diversity(spans: list[SourceSpan], lambda_param: float = 0.75) -> list[SourceSpan]:
+    """Re-rank candidate spans using Maximal Marginal Relevance (MMR) for semantic diversity."""
+    if len(spans) <= 1:
+        return spans
+
+    selected: list[SourceSpan] = []
+    remaining = list(spans)
+
+    remaining.sort(key=lambda s: -s.score)
+    selected.append(remaining.pop(0))
+
+    while remaining:
+        best_score = -float("inf")
+        best_idx = 0
+
+        for i, cand in enumerate(remaining):
+            cand_snippet = (cand.metadata or {}).get("snippet", "")
+            max_sim = 0.0
+            if cand_snippet:
+                for sel in selected:
+                    sel_snippet = (sel.metadata or {}).get("snippet", "")
+                    if sel_snippet:
+                        sim = compute_jaccard_similarity(cand_snippet, sel_snippet)
+                        if sim > max_sim:
+                            max_sim = sim
+
+            mmr_score = (lambda_param * cand.score) - ((1.0 - lambda_param) * max_sim)
+            if mmr_score > best_score:
+                best_score = mmr_score
+                best_idx = i
+
+        selected.append(remaining.pop(best_idx))
+
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +258,7 @@ class ContextPackGenerator:
         target_card: SectionCard | None = None
         dep_cards: list[SectionCard] = []
 
-        def _add(q: str, qtype: str):
+        def _add(q: str, qtype: str) -> None:
             if q and q not in query_type_map:
                 queries.append(q)
                 query_type_map[q] = qtype
@@ -446,11 +538,13 @@ class ContextPackGenerator:
         line_end: int | None = None,
         pack_mode: str | None = None,
         role_budgets: dict[str, float] | None = None,
+        strict_budget: bool | None = None,
     ) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
         task_type = task_type or "write_new_section"
         pack_mode = pack_mode or "standard"
+        is_strict = strict_budget if strict_budget is not None else (pack_mode == "minimal")
 
         # Apply pack mode defaults / overrides
         if pack_mode == "minimal":
@@ -680,6 +774,86 @@ class ContextPackGenerator:
                     warnings.append(f"Provider '{provider.provider_id}' failed: {e}")
                     status = "degraded"
 
+        # --- 1-Hop Reference Graph Resolution (Figures, Equations, Tables, Subsections) ---
+        if target_card and target_path:
+            try:
+                doc_parser = VirtualDocumentParser(pr)
+                doc_parser.parse(target_path)
+
+                ref_labels: list[str] = []
+                if resolved_key and resolved_key in doc_parser.nodes:
+                    ref_labels.extend(doc_parser.nodes[resolved_key].references)
+
+                seen_env_keys = set()
+                for ref_label in ref_labels:
+                    for file_rel, envs in doc_parser.environments_by_file.items():
+                        for env in envs:
+                            if env.get("label") == ref_label:
+                                env_key = (file_rel, env.get("line_start"), env.get("line_end"))
+                                if env_key not in seen_env_keys:
+                                    seen_env_keys.add(env_key)
+                                    f_abs = Path(pr) / file_rel
+                                    if f_abs.is_file():
+                                        f_lines = f_abs.read_text(
+                                            encoding="utf-8", errors="replace"
+                                        ).splitlines()
+                                        e_start = max(1, env.get("line_start", 1))
+                                        e_end = min(len(f_lines), env.get("line_end", e_start))
+                                        env_snippet = "\n".join(f_lines[e_start - 1 : e_end])
+                                        env_span = SourceSpan(
+                                            path=file_rel,
+                                            line_start=e_start,
+                                            line_end=e_end,
+                                            reason=f"Referenced {env.get('env_name', 'element')} (\\ref{{{ref_label}}})",
+                                            score=0.92,
+                                            priority="supporting",
+                                            source_role="dependency",
+                                            metadata={
+                                                "snippet": env_snippet,
+                                                "env_name": env.get("env_name"),
+                                                "label": ref_label,
+                                            },
+                                        )
+                                        all_candidates.append(env_span)
+            except Exception as e:
+                warnings.append(f"1-Hop reference traversal notice: {e}")
+
+        # --- AST Environment Snapping ---
+        doc_parser_snap = VirtualDocumentParser(pr)
+        snapped_candidates: list[SourceSpan] = []
+        for span in all_candidates:
+            if (
+                span.path.endswith(".tex")
+                and span.line_start is not None
+                and span.line_end is not None
+            ):
+                if span.path not in doc_parser_snap.environments_by_file:
+                    with contextlib.suppress(Exception):
+                        doc_parser_snap.parse(span.path)
+                snapped_start, snapped_end = doc_parser_snap.snap_to_environment(
+                    span.path, span.line_start, span.line_end
+                )
+                if snapped_start != span.line_start or snapped_end != span.line_end:
+                    f_abs = Path(pr) / span.path
+                    if f_abs.is_file():
+                        with contextlib.suppress(Exception):
+                            f_lines = f_abs.read_text(
+                                encoding="utf-8", errors="replace"
+                            ).splitlines()
+                            meta = dict(span.metadata or {})
+                            meta["snippet"] = "\n".join(f_lines[snapped_start - 1 : snapped_end])
+                            snapped_candidates.append(
+                                replace(
+                                    span,
+                                    line_start=snapped_start,
+                                    line_end=snapped_end,
+                                    metadata=meta,
+                                )
+                            )
+                            continue
+            snapped_candidates.append(span)
+        all_candidates = snapped_candidates
+
         quality.candidate_count = len(all_candidates)
 
         # --- Dedup ---
@@ -708,6 +882,9 @@ class ContextPackGenerator:
             line_end=line_end,
         )
 
+        # --- Apply MMR Diversity Re-ranking to suppress repetitive literature/background ---
+        filtered = apply_mmr_diversity(filtered, lambda_param=0.75)
+
         # --- Token budget selection ---
         usable_budget = int(token_budget * (1.0 - self.config.context.reserved_generation_margin))
         selected: list[SourceSpan] = []
@@ -728,7 +905,7 @@ class ContextPackGenerator:
             else:
                 pass2_candidates.append(span)
 
-        # Pass 2: Fill remaining spans up to max_spans, ignoring token budget
+        # Pass 2: Fill remaining spans up to max_spans
         budget_dropped = 0
         cap_truncated = False
         for span in pass2_candidates:
@@ -738,14 +915,30 @@ class ContextPackGenerator:
                 continue
 
             est = self._estimate_tokens(span)
-            selected.append(span)
-            current_tokens += est
+            if is_strict:
+                if (current_tokens + est <= token_budget) or (len(selected) == 0):
+                    selected.append(span)
+                    current_tokens += est
+                    tokens_by_role[span.source_role] = tokens_by_role.get(span.source_role, 0) + est
+                else:
+                    budget_dropped += 1
+            else:
+                selected.append(span)
+                current_tokens += est
+                tokens_by_role[span.source_role] = tokens_by_role.get(span.source_role, 0) + est
 
-        if current_tokens > token_budget or cap_truncated:
-            msg = f"Note: The retrieved context ({current_tokens} tokens) exceeded the requested budget ({token_budget}). All highly-relevant spans up to max_spans were included to prevent context bloat."
+        if current_tokens > token_budget or cap_truncated or (is_strict and budget_dropped > 0):
+            if current_tokens > token_budget:
+                msg = f"Note: The retrieved context ({current_tokens} tokens) exceeded the requested budget ({token_budget}). All highly-relevant spans up to max_spans were included to prevent context bloat."
+                warnings.append(msg)
             if cap_truncated:
-                msg += f" {budget_dropped} candidate span(s) were dropped because the max_source_spans={max_spans} cap was reached."
-            warnings.append(msg)
+                warnings.append(
+                    f"{budget_dropped} candidate span(s) were dropped because the max_source_spans={max_spans} cap was reached."
+                )
+            elif is_strict and budget_dropped > 0 and current_tokens <= token_budget:
+                warnings.append(
+                    f"{budget_dropped} candidate span(s) were dropped to strictly respect the token budget ({current_tokens}/{token_budget} tokens)."
+                )
 
         quality.selected_count = len(selected)
 
@@ -821,7 +1014,9 @@ class ContextPackGenerator:
 
         run_id = str(uuid.uuid4())
         has_degrading = any(
-            not w.startswith("LaTeX Safety:") and not w.startswith("Note: The retrieved context")
+            not w.startswith("LaTeX Safety:")
+            and not w.startswith("Note:")
+            and "candidate span(s) were dropped" not in w
             for w in warnings
         )
         status_str = "degraded" if (has_degrading or status == "degraded") else "complete"

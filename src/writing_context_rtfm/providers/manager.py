@@ -82,7 +82,9 @@ class LocalMCPClientManager:
         if getattr(_original, "__patched__", False):
             return
 
-        async def custom_create_process(command, args, env=None, errlog=sys.stderr, cwd=None):
+        async def custom_create_process(
+            command: Any, args: Any, env: Any = None, errlog: Any = sys.stderr, cwd: Any = None
+        ) -> Any:
             proc = await _original(command, args, env, errlog, cwd)
             pid = None
             if hasattr(proc, "pid"):
@@ -99,7 +101,7 @@ class LocalMCPClientManager:
                     self.registered_pids.append(pid)
             return proc
 
-        custom_create_process.__patched__ = True
+        custom_create_process.__patched__ = True  # type: ignore[attr-defined]
         mcp.client.stdio._create_platform_compatible_process = custom_create_process
 
     async def _get_or_create_session(
@@ -139,7 +141,7 @@ class LocalMCPClientManager:
     ) -> Any:
         """Call an MCP tool on the given subprocess server thread-safely."""
 
-        async def _call():
+        async def _call() -> Any:
             session = await self._get_or_create_session(command, args, env)
             return await session.call_tool(tool_name, arguments)
 
@@ -150,7 +152,7 @@ class LocalMCPClientManager:
         """Cleanly close all active sessions, unregister PIDs, and stop background loop."""
 
         # 1. Cleanly close sessions inside loop
-        async def _close_all():
+        async def _close_all() -> None:
             for _key, stack in list(self.exit_stacks.items()):
                 with suppress(Exception):
                     await stack.aclose()

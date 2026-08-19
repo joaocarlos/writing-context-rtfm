@@ -1,10 +1,10 @@
-import unittest
-from pathlib import Path
 import json
 import shutil
 import tempfile
-import yaml
-from unittest.mock import patch, MagicMock
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 from writing_context_rtfm.cli import cards_command
 
 
@@ -88,9 +88,11 @@ section_cards:
         args_infer.force = False
 
         import sys
+
         with patch.object(sys, "exit") as mock_exit:
             import io
             from contextlib import redirect_stdout
+
             f = io.StringIO()
             with redirect_stdout(f):
                 cards_command(args_infer)
@@ -113,6 +115,7 @@ section_cards:
 
         import io
         from contextlib import redirect_stdout
+
         f = io.StringIO()
         with redirect_stdout(f):
             cards_command(args_val)

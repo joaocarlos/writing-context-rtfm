@@ -1,0 +1,9 @@
+version: 2
+document:
+  title: My Manuscript
+  thesis: ''
+  writing_style:
+    tone: academic, formal
+    avoid: []
+  terminology: {}
+sections: {}

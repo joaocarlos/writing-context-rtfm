@@ -26,7 +26,9 @@ class TestCliInit(unittest.TestCase):
 
         # Check standard config yaml/section cards
         self.assertTrue((self.project_root / ".writing-context" / "config.yaml").exists())
-        self.assertTrue((self.project_root / ".writing-context" / "cards.overrides.yaml.example").exists())
+        self.assertTrue(
+            (self.project_root / ".writing-context" / "cards.overrides.yaml.example").exists()
+        )
 
         # Check .gitignore
         gitignore = self.project_root / ".gitignore"
@@ -194,7 +196,11 @@ class TestCliInit(unittest.TestCase):
         self.assertIn("writing-context-rtfm", data["enabledMcpjsonServers"])
 
         # Verify PostToolUse inner hook uses 'input'
-        inner_hook = data["hooks"]["PostToolUse"][1]["hooks"][0] if len(data["hooks"]["PostToolUse"]) > 1 else data["hooks"]["PostToolUse"][0]["hooks"][0]
+        inner_hook = (
+            data["hooks"]["PostToolUse"][1]["hooks"][0]
+            if len(data["hooks"]["PostToolUse"]) > 1
+            else data["hooks"]["PostToolUse"][0]["hooks"][0]
+        )
         self.assertIn("input", inner_hook)
 
         # Verify SessionEnd structure
@@ -208,9 +214,7 @@ class TestCliInit(unittest.TestCase):
         settings_file.unlink()
         invalid_legacy = {
             "hooks": {
-                "SessionEnd": [
-                    {"type": "command", "command": "writing-context-rtfm cleanup"}
-                ]
+                "SessionEnd": [{"type": "command", "command": "writing-context-rtfm cleanup"}]
             }
         }
         settings_file.write_text(json.dumps(invalid_legacy), encoding="utf-8")
@@ -220,7 +224,9 @@ class TestCliInit(unittest.TestCase):
         repaired_session_end = repaired_data["hooks"]["SessionEnd"]
         self.assertEqual(len(repaired_session_end), 1)
         self.assertIn("hooks", repaired_session_end[0])
-        self.assertEqual(repaired_session_end[0]["hooks"][0]["command"], "writing-context-rtfm cleanup")
+        self.assertEqual(
+            repaired_session_end[0]["hooks"][0]["command"], "writing-context-rtfm cleanup"
+        )
 
 
 if __name__ == "__main__":

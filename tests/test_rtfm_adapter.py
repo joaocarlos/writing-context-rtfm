@@ -230,6 +230,32 @@ class TestResolveRtfmDbPath(unittest.TestCase):
         res = resolve_rtfm_db_path(self.project_root)
         self.assertEqual(res, self.project_root / ".rtfm" / "library.db")
 
+    def test_direct_sqlite_search(self):
+        import sqlite3
+
+        db_path = self.project_root / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, path TEXT, title TEXT);")
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content);")
+        conn.execute("INSERT INTO books VALUES (1, 'intro.tex', 'Intro Book');")
+        conn.execute(
+            "INSERT INTO chunks VALUES (1, 1, 'Deep learning quantization techniques', 1, 10, 'Quantization');"
+        )
+        conn.execute(
+            "INSERT INTO chunks_fts (rowid, content) VALUES (1, 'Deep learning quantization techniques');"
+        )
+        conn.commit()
+        conn.close()
+
+        adapter = RTFMAdapter(project_root=str(self.project_root))
+        results = adapter.search("quantization", corpus="default", limit=5)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].path, "intro.tex")
+        self.assertIn("quantization", results[0].snippet.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

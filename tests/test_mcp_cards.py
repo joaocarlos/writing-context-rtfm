@@ -5,7 +5,6 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import yaml
 
@@ -187,7 +186,9 @@ class TestMCPCards(unittest.TestCase):
 
         with open(self.wc_dir / "cards.lock.json", encoding="utf-8") as f:
             lock = json.load(f)
-        self.assertEqual(lock["sections"]["section_intro"]["decisions"]["key_terms:FLC"], "accepted")
+        self.assertEqual(
+            lock["sections"]["section_intro"]["decisions"]["key_terms:FLC"], "accepted"
+        )
 
     def test_reject_card_candidate(self):
         req = {

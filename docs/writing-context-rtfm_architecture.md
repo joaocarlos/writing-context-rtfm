@@ -594,6 +594,7 @@ class SourceSpan:
     score: float = 0.0
     query: str | None = None
 
+
 @dataclass
 class ContextPack:
     task: str

@@ -12,6 +12,7 @@ from writing_context_rtfm.storage import ExtensionStore
 
 class MissingAPIKeyError(Exception):
     """Raised when the OpenAI API key is missing."""
+
     pass
 
 
@@ -77,8 +78,8 @@ def get_api_key(config: AppConfig) -> str | None:
         return key
 
     try:
-        store = ExtensionStore(config.cache.path)
-        return store.get_provider_token("openai_semantic")
+        with ExtensionStore(config.cache.path) as store:
+            return store.get_provider_token("openai_semantic")
     except Exception:
         return None
 
@@ -97,8 +98,8 @@ def get_hf_api_token(config: AppConfig) -> str | None:
         return token
 
     try:
-        store = ExtensionStore(config.cache.path)
-        return store.get_provider_token("huggingface")
+        with ExtensionStore(config.cache.path) as store:
+            return store.get_provider_token("huggingface")
     except Exception:
         return None
 
@@ -121,7 +122,10 @@ def extract_semantic_metadata(
     # Determine if user has custom generator configuration
     has_custom_config = False
     if config.generator:
-        if config.generator.model != "gpt-4o-mini" or config.generator.api_base != "https://api.openai.com/v1":
+        if (
+            config.generator.model != "gpt-4o-mini"
+            or config.generator.api_base != "https://api.openai.com/v1"
+        ):
             has_custom_config = True
 
     if has_custom_config:
@@ -133,7 +137,7 @@ def extract_semantic_metadata(
             api_key = get_hf_api_token(config)
         else:
             api_key = get_openai_api_key(config)
-            
+
         if not api_key and "localhost" not in api_base and "127.0.0.1" not in api_base:
             raise MissingAPIKeyError(
                 f"API Key/Token required for custom endpoint '{api_base}'. Please set OPENAI_API_KEY, HF_TOKEN, or config api_key."
@@ -163,7 +167,14 @@ def extract_semantic_metadata(
                         if models_data:
                             installed_names = [m.get("name", "") for m in models_data]
                             selected_model = None
-                            priority = ["qwen2.5-coder", "qwen2.5", "llama3", "phi3", "mistral", "gemma"]
+                            priority = [
+                                "qwen2.5-coder",
+                                "qwen2.5",
+                                "llama3",
+                                "phi3",
+                                "mistral",
+                                "gemma",
+                            ]
                             for p in priority:
                                 for name in installed_names:
                                     if p in name.lower():
@@ -171,18 +182,20 @@ def extract_semantic_metadata(
                                         break
                                 if selected_model:
                                     break
-                            
+
                             if not selected_model:
                                 selected_model = installed_names[0]
-                                
+
                             api_base = f"{ollama_base}/v1"
                             api_key = "ollama"
                             target_model = selected_model
                         else:
-                            raise MissingAPIKeyError("Ollama is running, but no models have been pulled. Run 'ollama pull phi3' or configure keys.")
+                            raise MissingAPIKeyError(
+                                "Ollama is running, but no models have been pulled. Run 'ollama pull phi3' or configure keys."
+                            )
                     else:
                         raise MissingAPIKeyError("Ollama returned non-200 response.")
-                except (httpx.RequestError, MissingAPIKeyError):
+                except (httpx.RequestError, MissingAPIKeyError) as err:
                     raise MissingAPIKeyError(
                         "OpenAI API key not found. No OpenAI API key or Hugging Face token found, and local Ollama is not running.\n"
                         "To use LLM card scaffolding, please configure one of the following:\n"
@@ -190,16 +203,16 @@ def extract_semantic_metadata(
                         "2. Hugging Face Token (export HF_TOKEN='your-token')\n"
                         "3. Local Ollama Server (start Ollama and run 'ollama pull phi3')\n"
                         "Otherwise, the builder will fall back to a deterministic offline scan."
-                    )
+                    ) from err
 
     text = prepare_section_text(content)
-    
+
     headers = {
         "Content-Type": "application/json",
     }
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-        
+
     payload = {
         "model": target_model,
         "messages": [
@@ -208,7 +221,7 @@ def extract_semantic_metadata(
         ],
         "temperature": 0.1,
     }
-    
+
     if "openai.com" in api_base.lower():
         payload["response_format"] = {"type": "json_object"}
 
@@ -223,7 +236,7 @@ def extract_semantic_metadata(
         response.raise_for_status()
         result = response.json()
         response_text = result["choices"][0]["message"]["content"]
-        
+
         cleaned = response_text.strip()
         if cleaned.startswith("```json"):
             cleaned = cleaned[7:]
@@ -232,8 +245,9 @@ def extract_semantic_metadata(
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
-        
-        return json.loads(cleaned)
+
+        parsed_data: dict[str, Any] = json.loads(cleaned)
+        return parsed_data
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             if "openai.com" in url.lower():
@@ -241,10 +255,12 @@ def extract_semantic_metadata(
                     "OpenAI API key is invalid (Unauthorized 401).\n"
                     "Please configure a valid key using: export OPENAI_API_KEY='your-key' or "
                     "writing-context-rtfm auth openai_semantic <your-key>"
-                )
+                ) from e
             raise MissingAPIKeyError(
                 f"Unauthorized (401) call to {url}. Please check your credentials/tokens."
-            )
+            ) from e
         raise
     except Exception as e:
-        raise RuntimeError(f"Semantic inference call failed on model '{target_model}' at '{api_base}': {e}") from e
+        raise RuntimeError(
+            f"Semantic inference call failed on model '{target_model}' at '{api_base}': {e}"
+        ) from e

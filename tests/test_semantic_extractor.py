@@ -1,10 +1,18 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import httpx
-from writing_context_rtfm.config import AppConfig, RTFMConfig, ContextConfig, CacheConfig, SectionCardsConfig
+
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
 from writing_context_rtfm.semantic_extractor import (
-    extract_semantic_metadata,
     MissingAPIKeyError,
+    extract_semantic_metadata,
 )
 
 
@@ -58,9 +66,7 @@ class TestSemanticExtractor(unittest.TestCase):
         mock_response.status_code = 401
         # Set up a Mock response that raises HTTPStatusError when raise_for_status is called
         http_error = httpx.HTTPStatusError(
-            message="401 Unauthorized",
-            request=MagicMock(),
-            response=mock_response
+            message="401 Unauthorized", request=MagicMock(), response=mock_response
         )
         mock_response.raise_for_status.side_effect = http_error
         mock_post.return_value = mock_response

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from writing_context_rtfm import __version__
-from writing_context_rtfm.config import load_config
+from writing_context_rtfm.config import AppConfig, load_config
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.features import (
     audit_manuscript_terminology,
@@ -21,7 +21,11 @@ from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 from writing_context_rtfm.latex import build_reference_graph
 from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.section_cards import load_section_cards, validate_section_cards
+from writing_context_rtfm.section_cards import (
+    SectionCards,
+    load_section_cards,
+    validate_section_cards,
+)
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.utils import resolve_rtfm_db_path
 
@@ -59,9 +63,9 @@ def _format_proofread_section_prompt(pack: Any) -> str:
     constraints = getattr(pack, "constraints", None)
     mode = "surface"
     strictness = "moderate"
-    general_rules = []
-    section_specific_rules = []
-    terminology = []
+    general_rules: list[str] = []
+    section_specific_rules: list[str] = []
+    terminology: list[Any] = []
 
     if isinstance(constraints, dict):
         mode = constraints.get("mode", "surface")
@@ -76,7 +80,7 @@ def _format_proofread_section_prompt(pack: Any) -> str:
         section_specific_rules = getattr(constraints, "section_specific_rules", []) or []
         terminology = getattr(constraints, "terminology", []) or []
     elif isinstance(constraints, list):
-        section_specific_rules = constraints
+        section_specific_rules = [str(c) for c in constraints]
 
     terminology_txt = []
     for t in terminology or []:
@@ -89,29 +93,33 @@ def _format_proofread_section_prompt(pack: Any) -> str:
         else:
             term = str(t)
             examples = []
-        examples_str = (
-            "; ".join(f"'{ex}'" for ex in examples) if examples else "None"
-        )
+        examples_str = "; ".join(f"'{ex}'" for ex in examples) if examples else "None"
         terminology_txt.append(f"- '{term}': used in: {examples_str}")
     terminology_joined = "\n".join(terminology_txt) if terminology_txt else "None"
 
     constraints_joined = (
-        "\n".join(f"- {c}" for c in section_specific_rules)
-        if section_specific_rules
-        else "None"
+        "\n".join(f"- {c}" for c in section_specific_rules) if section_specific_rules else "None"
     )
-    general_joined = (
-        "\n".join(f"- {c}" for c in general_rules)
-        if general_rules
-        else "None"
-    )
+    general_joined = "\n".join(f"- {c}" for c in general_rules) if general_rules else "None"
 
     local_ctx = getattr(pack, "local_context", None)
     local_txt = ""
     if local_ctx:
-        prev_para = getattr(local_ctx, "previous_paragraph", None) if not isinstance(local_ctx, dict) else local_ctx.get("previous_paragraph")
-        target_span = getattr(local_ctx, "target_span", "") if not isinstance(local_ctx, dict) else local_ctx.get("target_span", "")
-        next_para = getattr(local_ctx, "next_paragraph", None) if not isinstance(local_ctx, dict) else local_ctx.get("next_paragraph")
+        prev_para = (
+            getattr(local_ctx, "previous_paragraph", None)
+            if not isinstance(local_ctx, dict)
+            else local_ctx.get("previous_paragraph")
+        )
+        target_span = (
+            getattr(local_ctx, "target_span", "")
+            if not isinstance(local_ctx, dict)
+            else local_ctx.get("target_span", "")
+        )
+        next_para = (
+            getattr(local_ctx, "next_paragraph", None)
+            if not isinstance(local_ctx, dict)
+            else local_ctx.get("next_paragraph")
+        )
         if prev_para:
             local_txt += f"[Previous Context Paragraph]:\n{prev_para}\n\n"
         if target_span:
@@ -120,16 +128,16 @@ def _format_proofread_section_prompt(pack: Any) -> str:
             local_txt += f"[Next Context Paragraph]:\n{next_para}\n\n"
 
     target = getattr(pack, "target", None)
-    file_path = "Unknown"
+    file_path: str = "Unknown"
     line_start = "?"
     line_end = "?"
     if target:
         if isinstance(target, dict):
-            file_path = target.get("file_path", target.get("file", "Unknown"))
+            file_path = str(target.get("file_path", target.get("file", "Unknown")))
             line_start = target.get("line_start", "?")
             line_end = target.get("line_end", "?")
         elif hasattr(target, "file_path"):
-            file_path = getattr(target, "file_path", "Unknown")
+            file_path = str(getattr(target, "file_path", "Unknown"))
             line_start = getattr(target, "line_start", "?")
             line_end = getattr(target, "line_end", "?")
         else:
@@ -215,7 +223,7 @@ def _sanitize_pack_for_output(pack_dict: dict[str, Any]) -> dict[str, Any]:
 # --- Tool catalog -----------------------------------------------------------
 
 
-def get_tools_list():
+def get_tools_list() -> dict[str, Any]:
     return {
         "tools": [
             {
@@ -281,7 +289,7 @@ def get_tools_list():
                                 "review",
                             ],
                             "description": "The specific type of writing task.",
-                            },
+                        },
                         "line_start": {
                             "type": "integer",
                             "description": "Optional starting line range in the target file.",
@@ -518,10 +526,10 @@ def get_tools_list():
                     "properties": {
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace."
+                            "description": "Optional project root path. Defaults to current workspace.",
                         }
-                    }
-                }
+                    },
+                },
             },
             {
                 "name": "accept_card_candidate",
@@ -531,24 +539,24 @@ def get_tools_list():
                     "properties": {
                         "section_id": {
                             "type": "string",
-                            "description": "The target section ID (e.g. 'section_introduction')."
+                            "description": "The target section ID (e.g. 'section_introduction').",
                         },
                         "field": {
                             "type": "string",
                             "enum": ["purpose", "key_terms", "facts", "constraints"],
-                            "description": "The field of the candidate to accept."
+                            "description": "The field of the candidate to accept.",
                         },
                         "value": {
                             "type": "string",
-                            "description": "The specific candidate value to accept. For list fields, specifies the item value."
+                            "description": "The specific candidate value to accept. For list fields, specifies the item value.",
                         },
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace."
-                        }
+                            "description": "Optional project root path. Defaults to current workspace.",
+                        },
                     },
-                    "required": ["section_id", "field", "value"]
-                }
+                    "required": ["section_id", "field", "value"],
+                },
             },
             {
                 "name": "reject_card_candidate",
@@ -556,26 +564,23 @@ def get_tools_list():
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "section_id": {
-                            "type": "string",
-                            "description": "The target section ID."
-                        },
+                        "section_id": {"type": "string", "description": "The target section ID."},
                         "field": {
                             "type": "string",
                             "enum": ["purpose", "key_terms", "facts", "constraints"],
-                            "description": "The field of the candidate to reject."
+                            "description": "The field of the candidate to reject.",
                         },
                         "value": {
                             "type": "string",
-                            "description": "The specific candidate value to reject. For list fields, specifies the item value."
+                            "description": "The specific candidate value to reject. For list fields, specifies the item value.",
                         },
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace."
-                        }
+                            "description": "Optional project root path. Defaults to current workspace.",
+                        },
                     },
-                    "required": ["section_id", "field", "value"]
-                }
+                    "required": ["section_id", "field", "value"],
+                },
             },
             {
                 "name": "edit_card_field",
@@ -583,30 +588,37 @@ def get_tools_list():
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "section_id": {
-                            "type": "string",
-                            "description": "The target section ID."
-                        },
+                        "section_id": {"type": "string", "description": "The target section ID."},
                         "field": {
                             "type": "string",
-                            "enum": ["purpose", "role", "key_terms", "depends_on", "must_preserve", "avoid", "constraints", "path", "title"],
-                            "description": "The overrides field to update."
+                            "enum": [
+                                "purpose",
+                                "role",
+                                "key_terms",
+                                "depends_on",
+                                "must_preserve",
+                                "avoid",
+                                "constraints",
+                                "path",
+                                "title",
+                            ],
+                            "description": "The overrides field to update.",
                         },
                         "value": {
                             "description": "The new value to assign to the overrides field. Can be a string or a list of strings depending on the field.",
                             "anyOf": [
-                                { "type": "string" },
-                                { "type": "array", "items": { "type": "string" } },
-                                { "type": "null" }
-                            ]
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                                {"type": "null"},
+                            ],
                         },
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace."
-                        }
+                            "description": "Optional project root path. Defaults to current workspace.",
+                        },
                     },
-                    "required": ["section_id", "field", "value"]
-                }
+                    "required": ["section_id", "field", "value"],
+                },
             },
             {
                 "name": "explain_card_candidate",
@@ -614,26 +626,23 @@ def get_tools_list():
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "section_id": {
-                            "type": "string",
-                            "description": "The target section ID."
-                        },
+                        "section_id": {"type": "string", "description": "The target section ID."},
                         "field": {
                             "type": "string",
                             "enum": ["purpose", "key_terms", "facts", "constraints"],
-                            "description": "The candidate field."
+                            "description": "The candidate field.",
                         },
                         "value": {
                             "type": "string",
-                            "description": "The specific candidate value to explain."
+                            "description": "The specific candidate value to explain.",
                         },
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace."
-                        }
+                            "description": "Optional project root path. Defaults to current workspace.",
+                        },
                     },
-                    "required": ["section_id", "field", "value"]
-                }
+                    "required": ["section_id", "field", "value"],
+                },
             },
         ]
     }
@@ -642,7 +651,9 @@ def get_tools_list():
 _RUNTIME_CACHE = None
 
 
-def _load_runtime():
+def _load_runtime() -> tuple[
+    AppConfig, SectionCards | None, list[str], RTFMAdapter, ExtensionStore
+]:
     """Load config, section cards, adapter, store. Returns (config, cards, card_warnings, adapter, store).
 
     Section-card validation issues are returned as warnings (not exceptions) so
@@ -740,7 +751,7 @@ def _load_runtime():
     return config, cards, card_warnings, adapter, store
 
 
-def handle_get_writing_context_pack(args):
+def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     if not args or "task" not in args:
         return _error_response(ERROR_INVALID_INPUT, "Missing required argument: task")
 
@@ -803,7 +814,7 @@ def handle_get_writing_context_pack(args):
     return _success_response(_sanitize_pack_for_output(payload))
 
 
-def handle_get_proofreading_context_pack(args):
+def handle_get_proofreading_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     missing = [k for k in ("target_file", "line_start", "line_end") if not args or k not in args]
     if missing:
         return _error_response(
@@ -820,14 +831,22 @@ def handle_get_proofreading_context_pack(args):
         )
 
     generator = ProofreadPackGenerator(config, cards, adapter, store)
+    target_file = str(args.get("target_file", ""))
+    line_start = (
+        int(args["line_start"]) if "line_start" in args and args["line_start"] is not None else 1
+    )
+    line_end = int(args["line_end"]) if "line_end" in args and args["line_end"] is not None else 100
+    mode = str(args.get("mode", "surface"))
+    strictness = str(args.get("strictness", "moderate"))
+    max_tokens = int(args.get("max_tokens", 4000))
     try:
         pack = generator.generate(
-            target_file=args.get("target_file"),
-            line_start=args.get("line_start"),
-            line_end=args.get("line_end"),
-            mode=args.get("mode", "surface"),
-            strictness=args.get("strictness", "moderate"),
-            max_tokens=args.get("max_tokens", 4000),
+            target_file=target_file,
+            line_start=line_start,
+            line_end=line_end,
+            mode=mode,
+            strictness=strictness,
+            max_tokens=max_tokens,
         )
     except Exception as e:
         logger.exception("Proofreading pack generation failed")
@@ -854,7 +873,7 @@ def handle_get_proofreading_context_pack(args):
     return _success_response(payload)
 
 
-def handle_refresh_index(args):
+def handle_refresh_index(args: dict[str, Any]) -> dict[str, Any]:
     try:
         config = load_config(str(WORKSPACE_ROOT))
     except Exception as e:
@@ -884,7 +903,7 @@ def handle_refresh_index(args):
     )
 
 
-def handle_initialize_section_cards(args):
+def handle_initialize_section_cards(args: dict[str, Any]) -> dict[str, Any]:
     project_root = args.get("project_root") or str(WORKSPACE_ROOT)
     try:
         res = initialize_section_cards(project_root)
@@ -894,7 +913,7 @@ def handle_initialize_section_cards(args):
         return _error_response(ERROR_INTERNAL, f"Initialization failed: {e}", type(e).__name__)
 
 
-def handle_request_more_context(args):
+def handle_request_more_context(args: dict[str, Any]) -> dict[str, Any]:
     run_id = args.get("run_id")
     if not run_id:
         return _error_response(ERROR_INVALID_INPUT, "Missing required argument: run_id")
@@ -912,7 +931,7 @@ def handle_request_more_context(args):
         )
 
 
-def handle_submit_generation_feedback(args):
+def handle_submit_generation_feedback(args: dict[str, Any]) -> dict[str, Any]:
     run_id = args.get("run_id")
     metric_name = args.get("metric_name")
     metric_value = args.get("metric_value")
@@ -932,7 +951,7 @@ def handle_submit_generation_feedback(args):
         return _error_response(ERROR_INTERNAL, f"Failed to submit feedback: {e}", type(e).__name__)
 
 
-def handle_audit_manuscript_terminology(args):
+def handle_audit_manuscript_terminology(args: dict[str, Any]) -> dict[str, Any]:
     project_root = args.get("project_root") or str(WORKSPACE_ROOT)
     try:
         res = audit_manuscript_terminology(project_root)
@@ -942,23 +961,25 @@ def handle_audit_manuscript_terminology(args):
         return _error_response(ERROR_INTERNAL, f"Terminology audit failed: {e}", type(e).__name__)
 
 
-def handle_get_term_context(args):
+def handle_get_term_context(args: dict[str, Any]) -> dict[str, Any]:
     if not args or "term" not in args:
         return _error_response(ERROR_INVALID_INPUT, "Missing required argument: term")
-    term = args.get("term")
+    term = str(args.get("term", ""))
     project_root = args.get("project_root")
     try:
         if not project_root:
             config = load_config(str(WORKSPACE_ROOT))
-            project_root = config.rtfm.project_root
-        res = get_term_context(term, project_root)
+            project_root_str = config.rtfm.project_root
+        else:
+            project_root_str = str(project_root)
+        res = get_term_context(term, project_root_str)
         return _success_response(res)
     except Exception as e:
         logger.exception("Failed to lookup term context")
         return _error_response(ERROR_INTERNAL, f"Terminology lookup failed: {e}", type(e).__name__)
 
 
-def handle_get_manuscript_reference_graph(args):
+def handle_get_manuscript_reference_graph(args: dict[str, Any]) -> dict[str, Any]:
     project_root = args.get("project_root")
     try:
         if not project_root:
@@ -972,7 +993,7 @@ def handle_get_manuscript_reference_graph(args):
         )
 
 
-def handle_review_card_candidates(args):
+def handle_review_card_candidates(args: dict[str, Any]) -> dict[str, Any]:
     project_root = args.get("project_root")
     try:
         root = Path(project_root) if project_root else WORKSPACE_ROOT
@@ -983,6 +1004,7 @@ def handle_review_card_candidates(args):
             )
 
         import yaml
+
         with open(generated_path, encoding="utf-8") as f:
             gen_data = yaml.safe_load(f) or {}
 
@@ -992,45 +1014,53 @@ def handle_review_card_candidates(args):
             # Check purpose candidate
             purpose = sdata.get("purpose")
             if isinstance(purpose, dict) and purpose.get("status") == "generated":
-                candidates.append({
-                    "section_id": sid,
-                    "field": "purpose",
-                    "value": purpose.get("value"),
-                    "confidence": purpose.get("confidence", 0.0),
-                    "provenance": purpose.get("provenance", [])
-                })
+                candidates.append(
+                    {
+                        "section_id": sid,
+                        "field": "purpose",
+                        "value": purpose.get("value"),
+                        "confidence": purpose.get("confidence", 0.0),
+                        "provenance": purpose.get("provenance", []),
+                    }
+                )
 
             # Check key_terms candidates
             for kt in sdata.get("key_terms", []):
                 if isinstance(kt, dict) and kt.get("status") == "generated":
-                    candidates.append({
-                        "section_id": sid,
-                        "field": "key_terms",
-                        "value": kt.get("value"),
-                        "confidence": kt.get("confidence", 0.0),
-                        "evidence": kt.get("evidence")
-                    })
+                    candidates.append(
+                        {
+                            "section_id": sid,
+                            "field": "key_terms",
+                            "value": kt.get("value"),
+                            "confidence": kt.get("confidence", 0.0),
+                            "evidence": kt.get("evidence"),
+                        }
+                    )
 
             # Check facts candidates
             for fact in sdata.get("facts", []):
                 if isinstance(fact, dict) and fact.get("status") == "generated":
-                    candidates.append({
-                        "section_id": sid,
-                        "field": "facts",
-                        "value": fact.get("value"),
-                        "confidence": fact.get("confidence", 0.0),
-                        "provenance": fact.get("provenance", [])
-                    })
+                    candidates.append(
+                        {
+                            "section_id": sid,
+                            "field": "facts",
+                            "value": fact.get("value"),
+                            "confidence": fact.get("confidence", 0.0),
+                            "provenance": fact.get("provenance", []),
+                        }
+                    )
 
             # Check constraints candidates
             for const in sdata.get("constraints", []):
                 if isinstance(const, dict) and const.get("status") == "generated":
-                    candidates.append({
-                        "section_id": sid,
-                        "field": "constraints",
-                        "value": const.get("value"),
-                        "confidence": const.get("confidence", 0.0)
-                    })
+                    candidates.append(
+                        {
+                            "section_id": sid,
+                            "field": "constraints",
+                            "value": const.get("value"),
+                            "confidence": const.get("confidence", 0.0),
+                        }
+                    )
 
         return _success_response({"candidates": candidates})
     except Exception as e:
@@ -1040,9 +1070,9 @@ def handle_review_card_candidates(args):
         )
 
 
-def handle_accept_card_candidate(args):
-    section_id = args.get("section_id")
-    field = args.get("field")
+def handle_accept_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    section_id = args.get("section_id", "")
+    field = args.get("field", "")
     value = args.get("value")
     project_root = args.get("project_root")
 
@@ -1051,9 +1081,7 @@ def handle_accept_card_candidate(args):
             ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
         )
     if field not in ("purpose", "key_terms", "facts", "constraints"):
-        return _error_response(
-            ERROR_INVALID_INPUT, f"Invalid candidate field: {field}"
-        )
+        return _error_response(ERROR_INVALID_INPUT, f"Invalid candidate field: {field}")
 
     try:
         root = Path(project_root) if project_root else WORKSPACE_ROOT
@@ -1067,8 +1095,9 @@ def handle_accept_card_candidate(args):
             )
 
         import yaml
+
         with open(generated_path, encoding="utf-8") as f:
-            gen_data = yaml.safe_load(f) or {}
+            gen_data: dict[str, Any] = yaml.safe_load(f) or {}
 
         sections = gen_data.get("sections", {}) or {}
         if section_id not in sections:
@@ -1106,20 +1135,23 @@ def handle_accept_card_candidate(args):
 
         if not found:
             return _error_response(
-                ERROR_INVALID_INPUT, f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'."
+                ERROR_INVALID_INPUT,
+                f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'.",
             )
 
         # Update overrides
-        overrides_data = {"version": 2, "document": {}, "sections": {}}
+        overrides_data: dict[str, Any] = {"version": 2, "document": {}, "sections": {}}
         if overrides_path.exists():
             try:
                 with open(overrides_path, encoding="utf-8") as f:
-                    overrides_data = yaml.safe_load(f) or overrides_data
+                    loaded_ov = yaml.safe_load(f)
+                    if isinstance(loaded_ov, dict):
+                        overrides_data = loaded_ov
             except Exception:
                 pass
 
-        over_sections = overrides_data.setdefault("sections", {})
-        sec_over = over_sections.setdefault(section_id, {})
+        over_sections: dict[str, Any] = overrides_data.setdefault("sections", {})
+        sec_over: dict[str, Any] = over_sections.setdefault(section_id, {})
 
         if field == "purpose":
             sec_over["purpose"] = value
@@ -1143,18 +1175,22 @@ def handle_accept_card_candidate(args):
                 sec_over["constraints"].append(value)
 
         # Update lock decisions
-        lock_data = {"sections": {}}
+        lock_data: dict[str, Any] = {"sections": {}}
         if lock_path.exists():
             try:
                 with open(lock_path, encoding="utf-8") as f:
-                    lock_data = json.load(f) or lock_data
+                    loaded_lock = json.load(f)
+                    if isinstance(loaded_lock, dict):
+                        lock_data = loaded_lock
             except Exception:
                 pass
 
-        lock_sections = lock_data.setdefault("sections", {})
-        sec_lock = lock_sections.setdefault(section_id, {"content_hash": "", "decisions": {}, "stale_fields": []})
-        decisions = sec_lock.setdefault("decisions", {})
-        
+        lock_sections: dict[str, Any] = lock_data.setdefault("sections", {})
+        sec_lock: dict[str, Any] = lock_sections.setdefault(
+            section_id, {"content_hash": "", "decisions": {}, "stale_fields": []}
+        )
+        decisions: dict[str, Any] = sec_lock.setdefault("decisions", {})
+
         if field == "purpose":
             decisions["purpose"] = "accepted"
         else:
@@ -1173,12 +1209,9 @@ def handle_accept_card_candidate(args):
         global _RUNTIME_CACHE
         _RUNTIME_CACHE = None
 
-        return _success_response({
-            "status": "accepted",
-            "section_id": section_id,
-            "field": field,
-            "value": value
-        })
+        return _success_response(
+            {"status": "accepted", "section_id": section_id, "field": field, "value": value}
+        )
 
     except Exception as e:
         logger.exception("Failed to accept card candidate")
@@ -1187,9 +1220,9 @@ def handle_accept_card_candidate(args):
         )
 
 
-def handle_reject_card_candidate(args):
-    section_id = args.get("section_id")
-    field = args.get("field")
+def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    section_id = args.get("section_id", "")
+    field = args.get("field", "")
     value = args.get("value")
     project_root = args.get("project_root")
 
@@ -1198,9 +1231,7 @@ def handle_reject_card_candidate(args):
             ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
         )
     if field not in ("purpose", "key_terms", "facts", "constraints"):
-        return _error_response(
-            ERROR_INVALID_INPUT, f"Invalid candidate field: {field}"
-        )
+        return _error_response(ERROR_INVALID_INPUT, f"Invalid candidate field: {field}")
 
     try:
         root = Path(project_root) if project_root else WORKSPACE_ROOT
@@ -1214,8 +1245,9 @@ def handle_reject_card_candidate(args):
             )
 
         import yaml
+
         with open(generated_path, encoding="utf-8") as f:
-            gen_data = yaml.safe_load(f) or {}
+            gen_data: dict[str, Any] = yaml.safe_load(f) or {}
 
         sections = gen_data.get("sections", {}) or {}
         if section_id not in sections:
@@ -1253,15 +1285,18 @@ def handle_reject_card_candidate(args):
 
         if not found:
             return _error_response(
-                ERROR_INVALID_INPUT, f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'."
+                ERROR_INVALID_INPUT,
+                f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'.",
             )
 
         # Update overrides (remove if present)
-        overrides_data = {"version": 2, "document": {}, "sections": {}}
+        overrides_data: dict[str, Any] = {"version": 2, "document": {}, "sections": {}}
         if overrides_path.exists():
             try:
                 with open(overrides_path, encoding="utf-8") as f:
-                    overrides_data = yaml.safe_load(f) or overrides_data
+                    loaded_ov = yaml.safe_load(f)
+                    if isinstance(loaded_ov, dict):
+                        overrides_data = loaded_ov
             except Exception:
                 pass
 
@@ -1285,18 +1320,22 @@ def handle_reject_card_candidate(args):
                     sec_over["constraints"].remove(value)
 
         # Update lock decisions
-        lock_data = {"sections": {}}
+        lock_data: dict[str, Any] = {"sections": {}}
         if lock_path.exists():
             try:
                 with open(lock_path, encoding="utf-8") as f:
-                    lock_data = json.load(f) or lock_data
+                    loaded_lock = json.load(f)
+                    if isinstance(loaded_lock, dict):
+                        lock_data = loaded_lock
             except Exception:
                 pass
 
         lock_sections = lock_data.setdefault("sections", {})
-        sec_lock = lock_sections.setdefault(section_id, {"content_hash": "", "decisions": {}, "stale_fields": []})
+        sec_lock = lock_sections.setdefault(
+            section_id, {"content_hash": "", "decisions": {}, "stale_fields": []}
+        )
         decisions = sec_lock.setdefault("decisions", {})
-        
+
         if field == "purpose":
             decisions["purpose"] = "rejected"
         else:
@@ -1314,12 +1353,9 @@ def handle_reject_card_candidate(args):
         global _RUNTIME_CACHE
         _RUNTIME_CACHE = None
 
-        return _success_response({
-            "status": "rejected",
-            "section_id": section_id,
-            "field": field,
-            "value": value
-        })
+        return _success_response(
+            {"status": "rejected", "section_id": section_id, "field": field, "value": value}
+        )
 
     except Exception as e:
         logger.exception("Failed to reject card candidate")
@@ -1328,27 +1364,28 @@ def handle_reject_card_candidate(args):
         )
 
 
-def handle_edit_card_field(args):
-    section_id = args.get("section_id")
-    field = args.get("field")
+def handle_edit_card_field(args: dict[str, Any]) -> dict[str, Any]:
+    section_id = args.get("section_id", "")
+    field = args.get("field", "")
     value = args.get("value")
     project_root = args.get("project_root")
 
     if not section_id or not field:
-        return _error_response(
-            ERROR_INVALID_INPUT, "Missing required arguments: section_id, field"
-        )
+        return _error_response(ERROR_INVALID_INPUT, "Missing required arguments: section_id, field")
 
     try:
         root = Path(project_root) if project_root else WORKSPACE_ROOT
         overrides_path = root / ".writing-context" / "cards.overrides.yaml"
 
         import yaml
-        overrides_data = {"version": 2, "document": {}, "sections": {}}
+
+        overrides_data: dict[str, Any] = {"version": 2, "document": {}, "sections": {}}
         if overrides_path.exists():
             try:
                 with open(overrides_path, encoding="utf-8") as f:
-                    overrides_data = yaml.safe_load(f) or overrides_data
+                    loaded_ov = yaml.safe_load(f)
+                    if isinstance(loaded_ov, dict):
+                        overrides_data = loaded_ov
             except Exception:
                 pass
 
@@ -1370,23 +1407,18 @@ def handle_edit_card_field(args):
         global _RUNTIME_CACHE
         _RUNTIME_CACHE = None
 
-        return _success_response({
-            "status": "updated",
-            "section_id": section_id,
-            "field": field,
-            "value": value
-        })
+        return _success_response(
+            {"status": "updated", "section_id": section_id, "field": field, "value": value}
+        )
 
     except Exception as e:
         logger.exception("Failed to edit card field")
-        return _error_response(
-            ERROR_INTERNAL, f"Failed to edit card field: {e}", type(e).__name__
-        )
+        return _error_response(ERROR_INTERNAL, f"Failed to edit card field: {e}", type(e).__name__)
 
 
-def handle_explain_card_candidate(args):
-    section_id = args.get("section_id")
-    field = args.get("field")
+def handle_explain_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    section_id = args.get("section_id", "")
+    field = args.get("field", "")
     value = args.get("value")
     project_root = args.get("project_root")
 
@@ -1395,9 +1427,7 @@ def handle_explain_card_candidate(args):
             ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
         )
     if field not in ("purpose", "key_terms", "facts", "constraints"):
-        return _error_response(
-            ERROR_INVALID_INPUT, f"Invalid candidate field: {field}"
-        )
+        return _error_response(ERROR_INVALID_INPUT, f"Invalid candidate field: {field}")
 
     try:
         root = Path(project_root) if project_root else WORKSPACE_ROOT
@@ -1409,6 +1439,7 @@ def handle_explain_card_candidate(args):
             )
 
         import yaml
+
         with open(generated_path, encoding="utf-8") as f:
             gen_data = yaml.safe_load(f) or {}
 
@@ -1443,30 +1474,31 @@ def handle_explain_card_candidate(args):
 
         if not candidate_info:
             return _error_response(
-                ERROR_INVALID_INPUT, f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'."
+                ERROR_INVALID_INPUT,
+                f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'.",
             )
 
         confidence = candidate_info.get("confidence", 0.0)
         evidence = candidate_info.get("evidence")
         provenance = candidate_info.get("provenance", [])
 
-        explanation = (
-            f"Candidate '{value}' for field '{field}' in section '{section_id}' was extracted with confidence {confidence}."
-        )
+        explanation = f"Candidate '{value}' for field '{field}' in section '{section_id}' was extracted with confidence {confidence}."
         if evidence:
             explanation += f" Evidence: {evidence}."
         if provenance:
             explanation += f" Provenance: {provenance}."
 
-        return _success_response({
-            "section_id": section_id,
-            "field": field,
-            "value": value,
-            "confidence": confidence,
-            "evidence": evidence,
-            "provenance": provenance,
-            "explanation": explanation
-        })
+        return _success_response(
+            {
+                "section_id": section_id,
+                "field": field,
+                "value": value,
+                "confidence": confidence,
+                "evidence": evidence,
+                "provenance": provenance,
+                "explanation": explanation,
+            }
+        )
 
     except Exception as e:
         logger.exception("Failed to explain card candidate")
@@ -1475,14 +1507,14 @@ def handle_explain_card_candidate(args):
         )
 
 
-def process_message(line):
+def process_message(line: str) -> str | None:
     global WORKSPACE_ROOT, _RUNTIME_CACHE
     try:
         logger.debug(f"Received: {line}")
         req = json.loads(line)
         if "method" in req:
             method = req["method"]
-            result = None
+            result: Any = None
             if method == "initialize":
                 params = req.get("params", {})
                 root_uri = params.get("rootUri")
@@ -1534,36 +1566,43 @@ def process_message(line):
                                     "name": "task",
                                     "description": "Natural-language description of the writing task",
                                     "required": True,
+                                    "type": "string",
                                 },
                                 {
                                     "name": "target",
                                     "description": "section_id from section_cards.yaml (e.g. section_intro)",
                                     "required": True,
+                                    "type": "string",
                                 },
                                 {
                                     "name": "token_budget",
                                     "description": "Maximum token budget for context (default: 6000)",
                                     "required": False,
+                                    "type": "integer",
                                 },
                                 {
                                     "name": "task_type",
                                     "description": "Writing task type (choices: write_new_section, revise_existing_section, proofread, expand, condense, align_with_previous_sections, review)",
                                     "required": False,
+                                    "type": "string",
                                 },
                                 {
                                     "name": "line_start",
                                     "description": "Target start line range",
                                     "required": False,
+                                    "type": "integer",
                                 },
                                 {
                                     "name": "line_end",
                                     "description": "Target end line range",
                                     "required": False,
+                                    "type": "integer",
                                 },
                                 {
                                     "name": "pack_mode",
                                     "description": "Context pack mode (choices: minimal, standard, deep)",
                                     "required": False,
+                                    "type": "string",
                                 },
                             ],
                         },
@@ -1575,26 +1614,31 @@ def process_message(line):
                                     "name": "target_file",
                                     "description": "Path to the file being proofread",
                                     "required": True,
+                                    "type": "string",
                                 },
                                 {
                                     "name": "line_start",
                                     "description": "1-indexed starting line number",
                                     "required": True,
+                                    "type": "integer",
                                 },
                                 {
                                     "name": "line_end",
                                     "description": "1-indexed ending line number",
                                     "required": True,
+                                    "type": "integer",
                                 },
                                 {
                                     "name": "mode",
                                     "description": "Proofreading mode (surface, academic_clarity, consistency, latex_safe)",
                                     "required": False,
+                                    "type": "string",
                                 },
                                 {
                                     "name": "strictness",
                                     "description": "Strictness level (conservative, moderate, assertive)",
                                     "required": False,
+                                    "type": "string",
                                 },
                             ],
                         },
@@ -1666,15 +1710,15 @@ def process_message(line):
                         config, cards, card_warnings, adapter, store = _load_runtime()
                         line_start = int(line_start_arg)
                         line_end = int(line_end_arg)
-                        generator = ProofreadPackGenerator(config, cards, adapter, store)
-                        pack = generator.generate(
+                        proof_gen = ProofreadPackGenerator(config, cards, adapter, store)
+                        proof_pack = proof_gen.generate(
                             target_file=target_file,
                             line_start=line_start,
                             line_end=line_end,
                             mode=mode,
                             strictness=strictness,
                         )
-                        prompt_text = _format_proofread_section_prompt(pack)
+                        prompt_text = _format_proofread_section_prompt(proof_pack)
                         result = {
                             "description": "Hydrated proofreading prompt with target text and terminology.",
                             "messages": [
@@ -1706,35 +1750,35 @@ def process_message(line):
             elif method == "tools/call":
                 params = req.get("params", {})
                 name = params.get("name")
-                args = params.get("arguments", {})
+                call_args = params.get("arguments", {})
                 if name == "get_writing_context_pack":
-                    result = handle_get_writing_context_pack(args)
+                    result = handle_get_writing_context_pack(call_args)
                 elif name == "get_proofreading_context_pack":
-                    result = handle_get_proofreading_context_pack(args)
+                    result = handle_get_proofreading_context_pack(call_args)
                 elif name == "refresh_index":
-                    result = handle_refresh_index(args)
+                    result = handle_refresh_index(call_args)
                 elif name == "initialize_section_cards":
-                    result = handle_initialize_section_cards(args)
+                    result = handle_initialize_section_cards(call_args)
                 elif name == "request_more_context":
-                    result = handle_request_more_context(args)
+                    result = handle_request_more_context(call_args)
                 elif name == "submit_generation_feedback":
-                    result = handle_submit_generation_feedback(args)
+                    result = handle_submit_generation_feedback(call_args)
                 elif name == "audit_manuscript_terminology":
-                    result = handle_audit_manuscript_terminology(args)
+                    result = handle_audit_manuscript_terminology(call_args)
                 elif name == "get_term_context":
-                    result = handle_get_term_context(args)
+                    result = handle_get_term_context(call_args)
                 elif name == "get_manuscript_reference_graph":
-                    result = handle_get_manuscript_reference_graph(args)
+                    result = handle_get_manuscript_reference_graph(call_args)
                 elif name == "review_card_candidates":
-                    result = handle_review_card_candidates(args)
+                    result = handle_review_card_candidates(call_args)
                 elif name == "accept_card_candidate":
-                    result = handle_accept_card_candidate(args)
+                    result = handle_accept_card_candidate(call_args)
                 elif name == "reject_card_candidate":
-                    result = handle_reject_card_candidate(args)
+                    result = handle_reject_card_candidate(call_args)
                 elif name == "edit_card_field":
-                    result = handle_edit_card_field(args)
+                    result = handle_edit_card_field(call_args)
                 elif name == "explain_card_candidate":
-                    result = handle_explain_card_candidate(args)
+                    result = handle_explain_card_candidate(call_args)
                 else:
                     response = json.dumps(
                         {
@@ -1767,7 +1811,7 @@ def process_message(line):
     return None
 
 
-def run_server():
+def run_server() -> None:
     """Start standard IO JSON-RPC loop."""
     global _client_manager
     import atexit
@@ -1777,7 +1821,7 @@ def run_server():
 
     _client_manager = LocalMCPClientManager(workspace_root=str(WORKSPACE_ROOT))
 
-    def cleanup_handler(*args):
+    def cleanup_handler(*args: Any) -> None:
         global _client_manager
         if _client_manager is not None:
             with contextlib.suppress(Exception):

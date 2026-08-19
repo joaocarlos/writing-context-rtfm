@@ -231,3 +231,43 @@ def test_similarity_score_filtering_config(base_config, mock_manager):
     assert spans[0].path == "zotero:goodKey2023"
 
 
+def test_parallel_citation_resolution(base_config, mock_manager, tmp_path):
+    # Create manuscript file with multiple citation keys
+    manuscript = tmp_path / "paper.tex"
+    manuscript.write_text(
+        r"\cite{refA, refB, refC} describes prior work. \cite{refD} is another reference.",
+        encoding="utf-8",
+    )
+
+    from dataclasses import replace
+
+    config = replace(base_config, rtfm=replace(base_config.rtfm, project_root=str(tmp_path)))
+    provider = ZoteroProvider(config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None):
+        mock_res = MagicMock()
+        citekey = arguments.get("citekey", "unknown")
+        block = MagicMock()
+        block.type = "text"
+        block.text = f"Item Key: ABCDEFGH\nTitle: Paper for {citekey}\nCitation Key: {citekey}"
+        mock_res.content = [block]
+        return mock_res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    # Mock load_section_cards to return card with target path
+    mock_cards = MagicMock()
+    mock_card = MagicMock()
+    mock_card.path = "paper.tex"
+    mock_card.depends_on = []
+    mock_cards.sections = {"intro": mock_card}
+
+    with patch("writing_context_rtfm.section_cards.load_section_cards", return_value=mock_cards):
+        spans = provider.fetch_context(
+            queries=[], target="intro", limit=10, query_type_map={}, task_type="proofread"
+        )
+
+    # All 4 keys resolved concurrently
+    assert len(spans) == 4
+    resolved_paths = [s.path for s in spans]
+    assert resolved_paths == ["zotero:refA", "zotero:refB", "zotero:refC", "zotero:refD"]

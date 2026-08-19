@@ -1,10 +1,11 @@
-"""Adapter for RTFM interactions."""
-
+import contextlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from writing_context_rtfm.schemas import RTFMResult
 
@@ -16,7 +17,7 @@ class RTFMAdapterError(Exception):
 
 
 class RTFMAdapter:
-    """Wrapper around the RTFM CLI."""
+    """Wrapper around the RTFM CLI with optional direct SQLite fast-path."""
 
     def __init__(self, project_root: str | None = None) -> None:
         self.project_root = project_root
@@ -54,8 +55,75 @@ class RTFMAdapter:
                 f"RTFM CLI not found (tried to run {cmd[0]}). Is it installed?"
             ) from e
 
+    def _direct_sqlite_search(
+        self, query: str, *, corpus: str, limit: int = 10
+    ) -> list[RTFMResult] | None:
+        """Attempt fast in-process SQLite FTS query if RTFM database is locally available."""
+        if not self.project_root:
+            return None
+        import sqlite3
+
+        from writing_context_rtfm.utils import resolve_rtfm_db_path
+
+        db_path = resolve_rtfm_db_path(Path(self.project_root))
+        if not db_path.is_file():
+            return None
+
+        clean_terms = [t for t in re.sub(r"[^\w\s]", " ", query).split() if len(t) > 1]
+        if not clean_terms:
+            return None
+        fts_query = " OR ".join(f'"{t}"*' for t in clean_terms)
+
+        conn = None
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            sql = """
+                SELECT c.id, c.content, c.line_start, c.line_end, c.chapter_title,
+                       b.path AS book_file, b.title AS book_title,
+                       bm25(chunks_fts) AS rank_score
+                FROM chunks_fts
+                JOIN chunks c ON chunks_fts.rowid = c.id
+                JOIN books b ON c.book_id = b.id
+                WHERE chunks_fts MATCH ?
+                ORDER BY rank_score ASC
+                LIMIT ?
+            """
+            cursor.execute(sql, (fts_query, limit))
+            rows = cursor.fetchall()
+            results = []
+            for item in rows:
+                raw_score = float(item["rank_score"]) if item["rank_score"] is not None else 0.0
+                score = round(1.0 / (1.0 + max(0.0, raw_score)), 4)
+                results.append(
+                    RTFMResult(
+                        path=item["book_file"] or "",
+                        line_start=item["line_start"],
+                        line_end=item["line_end"],
+                        snippet=item["content"],
+                        score=score,
+                        metadata={
+                            "chapter_title": item["chapter_title"],
+                            "book_title": item["book_title"],
+                            "rank": item["id"],
+                        },
+                    )
+                )
+            return results
+        except Exception:
+            return None
+        finally:
+            if conn:
+                with contextlib.suppress(Exception):
+                    conn.close()
+
     def search(self, query: str, *, corpus: str, limit: int = 10) -> list[RTFMResult]:
         """Search indexed content using RTFM."""
+        direct_results = self._direct_sqlite_search(query, corpus=corpus, limit=limit)
+        if direct_results is not None:
+            return direct_results
+
         cmd = [
             "rtfm",
             "search",

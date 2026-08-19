@@ -41,6 +41,7 @@ class ZoteroProvider(BaseContextProvider):
         query_type_map = query_type_map or {}
         cmd = provider_cfg.mcp_server.command
         args = provider_cfg.mcp_server.args or []
+        server_env = provider_cfg.mcp_server.env
         extra_cfg = provider_cfg.extra or {}
         include_abstract = extra_cfg.get("include_abstract", False)
         similarity_threshold = extra_cfg.get("similarity_threshold", -0.4)
@@ -81,15 +82,16 @@ class ZoteroProvider(BaseContextProvider):
                     logger.warning(f"ZoteroProvider failed to extract citations from {fpath}: {e}")
 
         # 2. Resolve extracted citation keys directly via Zotero
-        resolved_keys = set()
-        for key in cite_keys:
+        resolved_keys: set[str] = set()
+
+        def _resolve_citation_key(key: str) -> SourceSpan | None:
             try:
                 res = manager.call_tool(
                     command=cmd,
                     args=args,
                     tool_name="zotero_search_by_citation_key",
                     arguments={"citekey": key},
-                    env=provider_cfg.mcp_server.env,
+                    env=server_env,
                 )
                 content_blocks = getattr(res, "content", [])
                 block_text = ""
@@ -115,7 +117,7 @@ class ZoteroProvider(BaseContextProvider):
                             args=args,
                             tool_name="zotero_search_items",
                             arguments={"query": fallback_query, "limit": 3},
-                            env=provider_cfg.mcp_server.env,
+                            env=server_env,
                         )
                         fallback_blocks = getattr(fallback_res, "content", [])
                         block_text = ""
@@ -135,7 +137,7 @@ class ZoteroProvider(BaseContextProvider):
                                 args=args,
                                 tool_name="zotero_get_annotations",
                                 arguments={"item_key": z_key},
-                                env=provider_cfg.mcp_server.env,
+                                env=server_env,
                             )
                             for ann_block in getattr(ann_res, "content", []):
                                 if getattr(ann_block, "type", None) == "text" and getattr(
@@ -149,21 +151,31 @@ class ZoteroProvider(BaseContextProvider):
                     if ann_text:
                         snippet += "\n\n### User Highlights & Annotations:\n" + ann_text
 
-                    spans.append(
-                        SourceSpan(
-                            path=f"zotero:{key}",
-                            line_start=None,
-                            line_end=None,
-                            reason=f"Zotero reference for citation key '{key}'",
-                            score=0.95,
-                            priority="supporting",
-                            source_role="reference",
-                            metadata={"snippet": snippet, "citekey": key},
-                        )
+                    return SourceSpan(
+                        path=f"zotero:{key}",
+                        line_start=None,
+                        line_end=None,
+                        reason=f"Zotero reference for citation key '{key}'",
+                        score=0.95,
+                        priority="supporting",
+                        source_role="reference",
+                        metadata={"snippet": snippet, "citekey": key},
                     )
-                    resolved_keys.add(key)
             except Exception as e:
                 logger.error(f"Zotero citation key lookup failed for '{key}': {e}")
+            return None
+
+        if cite_keys:
+            from concurrent.futures import ThreadPoolExecutor
+
+            max_workers = min(len(cite_keys), 5)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                resolved_spans = list(executor.map(_resolve_citation_key, cite_keys))
+                for span_item in resolved_spans:
+                    if span_item is not None:
+                        spans.append(span_item)
+                        if span_item.metadata and "citekey" in span_item.metadata:
+                            resolved_keys.add(span_item.metadata["citekey"])
 
         # 3. External Search (Semantic / Keyword)
         # Skip if proofreading to avoid context contamination
@@ -173,7 +185,9 @@ class ZoteroProvider(BaseContextProvider):
             )
             return spans
 
-        def _parse_and_append_markdown_items(markdown_text: str, source_reason: str, score: float):
+        def _parse_and_append_markdown_items(
+            markdown_text: str, source_reason: str, score: float
+        ) -> None:
             # Split by markdown headers like "## 1. Title"
             parts = re.split(r"(?m)^## \d+\.\s+", markdown_text)
             if len(parts) <= 1:

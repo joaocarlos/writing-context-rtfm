@@ -194,3 +194,18 @@ class TestLatexParser(unittest.TestCase):
         parsed = json.loads(out)
         self.assertIn("graph", parsed)
         self.assertIn("main.tex", parsed["graph"]["files"])
+
+    def test_ast_utils(self):
+        from pylatexenc.latexwalker import LatexWalker
+
+        from writing_context_rtfm.ast_utils import get_braced_arg, get_clean_arg_text
+
+        # Test with walker node
+        walker = LatexWalker(r"\section{Introduction}")
+        nodes, _, _ = walker.get_latex_nodes()
+        macro_node = nodes[0]
+        self.assertEqual(get_braced_arg(macro_node), "Introduction")
+
+        # Test with none / empty
+        self.assertIsNone(get_braced_arg(None))
+        self.assertEqual(get_clean_arg_text(None), "")

@@ -1,0 +1,21 @@
+version: 2
+document:
+  title: "SLM Inference on Edge RISC-V Architectures"
+  thesis: "Deploying quantized SLMs directly on RISC-V microcontrollers achieves sub-100ms latency without cloud offloading."
+  writing_style:
+    tone: academic, formal, concise
+    avoid:
+      - "revolutionary"
+      - "game-changer"
+  terminology:
+    SLM:
+      definition: "Small Language Model with <1B parameters suitable for microcontroller memory."
+      variants: ["Small Language Model", "Edge-SLM"]
+sections:
+  section_introduction:
+    title: "Introduction"
+    purpose: "Motivate on-device SLM execution over RISC-V and outline key architectural contributions."
+    must_preserve:
+      - "Target hardware is RISC-V with RV32/64 IMF ISA extensions."
+    avoid:
+      - "cloud-only architectures"

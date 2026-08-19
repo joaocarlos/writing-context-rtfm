@@ -39,3 +39,52 @@ class TestTokenBudget(unittest.TestCase):
             # len("Some text here") is 14. 14 // 4 = 3.
             res = estimate_tokens("Some text here")
             self.assertEqual(res, 3)
+
+    def test_strict_budget_generator(self):
+        from writing_context_rtfm.config import (
+            AppConfig,
+            CacheConfig,
+            ContextConfig,
+            RTFMConfig,
+            SectionCardsConfig,
+        )
+        from writing_context_rtfm.context_pack import ContextPackGenerator
+        from writing_context_rtfm.schemas import RTFMResult
+
+        config = AppConfig(
+            version=1,
+            rtfm=RTFMConfig(project_root="."),
+            context=ContextConfig(),
+            cache=CacheConfig(enabled=False),
+            section_cards=SectionCardsConfig(path="dummy.yaml"),
+        )
+        adapter = MagicMock()
+        store = MagicMock()
+
+        # Two 400-token candidate spans (approx 30 lines each = 450 tokens)
+        mock_r1 = RTFMResult(
+            path="file1.tex",
+            line_start=1,
+            line_end=30,
+            snippet="word " * 300,
+            score=0.9,
+            metadata={},
+        )
+        mock_r2 = RTFMResult(
+            path="file2.tex",
+            line_start=1,
+            line_end=30,
+            snippet="word " * 300,
+            score=0.8,
+            metadata={},
+        )
+        adapter.search.return_value = [mock_r1, mock_r2]
+
+        generator = ContextPackGenerator(config, None, adapter, store)
+
+        # In strict_budget mode with 500 token budget, only 1 span fits
+        pack_strict = generator.generate(
+            task="write", target=None, token_budget=500, strict_budget=True
+        )
+        self.assertEqual(len(pack_strict.source_spans), 1)
+        self.assertTrue(any("strictly respect the token budget" in w for w in pack_strict.warnings))

@@ -7,6 +7,7 @@ import shutil
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -233,23 +234,23 @@ def _update_claude_settings(root: Path) -> None:
                 if (
                     isinstance(inner, dict)
                     and inner.get("type") == "command"
-                    and inner.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup")
+                    and inner.get("command")
+                    in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup")
                 ):
                     inner["command"] = cleanup_cmd
                     session_hook_exists = True
             sanitized_session_end.append(entry)
-        elif entry.get("type") == "command" and entry.get("command") in ("writing-context-rtfm cleanup", "uv run writing-context-rtfm cleanup"):
-            sanitized_session_end.append({
-                "hooks": [{"type": "command", "command": cleanup_cmd}]
-            })
+        elif entry.get("type") == "command" and entry.get("command") in (
+            "writing-context-rtfm cleanup",
+            "uv run writing-context-rtfm cleanup",
+        ):
+            sanitized_session_end.append({"hooks": [{"type": "command", "command": cleanup_cmd}]})
             session_hook_exists = True
         else:
             sanitized_session_end.append(entry)
 
     if not session_hook_exists:
-        sanitized_session_end.append({
-            "hooks": [{"type": "command", "command": cleanup_cmd}]
-        })
+        sanitized_session_end.append({"hooks": [{"type": "command", "command": cleanup_cmd}]})
 
     hooks["SessionEnd"] = sanitized_session_end
 
@@ -293,7 +294,7 @@ def _update_codex_config() -> None:
             in_wc_block = False
 
         if in_wc_block and line.strip().startswith("command ="):
-            current_cmd = line.split("=", 1)[1].strip().strip('"\'')
+            current_cmd = line.split("=", 1)[1].strip().strip("\"'")
             if ".venv" in current_cmd or not Path(current_cmd).exists():
                 new_lines.append(f'command = "{binary_path}"')
                 updated = True
@@ -308,7 +309,7 @@ def _update_codex_config() -> None:
             print(f"Warning: Failed to update {config_file}: {e}")
 
 
-def init_command(args):
+def init_command(args: argparse.Namespace) -> None:
     """Creates .writing-context/ directory with sample config and section cards if missing."""
     root = Path(getattr(args, "project_root", ".")).resolve()
     wc = root / ".writing-context"
@@ -320,11 +321,15 @@ def init_command(args):
 
         discovered = autodiscover_local_mcps(str(root))
 
-        def _format_mcp_server_config(mcp_server: dict) -> str:
+        def _format_mcp_server_config(mcp_server: dict[str, Any]) -> str:
             cmd = mcp_server.get("command", "")
-            args = mcp_server.get("args") or []
+            args_list = mcp_server.get("args") or []
             env = mcp_server.get("env")
-            lines = ["    mcp_server:", f"      command: {cmd}", f"      args: {json.dumps(args)}"]
+            lines = [
+                "    mcp_server:",
+                f"      command: {cmd}",
+                f"      args: {json.dumps(args_list)}",
+            ]
             if env:
                 lines.append("      env:")
                 for k, v in env.items():
@@ -479,7 +484,7 @@ def init_command(args):
     _update_codex_config()
 
 
-def init_cards_command(args):
+def init_cards_command(args: argparse.Namespace) -> None:
     """Scans the workspace and generates or appends section cards."""
     project_root = getattr(args, "project_root", ".")
     try:
@@ -492,15 +497,15 @@ def init_cards_command(args):
         sys.exit(1)
 
 
-def init_db_command(args):
+def init_db_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
-    store = ExtensionStore(config.cache.path)
-    store.init_db()
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
     print(f"Initialized database at {config.cache.path}")
 
 
-def sync_command(args):
+def sync_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
@@ -515,23 +520,30 @@ def sync_command(args):
     try:
         print("[*] Synchronizing RTFM database and generating embeddings...")
         adapter.sync(sync_path, corpus=corpus, capture_output=False)
-        store = ExtensionStore(config.cache.path)
-        store.init_db()
+        with ExtensionStore(config.cache.path) as store:
+            store.init_db()
 
-        # Compute real library.db fingerprint after sync
-        rtfm_db = resolve_rtfm_db_path(Path(project_root))
-        fingerprint = compute_rtfm_fingerprint(rtfm_db)
+            # Compute real library.db fingerprint after sync
+            rtfm_db = resolve_rtfm_db_path(Path(project_root))
+            fingerprint = compute_rtfm_fingerprint(rtfm_db)
 
-        store.invalidate_for_fingerprint(fingerprint)
+            store.invalidate_for_fingerprint(fingerprint)
 
-        from writing_context_rtfm.providers import get_active_providers
+            from writing_context_rtfm.providers import get_active_providers
 
-        for provider in get_active_providers(config):
-            if provider.provider_id == "openai_semantic":
-                provider_cfg = config.providers.get("openai_semantic", {})
-                if provider_cfg.get("auto_sync", False):
-                    print("[*] Synchronizing OpenAI semantic embeddings...")
-                    provider.sync_chunks(store, str(rtfm_db))
+            for provider in get_active_providers(config):
+                if provider.provider_id == "openai_semantic":
+                    provider_cfg = config.providers.get("openai_semantic")
+                    auto_sync = False
+                    if provider_cfg is not None:
+                        if isinstance(provider_cfg, dict):
+                            auto_sync = bool(provider_cfg.get("auto_sync", False))
+                        else:
+                            extra = provider_cfg.extra or {}
+                            auto_sync = bool(extra.get("auto_sync", False))
+                    if auto_sync and hasattr(provider, "sync_chunks"):
+                        print("[*] Synchronizing OpenAI semantic embeddings...")
+                        provider.sync_chunks(store, str(rtfm_db))
 
         print("Sync completed successfully.")
     except Exception as e:
@@ -539,33 +551,33 @@ def sync_command(args):
         sys.exit(1)
 
 
-def cache_command(args):
+def cache_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
-    store = ExtensionStore(config.cache.path)
-    store.init_db()
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
 
-    if args.cache_action == "clear":
-        store.clear()
-        print("Cache cleared successfully.")
-    elif args.cache_action == "stats":
-        with store._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM context_pack_runs")
-            run_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM context_pack_sources")
-            source_count = cursor.fetchone()[0]
+        if args.cache_action == "clear":
+            store.clear()
+            print("Cache cleared successfully.")
+        elif args.cache_action == "stats":
+            with store._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM context_pack_runs")
+                run_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM context_pack_sources")
+                source_count = cursor.fetchone()[0]
 
-        db_file = Path(config.cache.path)
-        db_size = db_file.stat().st_size if db_file.exists() else 0
+            db_file = Path(config.cache.path)
+            db_size = db_file.stat().st_size if db_file.exists() else 0
 
-        print(f"Cache location: {config.cache.path}")
-        print(f"Total runs:     {run_count}")
-        print(f"Total sources:  {source_count}")
-        print(f"File size:      {db_size} bytes")
+            print(f"Cache location: {config.cache.path}")
+            print(f"Total runs:     {run_count}")
+            print(f"Total sources:  {source_count}")
+            print(f"File size:      {db_size} bytes")
 
 
-def pack_command(args):
+def pack_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
 
@@ -577,62 +589,62 @@ def pack_command(args):
     cards = load_section_cards(sc_path, required=config.section_cards.required)
 
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
-    store = ExtensionStore(config.cache.path)
-    store.init_db()
-    from writing_context_rtfm.providers import get_active_providers
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
+        from writing_context_rtfm.providers import get_active_providers
 
-    providers = get_active_providers(config)
-    generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
+        providers = get_active_providers(config)
+        generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
 
-    role_budgets = None
-    if getattr(args, "role_budgets", None):
-        try:
-            role_budgets = json.loads(args.role_budgets)
-            if not isinstance(role_budgets, dict):
-                print("Error: --role-budgets must be a JSON dictionary.", file=sys.stderr)
+        role_budgets = None
+        if getattr(args, "role_budgets", None):
+            try:
+                role_budgets = json.loads(args.role_budgets)
+                if not isinstance(role_budgets, dict):
+                    print("Error: --role-budgets must be a JSON dictionary.", file=sys.stderr)
+                    sys.exit(1)
+                role_budgets = {str(k): float(v) for k, v in role_budgets.items()}
+            except Exception as e:
+                print(f"Error parsing --role-budgets JSON: {e}", file=sys.stderr)
                 sys.exit(1)
-            role_budgets = {str(k): float(v) for k, v in role_budgets.items()}
-        except Exception as e:
-            print(f"Error parsing --role-budgets JSON: {e}", file=sys.stderr)
-            sys.exit(1)
 
-    pack = generator.generate(
-        task=args.task,
-        target=args.target,
-        token_budget=args.budget,
-        must_consider=args.must_consider or [],
-        project_root=project_root,
-        task_type=getattr(args, "task_type", None),
-        line_start=getattr(args, "line_start", None),
-        line_end=getattr(args, "line_end", None),
-        pack_mode=getattr(args, "pack_mode", None),
-        role_budgets=role_budgets,
-    )
+        pack = generator.generate(
+            task=args.task,
+            target=args.target,
+            token_budget=args.budget,
+            must_consider=args.must_consider or [],
+            project_root=project_root,
+            task_type=getattr(args, "task_type", None),
+            line_start=getattr(args, "line_start", None),
+            line_end=getattr(args, "line_end", None),
+            pack_mode=getattr(args, "pack_mode", None),
+            role_budgets=role_budgets,
+        )
     print(json.dumps(asdict(pack), indent=2))
 
 
-def proofread_pack_command(args):
+def proofread_pack_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
 
     cards = load_section_cards(config.section_cards.path, required=config.section_cards.required)
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
-    store = ExtensionStore(config.cache.path)
-    store.init_db()
-    generator = ProofreadPackGenerator(config, cards, adapter, store)
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
+        generator = ProofreadPackGenerator(config, cards, adapter, store)
 
-    pack = generator.generate(
-        target_file=args.target_file,
-        line_start=args.line_start,
-        line_end=args.line_end,
-        mode=args.mode,
-        strictness=args.strictness,
-        max_tokens=args.max_tokens,
-    )
+        pack = generator.generate(
+            target_file=args.target_file,
+            line_start=args.line_start,
+            line_end=args.line_end,
+            mode=args.mode,
+            strictness=args.strictness,
+            max_tokens=args.max_tokens,
+        )
     print(json.dumps(asdict(pack), indent=2))
 
 
-def get_term_command(args):
+def get_term_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     try:
         res = get_term_context(args.term, project_root)
@@ -642,21 +654,20 @@ def get_term_command(args):
         sys.exit(1)
 
 
-def auth_command(args):
+def auth_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
-    store = ExtensionStore(config.cache.path)
-    store.init_db()
-
-    store.set_provider_token(args.provider, args.token)
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
+        store.set_provider_token(args.provider, args.token)
     print(f"Successfully saved API key for provider '{args.provider}' in local cache database.")
 
 
-def serve_command(args):
+def serve_command(args: argparse.Namespace) -> None:
     run_server()
 
 
-def doctor_command(args):
+def doctor_command(args: argparse.Namespace) -> None:
     project_root = Path(getattr(args, "project_root", ".")).resolve()
 
     print("Writing Context RTFM Extension Doctor")
@@ -687,6 +698,7 @@ def doctor_command(args):
     # 2. Project config
     config_file = project_root / ".writing-context" / "config.yaml"
     sc_file = project_root / ".writing-context" / "section_cards.yaml"
+    split_gen = project_root / ".writing-context" / "cards.generated.yaml"
 
     print(f"[*] Project Root:     {project_root}")
 
@@ -702,20 +714,36 @@ def doctor_command(args):
     else:
         print("[*] Config:           [WARN] config.yaml not found (using defaults)")
 
-    if sc_file.exists():
+    if split_gen.exists():
+        try:
+            cards = load_section_cards(str(split_gen), required=False)
+            cnt = len(cards.sections) if cards else 0
+            print(
+                f"[*] Section Cards:    [OK] Split cards active ({cnt} sections in cards.generated.yaml)"
+            )
+        except Exception as e:
+            print(f"[*] Section Cards:    [FAIL] Failed to parse cards.generated.yaml: {e}")
+    elif sc_file.exists():
         try:
             with open(sc_file) as f:
                 yaml.safe_load(f)
             cards = load_section_cards(str(sc_file), required=False)
-            print(
-                f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)}"
-            )
+            if cards and cards.sections:
+                print(
+                    f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)} (Note: Recommend split cards with 'writing-context-rtfm cards build')"
+                )
+            else:
+                print(
+                    f"[*] Section Cards:    [WARN] No sections found in {sc_file.relative_to(project_root)}"
+                )
         except Exception as e:
             print(
                 f"[*] Section Cards:    [FAIL] Failed to parse {sc_file.relative_to(project_root)}: {e}"
             )
     else:
-        print("[*] Section Cards:    [WARN] section_cards.yaml not found")
+        print(
+            "[*] Section Cards:    [WARN] Section cards not found (Run 'writing-context-rtfm cards scan')"
+        )
 
     # 3. Database Check
     db_path = resolve_rtfm_db_path(project_root)
@@ -740,8 +768,8 @@ def doctor_command(args):
         cache_db = Path(config.cache.path)
         if cache_db.exists():
             try:
-                store = ExtensionStore(str(cache_db))
-                store.init_db()
+                with ExtensionStore(str(cache_db)) as store:
+                    store.init_db()
                 try:
                     rel_cache = cache_db.relative_to(project_root)
                 except ValueError:
@@ -761,7 +789,7 @@ def doctor_command(args):
             )
 
 
-def inspect_target_command(args):
+def inspect_target_command(args: argparse.Namespace) -> None:
     project_root = Path(getattr(args, "project_root", ".")).resolve()
     config = load_config(str(project_root))
     sc_path = Path(config.section_cards.path)
@@ -774,7 +802,7 @@ def inspect_target_command(args):
 
     cards = load_section_cards(str(sc_path), required=True)
     target = args.target
-    if target not in cards.sections:
+    if not cards or not cards.sections or target not in cards.sections:
         print(f"Error: Section '{target}' not found in {sc_path}", file=sys.stderr)
         sys.exit(1)
 
@@ -790,7 +818,7 @@ def inspect_target_command(args):
     print(f"Constraints:       {getattr(card, 'constraints', [])}")
 
 
-def show_graph_command(args):
+def show_graph_command(args: argparse.Namespace) -> None:
     from writing_context_rtfm.latex import build_reference_graph
 
     project_root = Path(args.project_root).resolve()
@@ -816,7 +844,7 @@ def show_graph_command(args):
 
     if getattr(args, "format", "text") == "json":
         # Output as raw JSON if requested
-        payload = {"graph": graph, "sections": {}}
+        payload: dict[str, Any] = {"graph": graph, "sections": {}}
         if cards and cards.sections:
             for sid, scard in cards.sections.items():
                 payload["sections"][sid] = {"path": scard.path, "depends_on": scard.depends_on}
@@ -891,7 +919,7 @@ def show_graph_command(args):
         print("  (No section cards or section_cards.yaml not found/empty)")
 
 
-def cleanup_command(args):
+def cleanup_command(args: argparse.Namespace) -> None:
     import json
     import os
     import time
@@ -972,20 +1000,20 @@ def cleanup_command(args):
         print(f"Error writing empty list to {pid_file}: {e}")
 
 
-def cards_command(args):
+def cards_command(args: argparse.Namespace) -> None:
     subcmd = args.subcommand
     project_root = getattr(args, "project_root", ".")
-    
+
     from writing_context_rtfm.features import (
-        cards_scan_command,
+        cards_build_command,
         cards_infer_command,
+        cards_rebuild_command,
         cards_review_command,
+        cards_scan_command,
         cards_update_command,
         cards_validate_command,
-        cards_build_command,
-        cards_rebuild_command,
     )
-    
+
     try:
         if subcmd == "scan":
             res = cards_scan_command(project_root)
@@ -994,7 +1022,9 @@ def cards_command(args):
         elif subcmd == "review":
             res = cards_review_command(project_root)
         elif subcmd == "update":
-            res = cards_update_command(project_root, changed_only=getattr(args, "changed_only", False))
+            res = cards_update_command(
+                project_root, changed_only=getattr(args, "changed_only", False)
+            )
         elif subcmd == "validate":
             res = cards_validate_command(project_root)
         elif subcmd == "build":
@@ -1004,7 +1034,7 @@ def cards_command(args):
         else:
             print(f"Error: Unknown cards subcommand '{subcmd}'")
             sys.exit(1)
-            
+
         if res.get("status") == "error":
             print(f"Error: {res.get('message')}")
             sys.exit(1)
@@ -1014,6 +1044,7 @@ def cards_command(args):
             print(json.dumps(res, indent=2))
     except Exception as e:
         from writing_context_rtfm.semantic_extractor import MissingAPIKeyError
+
         if isinstance(e, MissingAPIKeyError) or "MissingAPIKeyError" in type(e).__name__:
             print(f"Error: {e}")
             sys.exit(1)
@@ -1022,7 +1053,7 @@ def cards_command(args):
             sys.exit(1)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1031,9 +1062,10 @@ def main():
     p_init = subparsers.add_parser("init", help="Initialize configuration files")
     p_init.add_argument("--project-root", default=".", help="Project root path")
 
-    # init-cards
+    # init-cards (deprecated in favor of 'cards scan')
     p_init_cards = subparsers.add_parser(
-        "init-cards", help="Scan project for .tex/.md files and auto-scaffold section cards"
+        "init-cards",
+        help="[Deprecated: use 'cards scan'] Scan project for .tex/.md files and auto-scaffold section cards",
     )
     p_init_cards.add_argument("--project-root", default=".", help="Project root path")
 
@@ -1160,11 +1192,15 @@ def main():
     cards_sub = p_cards.add_subparsers(dest="subcommand", required=True)
 
     # cards scan
-    p_scan = cards_sub.add_parser("scan", help="Scan manuscript structure and extract deterministic metadata")
+    p_scan = cards_sub.add_parser(
+        "scan", help="Scan manuscript structure and extract deterministic metadata"
+    )
     p_scan.add_argument("--project-root", default=".", help="Project root path")
 
     # cards infer
-    p_infer = cards_sub.add_parser("infer", help="Run model-assisted semantic extraction on section nodes")
+    p_infer = cards_sub.add_parser(
+        "infer", help="Run model-assisted semantic extraction on section nodes"
+    )
     p_infer.add_argument("--project-root", default=".", help="Project root path")
     p_infer.add_argument("--force", action="store_true", help="Force re-inference of all sections")
 
@@ -1173,12 +1209,16 @@ def main():
     p_review.add_argument("--project-root", default=".", help="Project root path")
 
     # cards update
-    p_update = cards_sub.add_parser("update", help="Update cards following manuscript changes, marking modified fields as stale")
+    p_update = cards_sub.add_parser(
+        "update", help="Update cards following manuscript changes, marking modified fields as stale"
+    )
     p_update.add_argument("--project-root", default=".", help="Project root path")
     p_update.add_argument("--changed-only", action="store_true", help="Only scan changed files")
 
     # cards validate
-    p_validate = cards_sub.add_parser("validate", help="Check for stale fields, missing references, and inconsistencies")
+    p_validate = cards_sub.add_parser(
+        "validate", help="Check for stale fields, missing references, and inconsistencies"
+    )
     p_validate.add_argument("--project-root", default=".", help="Project root path")
 
     # cards build
@@ -1187,7 +1227,9 @@ def main():
     p_build.add_argument("--review", action="store_true", help="Run review after build")
 
     # cards rebuild
-    p_rebuild = cards_sub.add_parser("rebuild", help="Cleanly rebuild main section cards from scratch")
+    p_rebuild = cards_sub.add_parser(
+        "rebuild", help="Cleanly rebuild main section cards from scratch"
+    )
     p_rebuild.add_argument("--project-root", default=".", help="Project root path")
     p_rebuild.add_argument("--review", action="store_true", help="Run review after rebuild")
 

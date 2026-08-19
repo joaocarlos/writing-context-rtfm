@@ -1,17 +1,19 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 import httpx
+
 from writing_context_rtfm.config import (
     AppConfig,
-    RTFMConfig,
-    ContextConfig,
     CacheConfig,
-    SectionCardsConfig,
+    ContextConfig,
     GeneratorConfig,
+    RTFMConfig,
+    SectionCardsConfig,
 )
 from writing_context_rtfm.semantic_extractor import (
-    extract_semantic_metadata,
     MissingAPIKeyError,
+    extract_semantic_metadata,
 )
 
 
@@ -46,7 +48,7 @@ class TestSemanticExtractorFallback(unittest.TestCase):
 
         res = extract_semantic_metadata("dummy content", self.config)
         self.assertEqual(res["rhetorical_role"], "results")
-        
+
         # Verify call went to OpenAI
         self.assertIsNotNone(mock_post.call_args)
         call_args, call_kwargs = mock_post.call_args
@@ -96,10 +98,7 @@ class TestSemanticExtractorFallback(unittest.TestCase):
         mock_get_response = MagicMock()
         mock_get_response.status_code = 200
         mock_get_response.json.return_value = {
-            "models": [
-                {"name": "phi3:latest"},
-                {"name": "qwen2.5-coder:latest"}
-            ]
+            "models": [{"name": "phi3:latest"}, {"name": "qwen2.5-coder:latest"}]
         }
         mock_get.return_value = mock_get_response
 
@@ -122,7 +121,7 @@ class TestSemanticExtractorFallback(unittest.TestCase):
 
         # Verify Ollama check
         mock_get.assert_called_with("http://localhost:11434/api/tags", timeout=1.0)
-        
+
         # Verify Ollama chat query was routed using preferred priority model
         self.assertIsNotNone(mock_post.call_args)
         call_args, call_kwargs = mock_post.call_args
@@ -155,7 +154,7 @@ class TestSemanticExtractorFallback(unittest.TestCase):
             generator=GeneratorConfig(
                 model="my-custom-phi-model",
                 api_base="http://127.0.0.1:8080/v1",
-                api_key="my-secret-token"
+                api_key="my-secret-token",
             ),
         )
 

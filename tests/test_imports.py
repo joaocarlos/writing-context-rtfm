@@ -2,6 +2,8 @@
 
 
 def test_imports():
+    import re
+
     import writing_context_rtfm
     import writing_context_rtfm.cli
     import writing_context_rtfm.config
@@ -16,7 +18,6 @@ def test_imports():
     import writing_context_rtfm.token_budget
     import writing_context_rtfm.utils
 
-    import re
     assert hasattr(writing_context_rtfm, "__version__")
     assert isinstance(writing_context_rtfm.__version__, str)
     assert re.match(r"^\d+\.\d+\.\d+", writing_context_rtfm.__version__)

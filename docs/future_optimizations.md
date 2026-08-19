@@ -96,10 +96,11 @@ Currently, the SQLite database stores context pack payloads as raw JSON strings.
     *   Wrap read/write operations in the `ExtensionStore` with transparent compression/decompression helpers:
         ```python
         def _compress(data: str) -> bytes:
-            return zlib.compress(data.encode('utf-8'), level=6)
+            return zlib.compress(data.encode("utf-8"), level=6)
+
 
         def _decompress(blob: bytes) -> str:
-            return zlib.decompress(blob).decode('utf-8')
+            return zlib.decompress(blob).decode("utf-8")
         ```
 
 ---

@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from pylatexenc.latexwalker import (  # type: ignore
-    LatexCharsNode,
     LatexCommentNode,
     LatexEnvironmentNode,
     LatexMacroNode,
     LatexMathNode,
     LatexWalker,
 )
+
+from writing_context_rtfm.ast_utils import get_braced_arg
 
 MACRO_NAME_PAT = re.compile(r"^(cite[a-zA-Z]*|ref[a-zA-Z]*|label|cref|Cref|autoref)$")
 
@@ -28,7 +29,7 @@ def scan_latex_commands(text: str) -> list[str]:
         # Fall back to empty on bad syntax
         return []
 
-    def walk(node):
+    def walk(node: Any) -> None:
         if node is None or node.isNodeType(LatexCommentNode):
             return
 
@@ -104,31 +105,6 @@ def build_reference_graph(project_root: str) -> dict[str, Any]:
                     pass
         return None
 
-    # Helper to clean up macro arguments
-    def get_clean_arg_text(group_node) -> str:
-        if group_node is None:
-            return ""
-        if not hasattr(group_node, "nodelist") or not group_node.nodelist:
-            val = group_node.latex_verbatim()
-            if val.startswith("{") and val.endswith("}"):
-                return val[1:-1].strip()
-            return val.strip()
-        parts = []
-        for child in group_node.nodelist:
-            if child is not None and child.isNodeType(LatexCharsNode):
-                parts.append(child.chars)
-            elif child is not None:
-                parts.append(child.latex_verbatim())
-        return "".join(parts).strip()
-
-    def get_braced_arg(node) -> str | None:
-        if not getattr(node, "nodeargs", None):
-            return None
-        for arg in node.nodeargs:
-            if arg is not None and getattr(arg, "delimiters", None) == ("{", "}"):
-                return get_clean_arg_text(arg)
-        return None
-
     # 2. Parse each file
     for f in tex_files:
         rel_path = str(f.relative_to(project_path))
@@ -143,7 +119,7 @@ def build_reference_graph(project_root: str) -> dict[str, Any]:
         except Exception:
             continue
 
-        def walk(node):
+        def walk(node: Any) -> None:
             if node is None or node.isNodeType(LatexCommentNode):
                 return
 

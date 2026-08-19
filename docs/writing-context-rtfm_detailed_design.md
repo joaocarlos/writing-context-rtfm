@@ -247,11 +247,13 @@ providers:
 ```python
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class RTFMConfig:
     corpus: str = "manuscript"
     project_root: str = "."
     sync_before_pack: bool = True
+
 
 @dataclass(frozen=True)
 class ContextConfig:
@@ -261,22 +263,26 @@ class ContextConfig:
     max_source_spans: int = 35
     include_source_excerpts: bool = False
 
+
 @dataclass(frozen=True)
 class CacheConfig:
     enabled: bool = True
     path: str = ".writing-context/context_cache.sqlite"
     invalidate_on_refresh: bool = True
 
+
 @dataclass(frozen=True)
 class SectionCardsConfig:
     path: str = ".writing-context/section_cards.yaml"
     required: bool = False
+
 
 @dataclass(frozen=True)
 class MCPServerConfig:
     command: str
     args: list[str] = field(default_factory=list)
     env: dict[str, str] | None = None
+
 
 @dataclass(frozen=True)
 class ProviderConfig:
@@ -285,6 +291,7 @@ class ProviderConfig:
     sse_url: str | None = None
     headers: dict[str, str] | None = None
     extra: dict[str, Any] | None = None
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -411,12 +418,14 @@ Stores status parameters and checksums of original files.
 from dataclasses import dataclass
 from typing import Any
 
+
 @dataclass(frozen=True)
 class DocumentCard:
     title: str | None = None
     thesis: str | None = None
     writing_style: dict[str, object] | None = None
     terminology: dict[str, Any] | None = None
+
 
 @dataclass(frozen=True)
 class SectionCard:
@@ -429,6 +438,7 @@ class SectionCard:
     must_preserve: list[str] | None = None
     avoid: list[str] | None = None
     constraints: list[str] | None = None
+
 
 @dataclass(frozen=True)
 class SectionCards:
@@ -453,6 +463,7 @@ Implement migrations in `storage.py`. For v0.1, one migration is sufficient.
 
 ```python
 SCHEMA_VERSION = 1
+
 
 class ExtensionStore:
     def init_db(self) -> None:
@@ -571,6 +582,7 @@ CREATE TABLE IF NOT EXISTS evaluation_records (
 ```python
 import hashlib
 
+
 def stable_hash(*parts: str) -> str:
     h = hashlib.sha256()
     for part in parts:
@@ -644,6 +656,7 @@ class RTFMResult:
     snippet: str | None
     score: float | None
     metadata: dict[str, object]
+
 
 class RTFMAdapter:
     def search(self, query: str, *, corpus: str, limit: int) -> list[RTFMResult]: ...

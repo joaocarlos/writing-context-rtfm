@@ -72,6 +72,7 @@ class TestConfig(unittest.TestCase):
 
     def test_load_non_mcp_provider_openai_semantic(self):
         import tempfile
+
         import yaml
 
         with tempfile.TemporaryDirectory() as tmpdir:

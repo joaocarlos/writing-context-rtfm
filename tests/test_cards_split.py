@@ -1,13 +1,15 @@
-import unittest
-from pathlib import Path
 import json
 import shutil
 import tempfile
+import unittest
+from pathlib import Path
+
 import yaml
+
 from writing_context_rtfm.section_cards import (
     load_section_cards,
-    migrate_legacy_cards,
     merge_cards,
+    migrate_legacy_cards,
 )
 
 
@@ -102,7 +104,7 @@ sections:
                         {"value": "Buffer = 500 m", "status": "generated"},
                     ],
                 }
-            }
+            },
         }
 
         overrides = {
@@ -115,7 +117,7 @@ sections:
                     "purpose": "Override purpose",
                     "must_preserve": ["Custom rule"],
                 }
-            }
+            },
         }
 
         lock = {
@@ -127,7 +129,7 @@ sections:
                     "decisions": {},
                     "stale_fields": [],
                 }
-            }
+            },
         }
 
         cards = merge_cards(generated, overrides, lock)
@@ -143,7 +145,7 @@ sections:
         self.assertEqual(sec.path, "sections/intro.tex")
         self.assertEqual(sec.role, "Override purpose")  # override purpose takes precedence
         self.assertEqual(sec.key_terms, ["term_gen"])  # rejects "term_rej"
-        
+
         # must_preserve merges custom override rules + accepted facts
         self.assertIn("Custom rule", sec.must_preserve)
         self.assertIn("Gaussian sigma = 250 m", sec.must_preserve)

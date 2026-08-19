@@ -14,6 +14,16 @@ class ExtensionStore:
         self.db_path = db_path
         self._conn: sqlite3.Connection | None = None
 
+    def __enter__(self) -> "ExtensionStore":
+        self._connect()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        self.close()
+
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
             os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
@@ -195,7 +205,8 @@ class ExtensionStore:
             )
             row = cursor.fetchone()
             if row:
-                return json.loads(self._decompress(row["payload_json"]))
+                data: dict[str, Any] = json.loads(self._decompress(row["payload_json"]))
+                return data
         return None
 
     def store_pack(
@@ -227,13 +238,8 @@ class ExtensionStore:
                 ),
             )
 
-            for rank, src in enumerate(sources):
-                cursor.execute(
-                    """
-                    INSERT INTO context_pack_sources
-                    (run_id, path, line_start, line_end, score, reason, rank, query, metadata_json, selected)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            if sources:
+                sources_rows = [
                     (
                         run_id,
                         src.get("path"),
@@ -245,7 +251,16 @@ class ExtensionStore:
                         src.get("query"),
                         json.dumps(src.get("metadata", {})),
                         src.get("selected", 1),
-                    ),
+                    )
+                    for rank, src in enumerate(sources)
+                ]
+                cursor.executemany(
+                    """
+                    INSERT INTO context_pack_sources
+                    (run_id, path, line_start, line_end, score, reason, rank, query, metadata_json, selected)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    sources_rows,
                 )
 
             cursor.execute(
@@ -347,7 +362,7 @@ class ExtensionStore:
             )
             row = cursor.fetchone()
             if row:
-                return row["token"]
+                return str(row["token"])
         return None
 
     def set_provider_token(self, provider_id: str, token: str) -> None:
@@ -442,7 +457,8 @@ class ExtensionStore:
             rtfm_conn.row_factory = sqlite3.Row
 
             # Attach context_cache.sqlite to RTFM connection
-            rtfm_conn.execute(f"ATTACH DATABASE '{self.db_path}' AS cache_db")
+            escaped_cache_path = self.db_path.replace("'", "''")
+            rtfm_conn.execute(f"ATTACH DATABASE '{escaped_cache_path}' AS cache_db")
 
             cursor = rtfm_conn.cursor()
             # Select chunks from RTFM that are NOT in cache_db.openai_embeddings

@@ -1,7 +1,8 @@
-import unittest
-from pathlib import Path
 import shutil
 import tempfile
+import unittest
+from pathlib import Path
+
 from writing_context_rtfm.virtual_doc import VirtualDocumentParser
 
 
@@ -127,3 +128,32 @@ Methodology body text.
         self.assertEqual(intro.level, 1)
         self.assertEqual(intro.selector, "sec-intro")
 
+    def test_ast_caching(self):
+        from writing_context_rtfm.virtual_doc import _LATEX_AST_CACHE
+
+        main_tex = self.test_dir / "cached_main.tex"
+        main_tex.write_text(
+            r"""
+            \documentclass{article}
+            \begin{document}
+            \section{Cached Section}\label{sec:cached}
+            Body text.
+            \end{document}
+            """,
+            encoding="utf-8",
+        )
+
+        parser = VirtualDocumentParser(str(self.test_dir))
+        # First parse populates cache
+        nodes1 = parser.parse("cached_main.tex")
+        stat = main_tex.stat()
+        cache_key = (str(main_tex.resolve()), stat.st_mtime, stat.st_size)
+        self.assertIn(cache_key, _LATEX_AST_CACHE)
+
+        # Second parse uses cache
+        nodes2 = parser.parse("cached_main.tex")
+        self.assertEqual(list(nodes1.keys()), list(nodes2.keys()))
+        self.assertEqual(
+            nodes1["section_cached_section"].content_hash,
+            nodes2["section_cached_section"].content_hash,
+        )

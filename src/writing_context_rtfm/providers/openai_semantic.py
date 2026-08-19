@@ -2,12 +2,14 @@ import logging
 import os
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.providers.base import BaseContextProvider
 from writing_context_rtfm.schemas import SourceSpan
+from writing_context_rtfm.storage import ExtensionStore
 
 logger = logging.getLogger("mcp-server")
 
@@ -43,15 +45,25 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
     def provider_id(self) -> str:
         return "openai_semantic"
 
+    def _get_provider_extra(self) -> dict[str, Any]:
+        provider_cfg = self.config.providers.get("openai_semantic")
+        if provider_cfg is None:
+            return {}
+        if isinstance(provider_cfg, dict):
+            return dict(provider_cfg)
+        extra = dict(provider_cfg.extra or {})
+        extra["enabled"] = provider_cfg.enabled
+        return extra
+
     def is_available(self, config: AppConfig) -> bool:
         provider_cfg = config.providers.get("openai_semantic")
         if not provider_cfg:
             return False
 
         if isinstance(provider_cfg, dict):
-            enabled = provider_cfg.get("enabled", False)
+            enabled = bool(provider_cfg.get("enabled", False))
         else:
-            enabled = getattr(provider_cfg, "enabled", False)
+            enabled = bool(getattr(provider_cfg, "enabled", False))
 
         if not enabled:
             return False
@@ -59,16 +71,14 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         if os.environ.get("OPENAI_API_KEY"):
             return True
 
-        from writing_context_rtfm.storage import ExtensionStore
+        with ExtensionStore(config.cache.path) as store:
+            token = store.get_provider_token("openai_semantic")
+            return bool(token)
 
-        store = ExtensionStore(config.cache.path)
-        token = store.get_provider_token("openai_semantic")
-        return bool(token)
-
-    def _get_api_key(self, store) -> str | None:
+    def _get_api_key(self, store: Any) -> str | None:
         return os.environ.get("OPENAI_API_KEY") or store.get_provider_token("openai_semantic")
 
-    def sync_chunks(self, store, rtfm_db_path: str) -> None:
+    def sync_chunks(self, store: Any, rtfm_db_path: str) -> None:
         """Finds missing chunks and embeds them with OpenAI."""
         if not self.is_available(self.config):
             return
@@ -78,8 +88,8 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
             return
 
         logger.info(f"OpenAI Semantic Sync: {len(missing)} missing chunks to embed.")
-        provider_cfg = self.config.providers.get("openai_semantic", {})
-        model = provider_cfg.get("model", "text-embedding-3-small")
+        extra = self._get_provider_extra()
+        model = extra.get("model", "text-embedding-3-small")
         batch_size = 100
 
         try:
@@ -114,36 +124,40 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
                 logger.debug(f"Embedded batch of {len(batch)} chunks.")
             except Exception as e:
                 logger.error(f"Failed to embed batch during sync: {e}")
-                # We can continue or break; breaking might save API calls if the key is invalid
                 break
 
-    def fetch_context(self, queries: list[str], target: str | None, limit: int) -> list[SourceSpan]:
+    def fetch_context(
+        self,
+        queries: list[str],
+        target: str | None,
+        limit: int,
+        query_type_map: dict[str, str] | None = None,
+        task_type: str | None = None,
+    ) -> list[SourceSpan]:
         import numpy as np
 
-        from writing_context_rtfm.storage import ExtensionStore
         from writing_context_rtfm.utils import resolve_rtfm_db_path
 
-        provider_cfg = self.config.providers.get("openai_semantic", {})
-
-        store = ExtensionStore(self.config.cache.path)
+        extra = self._get_provider_extra()
         rtfm_db_path = str(resolve_rtfm_db_path(Path(self.config.rtfm.project_root)))
 
-        # Lazy loading check: if auto_sync is false, we sync right before querying
-        if not provider_cfg.get("auto_sync", False):
-            self.sync_chunks(store, rtfm_db_path)
+        with ExtensionStore(self.config.cache.path) as store:
+            # Lazy loading check: if auto_sync is false, we sync right before querying
+            if not extra.get("auto_sync", False):
+                self.sync_chunks(store, rtfm_db_path)
 
-        all_embs = store.get_all_openai_embeddings()
-        if not all_embs:
-            return []
+            all_embs = store.get_all_openai_embeddings()
+            if not all_embs:
+                return []
+
+            api_key = self._get_api_key(store)
+            if not api_key:
+                return []
 
         chunk_ids = [e["chunk_id"] for e in all_embs]
         matrix = np.vstack([np.frombuffer(e["embedding"], dtype=np.float32) for e in all_embs])
 
-        api_key = self._get_api_key(store)
-        if not api_key:
-            return []
-
-        model = provider_cfg.get("model", "text-embedding-3-small")
+        model = extra.get("model", "text-embedding-3-small")
         try:
             query_embs = get_openai_embeddings(queries, model, api_key)
         except Exception:
@@ -162,6 +176,7 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         top_k_indices = np.argsort(max_sims)[-limit:][::-1]
 
         spans = []
+        conn = None
         try:
             conn = sqlite3.connect(rtfm_db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
@@ -200,8 +215,10 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
                             metadata={"snippet": row["content"]},
                         )
                     )
-            conn.close()
         except Exception as e:
             logger.error(f"Failed to fetch chunk details from RTFM DB: {e}")
+        finally:
+            if conn is not None:
+                conn.close()
 
         return spans

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.0] - 2026-08-19
+
+### Added
+- **Native Offline BibTeX Provider**: Introduced `BibTeXProvider` to resolve local bibliography `.bib` files directly without requiring an external Zotero instance or active network connection. Automatically extracts title, authors, year, abstract, venue, and DOI metadata.
+- **1-Hop Reference Graph Traversal**: Automatically resolves `\ref{...}` labels in the target section, querying the manuscript AST to inject defining snippets for referenced figures, tables, equations, and subsections into the context pack.
+- **AST-Aware Environment Snapping**: Automatically detects and expands retrieved LaTeX slices outward if they intersect structural environments (`equation`, `align`, `table`, `figure`, `algorithm`, `lstlisting`, `proof`), preventing severed syntax in LLM prompts.
+- **Reciprocal Rank Fusion (RRF)**: Implemented `apply_reciprocal_rank_fusion` to unify multi-stream candidate rankings across FTS5 keyword search, dense embeddings, BibTeX/Zotero literature, and reference graph links.
+- **Maximal Marginal Relevance (MMR) Diversity**: Added Jaccard-based MMR re-ranking to penalize semantic overlap in literature and background snippets, maximizing information diversity within the token budget.
+- **In-Process SQLite FTS5 Fast-Path**: Added direct SQLite FTS5 query execution with BM25 ranking (`_direct_sqlite_search`) in `RTFMAdapter` when `library.db` exists, bypassing subprocess overhead for sub-millisecond local search.
+- **AST Parse Memoization**: Added in-memory AST caching in `VirtualDocumentParser` to skip redundant AST traversals on unchanged `.tex` and `.md` files.
+- **Parallel Citation Resolution**: Parallelized multi-citation key lookups in `ZoteroProvider` using `ThreadPoolExecutor`.
+- **Strict Budget Control**: Added `strict_budget: bool` parameter to `ContextPackGenerator.generate` for hard token cap enforcement.
+
+### Changed
+- **Split Section Cards Support (Version 2)**: Fully integrated `cards.overrides.yaml` (version 2) and `cards.generated.yaml` merging across CLI commands and MCP server tools.
+- **Standardized Content Hashing**: Replaced MD5 hashing in `virtual_doc.py` with SHA-256 (`stable_hash`).
+- **Resource Lifecycle Safety**: Implemented deterministic `__enter__`, `__exit__`, and `__del__` connection cleanup on `ExtensionStore` to prevent SQLite connection leaks under Python 3.14 GC, and optimized inserts with `executemany`.
+- **Type Safety**: Achieved 100% strict `mypy` type annotation coverage across all 25 source files.
+
+### Deprecated
+- **`init-cards` CLI Command**: Marked `init-cards` as deprecated in favor of `cards scan` and `cards build`.
+
 ## [0.7.5] - 2026-08-13
 
 ### Added

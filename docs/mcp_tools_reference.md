@@ -1,0 +1,221 @@
+# Model Context Protocol (MCP) Tools & Resource Reference
+
+`writing-context-rtfm` exposes a rich, 17-tool MCP interface designed to provide AI coding and writing agents (Claude Desktop, Cursor, Claude Code, Roo Code, Antigravity) with surgical context, section constraints, terminology auditing, and reference graph intelligence.
+
+---
+
+## Tool Summary Matrix
+
+| Tool Name | Primary Purpose | Category |
+| :--- | :--- | :--- |
+| [`get_writing_context_pack`](#1-get_writing_context_pack) | Retrieve surgical context pack for drafting/rewriting sections. | Core Writing |
+| [`get_proofreading_context_pack`](#2-get_proofreading_context_pack) | Retrieve context and immutability rules for proofreading/polishing text. | Proofreading |
+| [`request_more_context`](#3-request_more_context) | Paginate and fetch additional background spans for a previous run. | Pagination |
+| [`submit_generation_feedback`](#4-submit_generation_feedback) | Submit evaluation feedback on retrieved context to optimize cache. | Evaluation |
+| [`audit_manuscript_terminology`](#5-audit_manuscript_terminology) | Detect undeclared term usage, drift, and glossary mismatches across drafts. | Terminology |
+| [`get_term_context`](#6-get_term_context) | Look up term definitions, variants, and words to avoid. | Terminology |
+| [`get_manuscript_reference_graph`](#7-get_manuscript_reference_graph) | Inspect `\label`, `\ref`, and `\cite` cross-reference dependency graph. | Graph & AST |
+| [`inspect_target_section`](#8-inspect_target_section) | Inspect metadata, purpose, constraints, and dependencies for a section. | Cards & Structure |
+| [`initialize_section_cards`](#9-initialize_section_cards) | Scan workspace and scaffold `cards.generated.yaml`. | Card Management |
+| [`review_card_candidates`](#10-review_card_candidates) | List pending generated candidates for human/agent review. | Card Management |
+| [`accept_card_candidate`](#11-accept_card_candidate) | Accept a candidate value into `cards.overrides.yaml`. | Card Management |
+| [`reject_card_candidate`](#12-reject_card_candidate) | Reject a candidate value and record reason in `cards.lock.json`. | Card Management |
+| [`edit_card_field`](#13-edit_card_field) | Manually edit or override a specific field in section cards. | Card Management |
+| [`explain_card_candidate`](#14-explain_card_candidate) | Retrieve model rationale, confidence, and provenance for a candidate. | Card Management |
+| [`get_card_field_diff`](#15-get_card_field_diff) | Inspect changes between generated and overridden section cards. | Card Management |
+| [`get_section_card_history`](#16-get_section_card_history) | View modification history and candidate decisions for a section. | Card Management |
+| [`refresh_index`](#17-refresh_index) | Re-sync RTFM retrieval index and invalidate stale cache entries. | Maintenance |
+
+---
+
+## 1. Core Context Retrieval Tools
+
+### 1. `get_writing_context_pack`
+Retrieves a compact, prioritized writing context pack containing unbroken target text, 1-hop reference graph definitions, local bibliography citations, and structural constraints.
+
+#### Parameters
+* **`task`** (*string*, required): Description of the writing or revision task.
+* **`target`** (*string*, optional): Section identifier (e.g. `section_methodology`, `subsec:hardware_eval`) or file path.
+* **`token_budget`** (*integer*, optional, default `12000`): Maximum token budget. If the non-negotiable target prose exceeds this budget, the engine automatically auto-scales to preserve atomicity.
+* **`task_type`** (*string*, optional, default `"standard"`): One of `"standard"`, `"write_new_section"`, `"revise_existing"`, `"expand_section"`, `"add_citations"`, `"synthesize"`.
+* **`pack_mode`** (*string*, optional, default `"standard"`): Depth mode (`"minimal"`, `"standard"`, `"deep"`).
+* **`strict_budget`** (*boolean*, optional, default `false`): When true, strictly caps tokens at the requested budget.
+
+#### Output Example
+```json
+{
+  "status": "complete",
+  "task": "Draft subsection comparing latency on MCU platforms",
+  "target_section": "section_methodology",
+  "token_budget": 4000,
+  "total_tokens": 3840,
+  "document_thesis": "Parametric SLMs enable offline vehicle manual QA on MCUs.",
+  "constraints": ["Write equations using LaTeX align environments"],
+  "source_spans": [
+    {
+      "path": "access.tex",
+      "line_start": 124,
+      "line_end": 272,
+      "priority": "essential",
+      "source_role": "target_text",
+      "score": 1.0,
+      "content": "..."
+    },
+    {
+      "path": "references.bib",
+      "line_start": 259,
+      "line_end": 286,
+      "priority": "supporting",
+      "source_role": "reference",
+      "score": 12.69,
+      "content": "@article{JungOptimizing2025, ...}"
+    }
+  ],
+  "formatted_prompt": "You are writing/editing a manuscript section...",
+  "guidance": "Use the provided literature spans and citation keys..."
+}
+```
+
+---
+
+### 2. `get_proofreading_context_pack`
+Retrieves a targeted proofreading context pack for polishing, grammar correction, and style consistency without context contamination.
+
+#### Parameters
+* **`target_file`** (*string*, required): Path to the file being proofread (e.g. `access.tex`, `chapter1.md`).
+* **`line_start`** (*integer*, optional): Starting line number (1-indexed).
+* **`line_end`** (*integer*, optional): Ending line number (1-indexed).
+* **`mode`** (*string*, optional, default `"surface"`): Proofreading depth (`"surface"`, `"deep"`).
+* **`strictness`** (*string*, optional, default `"moderate"`): Rule strictness (`"lenient"`, `"moderate"`, `"strict"`).
+* **`max_tokens`** (*integer*, optional, default `3000`): Maximum token budget.
+
+#### Safety Features
+* Extracts and catalogs all `\cite{...}`, `\ref{...}`, `\label{...}`, and math environments as **immutable tokens**.
+* Restricts retrieval exclusively to existing citations and terminology definitions to avoid injecting unprompted claims.
+
+---
+
+### 3. `request_more_context`
+Fetches the next page of candidate source spans that were retrieved during the initial search but omitted due to token constraints.
+
+#### Parameters
+* **`run_id`** (*string*, required): The `run_id` UUID returned from a previous `get_writing_context_pack` call.
+* **`limit`** (*integer*, optional, default `5`): Maximum number of additional spans to fetch.
+
+---
+
+### 4. `submit_generation_feedback`
+Logs downstream agent evaluation metrics (e.g. helpfulness, constraint satisfaction, hallucinations) into the SQLite audit log.
+
+#### Parameters
+* **`run_id`** (*string*, required): The `run_id` UUID from the context pack.
+* **`metric_name`** (*string*, required): Metric category (e.g. `"helpfulness"`, `"hallucination"`, `"constraint_violated"`).
+* **`metric_value`** (*number*, required): Floating-point score (e.g. `1.0` for positive/passed, `0.0` for negative/failed).
+* **`metric_text`** (*string*, optional): Qualitative explanation or failure note.
+
+---
+
+## 2. Terminology & Glossary Tools
+
+### 5. `audit_manuscript_terminology`
+Scans the entire manuscript index to detect terminology inconsistencies, undeclared acronym usage, and semantic drift.
+
+#### Parameters
+* **`project_root`** (*string*, optional): Root workspace path.
+
+#### Output
+Returns an audit report mapping each term to its declared sections, total occurrence count, line snippets, and warnings for undeclared section usage.
+
+---
+
+### 6. `get_term_context`
+Looks up an individual technical term across `cards.overrides.yaml` and `cards.generated.yaml`.
+
+#### Parameters
+* **`term`** (*string*, required): The technical term or acronym to inspect (e.g. `"TinyGPT"`, `"MCU"`).
+* **`project_root`** (*string*, optional): Root workspace path.
+
+#### Output
+Returns official definitions, permitted synonyms/variants, and words to avoid.
+
+---
+
+## 3. Structural & Graph Inspection Tools
+
+### 7. `get_manuscript_reference_graph`
+Extracts and builds the complete cross-reference dependency graph across all `.tex` and `.md` files.
+
+#### Parameters
+* **`project_root`** (*string*, optional): Root workspace path.
+
+#### Output
+Maps every declared `\label{...}` to its source file and line number, lists referenced labels, and extracts BibTeX citation keys.
+
+---
+
+### 8. `inspect_target_section`
+Provides a detailed deep-dive into an individual section card.
+
+#### Parameters
+* **`target`** (*string*, required): Section ID (e.g. `section_methodology`).
+* **`project_root`** (*string*, optional): Root workspace path.
+
+---
+
+## 4. Section Card Scaffolding & Candidate Lifecycle Tools
+
+### 9. `initialize_section_cards`
+Scans workspace drafts and scaffolds `.writing-context/cards.generated.yaml`.
+
+### 10. `review_card_candidates`
+Lists pending candidate fields (purposes, facts, key terms, constraints) generated by deterministic scan or LLM inference.
+
+### 11. `accept_card_candidate`
+Accepts a candidate value into `.writing-context/cards.overrides.yaml`.
+
+### 12. `reject_card_candidate`
+Rejects a candidate and records rejection in `.writing-context/cards.lock.json` to prevent re-extraction.
+
+### 13. `edit_card_field`
+Directly edits or overrides a specific field in `cards.overrides.yaml`.
+
+### 14. `explain_card_candidate`
+Returns the model rationale, extraction confidence rating, and source provenance for a specific candidate value.
+
+### 15. `get_card_field_diff`
+Calculates field-by-field diffs between generated and overridden section cards.
+
+### 16. `get_section_card_history`
+Returns the decision history (accepted, rejected, modified) for a section card.
+
+---
+
+## 5. Maintenance & Indexing Tools
+
+### 17. `refresh_index`
+Triggers an index synchronization and clears cached context packs.
+
+---
+
+## Pre-Packaged MCP Prompt Templates
+
+Clients supporting MCP Prompts (`prompts/list`, `prompts/get`) can hydrate prompt templates directly:
+
+1. **`write_section`**:
+   - `task`: Task description.
+   - `target`: Section ID or path.
+   - `token_budget`: Token cap.
+2. **`proofread_section`**:
+   - `target_file`: File path.
+   - `line_start`: Starting line.
+   - `line_end`: Ending line.
+   - `mode`: `"surface"` or `"deep"`.
+
+---
+
+## MCP Resources
+
+* **`writing-context://config`**: The project's active `config.yaml`.
+* **`writing-context://section-cards`**: The merged section cards metadata.
+* **`writing-context://stats`**: Cache database metrics and token usage analytics.
+* **`writing-context://section/{section_id}`**: Direct inspection resource for an individual section.

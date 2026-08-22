@@ -120,22 +120,19 @@ If your manuscript is hosted on Overleaf, you must bridge it to your local envir
 
 ## 4. Agent Rules of Engagement
 
-AI agents working in a repository equipped with `writing-context-rtfm` **MUST** adhere to the following workflow:
+AI agents working in a repository equipped with `writing-context-rtfm` adhere to a two-tier protocol:
 
-### A. Context First
-* **Rule**: Always call `get_writing_context_pack` (via MCP) or `writing-context-rtfm pack` (via CLI) before starting any manuscript writing, rewriting, expanding, or revision task.
-* **Rule**: Do not read the entire repository or open arbitrary files. Trust the context pack to provide the necessary background context.
+### A. Two-Tier Retrieval Protocol (Soft Gatekeeping)
+* **Tier 1 (Curated Context First)**: Always call `get_writing_context_pack` or `get_proofreading_context_pack` before drafting, rewriting, expanding, or proofreading text to obtain section constraints, thesis, terminology definitions, and 1-hop reference graph snippets.
+* **Tier 2 (Autonomous Direct-Read Fallback)**: If you need continuous prose flow, full-chapter narrative context, or the returned context pack is truncated, you are fully authorized to read the target and dependency files directly after inspecting the pack.
 
 ### B. Handle LaTeX Safety Triggers
 * **Rule**: Inspect the returned `warnings` array in the context pack.
-* **Rule**: If a warning begins with `LaTeX Safety:`, pay extreme attention to the listed environments and labels (e.g. `\begin{equation} ... \end{equation}`, `\ref{...}`). You **must not** delete or break these LaTeX markers during edits.
+* **Rule**: If a warning begins with `LaTeX Safety:`, pay extreme attention to the listed environments and labels (e.g. `\begin{equation} ... \end{equation}`, `\ref{...}`, `\cite{...}`). You **must not** delete or break these LaTeX markers during edits.
 
-### C. Self-Correct Token Budgets
-* **Rule**: Check the `status` field in the context pack. If the status is `"degraded"`, it means critical source context was dropped because the token budget was too small.
-* **Rule**: Inspect the `warnings` array. Parse the warning to extract the recommended minimum budget:
-  * For writing packs (`pack`), look for: `To resolve this, call the tool with a larger token_budget of at least X.`
-  * For proofreading packs (`proofread-pack`), look for: `To resolve this, call the tool with a larger max_tokens value of at least X.`
-* **Rule**: Automatically retry the call with the new recommended value (`token_budget` or `max_tokens` set to `X` or higher) before proceeding with manuscript generation.
+### C. Self-Correct Token Budgets & Elastic Scaling
+* **Rule**: The generator automatically scales undersized budgets to fit mandatory unbroken target text and local constraints.
+* **Rule**: If the status is `"degraded"` and a warning recommends a larger budget, retry the call with the recommended value (`token_budget` or `max_tokens` set to `X` or higher) to retrieve deeper background spans.
 
 ---
 

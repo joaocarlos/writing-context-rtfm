@@ -149,14 +149,56 @@ Ensures consistent technical terms are used across sections and detects semantic
 ## 6. Native MCP Prompts Integration
 
 ### Objective
-
-Exposes pre-defined prompt templates to the MCP client that automate the retrieval-pack generation and package it directly into user messages.
+Exposes pre-defined prompt templates to the MCP client that automate retrieval-pack generation and package it directly into user messages.
 
 ### Prompts
+1. **`write_section`**: Hydrates a prompt for drafting or editing a section with context spans, document thesis, and constraint rules.
+   - **Arguments**: `task` (required), `target` (required), `token_budget` (optional).
+2. **`proofread_section`**: Hydrates a prompt for grammar correction, styling consistency, and terminology checks.
+   - **Arguments**: `target_file` (required), `line_start` (required), `line_end` (required), `mode` (optional), `strictness` (optional).
 
-1. **`write_section`**: Hydrates a prompt for drafting or editing a section with context spans, document thesis, and constraint files.
-    - **Arguments**: `task` (required), `target` (required), `token_budget` (optional).
-2. **`proofread_section`**: Hydrates a prompt for grammar correction, styling consistency, and terminology check.
-    - **Arguments**: `target_file` (required), `line_start` (required), `line_end` (required), `mode` (optional), `strictness` (optional).
+---
 
-- **Execution Flow**: When requested, the server runs the context pack generator in the background, extracts the payload, formats a detailed markdown instructions set, and returns it to the client as standard prompt messages.
+## 7. Native Offline BibTeX Provider
+
+### Objective
+Provides zero-configuration, 100% offline literature search and metadata resolution from local `.bib` files, completely eliminating the need for external network calls or active Zotero Desktop instances.
+
+### Behavior
+- Recursively scans the project workspace for `.bib` files.
+- Extracts citation keys, titles, author lists, publication years, full abstracts, DOIs, venues, and journal information.
+- Supports multi-term keyword and semantic matching with BM25/RRF scoring.
+
+---
+
+## 8. Target Section Atomicity & Elastic Auto-Scaling
+
+### Objective
+Ensures writing agents receive contiguous, unbroken target section prose without fragmentary chunking, while dynamically adjusting the context token budget when mandatory prose exceeds the requested limit.
+
+### Behavior
+- When targeting a section card or virtual section node, the generator extracts the complete character span as high-priority (`essential`, score 1.0) `target_text`.
+- If mandatory target prose and local constraints exceed an undersized budget, the generator automatically scales the budget to fit the essential context and returns `"status": "complete"`.
+
+---
+
+## 9. AST-Aware Environment Snapping (LaTeX & Markdown)
+
+### Objective
+Prevents syntax corruption and broken code blocks in LLM prompts by ensuring retrieved chunk boundaries never slice across syntactic structures.
+
+### Supported Environments
+* **LaTeX**: `equation`, `align`, `gather`, `multline`, `table`, `tabular`, `figure`, `algorithm`, `lstlisting`, `proof`, `theorem`, `verbatim`.
+* **Markdown**: Display math blocks (`$$...$$`), fenced code blocks (```` ``` ```` / `~~~`), and pipe tables.
+
+---
+
+## 10. 1-Hop Reference Graph Traversal
+
+### Objective
+Directly resolves cross-reference labels (`\ref{fig:pipeline}`, `\ref{tab:microcontrollers}`, `\ref{sec:method}`) within the target text, injecting the defining snippets of referenced figures, tables, and equations into the context pack.
+
+### Behavior
+- Parses all `\label{...}` declarations across the manuscript AST.
+- Resolves cross-references in the target section and queries the AST to extract the full definition block for each referenced figure, table, or equation.
+

@@ -329,9 +329,6 @@ def get_term_context(term: str, project_root: str | None = None) -> dict[str, An
     if not sc_path.is_absolute():
         sc_path = root / sc_path
 
-    if not sc_path.exists():
-        return {"status": "not_found", "message": f"Section cards file not found at '{sc_path}'"}
-
     section_cards = load_section_cards(str(sc_path), required=False)
     if not section_cards or not section_cards.document or not section_cards.document.terminology:
         return {

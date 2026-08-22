@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "writing-context-rtfm": {
+      "command": "writing-context-rtfm",
+      "args": [
+        "serve"
+      ]
+    },
+    "rtfm": {
+      "command": "/Users/joaocarlos/.local/share/uv/tools/rtfm-ai/bin/python3",
+      "args": [
+        "-m",
+        "rtfm.mcp"
+      ],
+      "env": {
+        "RTFM_DB": ".rtfm/library.db"
+      }
+    }
+  }
+}

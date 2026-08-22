@@ -14,7 +14,21 @@ EXCLUDED_SOURCE_PATTERNS = [
     ".git/",
     "__pycache__/",
 ]
-EXCLUDED_SOURCE_EXTENSIONS = {".sqlite", ".db", ".lock"}
+EXCLUDED_SOURCE_EXTENSIONS = {
+    ".sqlite",
+    ".db",
+    ".lock",
+    ".cls",
+    ".sty",
+    ".bst",
+    ".dtx",
+    ".ins",
+    ".aux",
+    ".log",
+    ".out",
+    ".toc",
+    ".synctex.gz",
+}
 
 
 def is_allowed_source(path: str) -> bool:

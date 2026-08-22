@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.1] - 2026-08-22
+
+### Changed
+- **Template & Build Artifact Filtering**: Extended `EXCLUDED_SOURCE_EXTENSIONS` in `utils.py` to automatically exclude LaTeX class and style files (`.cls`, `.sty`), bibliography styles (`.bst`), docstrip files (`.dtx`, `.ins`), and compilation logs/auxiliary files (`.aux`, `.log`, `.out`, `.toc`, `.synctex.gz`) from context packs. This prevents template macro definitions from polluting writing context spans when searching for terms like "draft", "subsection", or "table".
+
+### Fixed
+- **Split-Card Terminology Resolution**: Updated `get_term_context` in `features.py` to load section cards via `load_section_cards`, seamlessly resolving terminology definitions from split `cards.generated.yaml` / `cards.overrides.yaml` architectures when legacy `section_cards.yaml` is absent.
+
 ## [0.9.0] - 2026-08-22
 
 ### Added

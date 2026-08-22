@@ -1,9 +1,60 @@
+# writing-context-rtfm Section Cards Overrides Template
+# Use this file to define manual overrides for document settings and section metadata.
 version: 2
+
+# Document-level global context overrides
 document:
-  title: My Manuscript
-  thesis: ''
+  # The title of your project or paper
+  title: "A New Approach to Manuscript Curation"
+  # The central thesis statement (injected globally to keep the agent focused)
+  thesis: "Surgical context selection using a gatekeeping protocol reduces LLM token overhead and improves writing accuracy."
+  # Global writing style guide
   writing_style:
-    tone: academic, formal
+    tone: "Academic, precise, concise, third-person"
+    avoid_words: ["cliché", "groundbreaking", "revolutionary", "game-changing"]
+  # Global project terminology dictionary
+  terminology:
+    Context Pack: "A compact JSON structure containing prioritized source spans, token estimates, and constraints."
+    RTFM:
+      definition: "Read The Fine Manual: A semantic retrieval and indexing tool."
+      variants: ["rtfm-ai", "RTFM CLI"]
+      avoid: ["RTFM database write", "modifying library.db"]
+
+# Section overrides definitions. Edit these to override generated metadata.
+sections:
+  section_abstract:
+    title: "Abstract"
+    purpose: "Provide a standalone, 150-word summary of the thesis, approach, and primary results."
+    path: "sections/00_abstract.tex"  # Relative path to your draft file
+    key_terms: ["Surgical context", "Gatekeeping protocol"]
+    depends_on: []                    # Abstract usually has no direct dependencies
+    must_preserve: []                 # Specific claims or equations that must not change
+    avoid: ["detailed experimental setups", "citations"]
+    constraints:
+      - "Exactly one paragraph"
+      - "Max 150 words"
+
+  section_introduction:
+    title: "Introduction"
+    purpose: "Establish the problem context, outline the research gap, and state the main contributions."
+    path: "sections/01_introduction.tex"
+    key_terms: ["LLM token overhead", "context curation"]
+    depends_on:
+      - section_abstract             # Tells the agent to look at the abstract first
+    must_preserve: []
+    avoid: ["premature methodology details"]
+    constraints:
+      - "Ensure main contributions are listed as a bulleted list"
+
+  section_methodology:
+    title: "Proposed Methodology"
+    purpose: "Detail the system architecture, mathematical formulations, and context selection algorithms."
+    path: "sections/02_methodology.tex"
+    key_terms: ["Gatekeeping protocol", "Token budget"]
+    depends_on:
+      - section_introduction
+    must_preserve:
+      - "Token budget formula is B_usable = B_total * (1 - margin)"
     avoid: []
-  terminology: {}
-sections: {}
+    constraints:
+      - "Write equations using LaTeX align or equation environments"

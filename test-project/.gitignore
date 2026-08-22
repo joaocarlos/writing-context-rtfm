@@ -1,0 +1,4 @@
+.writing-context/context_cache.sqlite
+
+# RTFM local database
+.rtfm/

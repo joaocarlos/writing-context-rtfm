@@ -9,7 +9,7 @@ Stop giving your AI agent the entire manuscript to write one section. Give it th
 
 <br>
 
-[![PyPI Version](https://img.shields.io/pypi/v/writing-context-rtfm.svg)](https://pypi.org/project/writing-context-rtfm/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/) [![MCP](https://img.shields.io/badge/MCP-2026-green.svg)](https://modelcontextprotocol.io/) [![Powered by RTFM](https://img.shields.io/badge/Powered%20by-RTFM-purple.svg)](https://github.com/roomi-fields/rtfm)
+[![PyPI Version](https://img.shields.io/pypi/v/writing-context-rtfm.svg)](https://pypi.org/project/writing-context-rtfm/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![Python](https://img.shields.io/badge/Python-3.13+-blue.svg)](https://www.python.org/) [![MCP](https://img.shields.io/badge/MCP-2026-green.svg)](https://modelcontextprotocol.io/) [![Powered by RTFM](https://img.shields.io/badge/Powered%20by-RTFM-purple.svg)](https://github.com/roomi-fields/rtfm)
 
 </div>
 
@@ -65,15 +65,16 @@ pipx install "rtfm-ai[embeddings]"
 ```
 *(Note: If you are setting up inside a local virtual environment, running `uv pip install "writing-context-rtfm[tiktoken]"` will automatically pull in `rtfm-ai[embeddings]` as a library dependency, but installing it globally ensures the `rtfm` binary is available on your PATH).*
 
-### 3. Install Zotero MCP (Semantic Literature Grounding)
-`writing-context-rtfm` uses `zotero-mcp` to ground your agent in your local literature library. It supports dynamic semantic search over your PDFs and metadata.
-You must install `zotero-mcp` and have Zotero Desktop running for literature grounding to work:
+### 3. Literature Grounding (Offline BibTeX & Zotero)
+`writing-context-rtfm` grounds your AI writing agent in your real bibliography and literature library, preventing citation key and claim hallucinations:
 
-```bash
-# Install zotero-mcp globally using uv
-uv tool install zotero-mcp
-```
-*(Make sure Zotero Desktop is open while the agent is running so it can connect to the local SQLite database).*
+* **Native Offline BibTeX Provider (Built-in)**: Automatically discovers and parses local `.bib` files (extracting titles, authors, years, abstracts, DOIs, and venues). Works 100% offline out-of-the-box with zero configuration or external dependencies.
+* **Zotero MCP (Optional Semantic Expansion)**: If you use Zotero Desktop, `writing-context-rtfm` connects via `zotero-mcp` to run dynamic semantic searches across your PDF library and notes:
+  ```bash
+  # Install zotero-mcp globally using uv
+  uv tool install zotero-mcp
+  ```
+  *(Ensure Zotero Desktop is running during writing sessions to allow local SQLite connections).*
 
 ---
 
@@ -213,23 +214,28 @@ We do **not** replace or fork RTFM. We wrap it. RTFM is built to fetch memory. `
 
 ## Features
 
-### 1. Agent Self-Correction Loop
-If the requested token budget is too small to fit the necessary target context, the packer returns a `"status": "degraded"` and appends a warning to the `warnings` list recommending a specific minimum budget:
-* **Writing Packs (`pack`)**: `To resolve this, call the tool with a larger token_budget of at least X.`
-* **Proofreading Packs (`proofread-pack`)**: `To resolve this, call the tool with a larger max_tokens value of at least X.`
+### 1. Unbroken Target Atomicity & Elastic Auto-Scaling
+When writing or revising a specific section, the extension extracts the contiguous, unbroken target text as highest-priority (`essential`) context. If the requested token budget is too small to fit the mandatory target text and constraints, the generator automatically scales the budget to fit the essential context and returns `"status": "complete"` with an informative notice, preventing severed prompts.
 
-AI client agents are instructed via the auto-injected guidelines to parse this warning, extract the recommended value `X`, and automatically retry the call with the new budget to get the missing context.
+### 2. AST-Aware Environment Snapping (LaTeX & Markdown)
+Retrieved source slices are automatically checked against document ASTs. If a chunk boundary intersects an equation (`equation`, `align`, `$$...$$`), table (`tabular`, Markdown pipe table), code fence (` ``` ` / `~~~`), figure, or algorithm environment, the boundary automatically snaps outward to preserve the entire syntactic block.
 
-### 2. LaTeX Safety Checks
-The extension automatically parses the target text and detects LaTeX math environments, macro calls, and cross-references (e.g., `\ref{...}`, `\begin{equation} ... \end{equation}`). It issues safety warnings to the AI writing agent containing the exact code patterns that must not be deleted or broken during edits, maintaining compilation safety.
+### 3. 1-Hop Reference Graph Traversal
+The extension automatically parses `\ref{...}` and label declarations in the target text, traversing the manuscript AST to inject defining snippets for referenced figures, tables, equations, and subsections directly into the context pack.
 
-### 3. SQLite Local Caching
-To optimize token and response latency, generated context packs are hashed and cached locally in `.writing-context/context_cache.sqlite`. Cache keys are dynamically invalidated whenever the project configuration, section cards, or underlying RTFM indexes are updated.
+### 4. Native Offline BibTeX & Semantic Zotero Grounding
+* **Built-in BibTeX Engine**: Directly parses and indexes local `.bib` files, extracting titles, authors, years, abstracts, DOIs, and citation keys offline.
+* **Dynamic Zotero Search**: Connects to `zotero-mcp` for semantic literature search when enabled. Multi-stream search results are merged using **Reciprocal Rank Fusion (RRF)** and deduplicated via **Maximal Marginal Relevance (MMR)**.
+* **Proofread Protection**: In `proofread-pack` mode, open-ended search is disabled to avoid "context contamination", resolving only existing `\cite{}` keys.
 
-### 4. Semantic Zotero Grounding
-The extension dynamically routes literature queries to `zotero-mcp`. 
-* **Semantic Routing**: High-level section intents (e.g., "Discuss how smart cities use IoT") are routed to ChromaDB-powered semantic searches.
-* **Proofread Protection**: If you run a `proofread-pack`, the engine intelligently skips open-ended searches to prevent "context contamination" (hallucinating new ideas into your polish phase), only resolving the explicit `\cite{}` keys already present in the draft.
+### 5. Two-Tier Agent Protocol (Soft Gatekeeping)
+Agents are instructed to retrieve curated context first via `get_writing_context_pack` or `get_proofreading_context_pack`. If an agent requires unbroken chapter-length prose synthesis, it is explicitly authorized to fall back autonomously to direct file reading.
+
+### 6. LaTeX Safety & Immutability Rules
+The extension catalogs all detected `\cite{...}`, `\ref{...}`, `\label{...}`, and math environments in the target text, issuing explicit immutability rules in the returned prompt guidance to prevent agents from corrupting manuscript formatting.
+
+### 7. In-Process SQLite Caching & Fast-Path
+Generated context packs are hashed and cached in `.writing-context/context_cache.sqlite`. Direct SQLite FTS5 querying with BM25 ranking provides sub-millisecond local search without subprocess overhead.
 
 ---
 
@@ -237,7 +243,7 @@ The extension dynamically routes literature queries to `zotero-mcp`.
 
 To give writing agents context and rules, we define manuscript metadata. Rather than forcing you to maintain a single massive YAML configuration manually, `writing-context-rtfm` splits section cards into two layers:
 
-1. **`cards.generated.yaml` (Machine-Written)**: Generated automatically by `writing-context-rtfm cards build`. The tool scans your LaTeX file tree, maps structural hierarchies, and uses local/remote models to extract default purposes, key terms, facts, and constraints. **Do not modify this file.**
+1. **`cards.generated.yaml` (Machine-Written)**: Generated automatically by `writing-context-rtfm cards build` or `cards scan`. The tool scans your manuscript files, maps structural hierarchies, and extracts default purposes, key terms, facts, and constraints. **Do not modify this file.**
 2. **`cards.overrides.yaml` (Human-Controlled)**: The user control panel. Create or edit this file to override generated settings or declare global document parameters (like style guidelines, project-wide glossary, or specific section rules).
 
 At runtime, the extension automatically overlays `cards.overrides.yaml` on top of the generated metadata, compiling them into a single unified context card database.
@@ -270,29 +276,10 @@ sections:
       - "Write equations using LaTeX align environments"
 ```
 
-### Configurable Zotero Grounding
-If Zotero is enabled in your `.writing-context/config.yaml`, the provider routes keyword/semantic queries to Zotero. To prevent out-of-domain paper recommendations from cluttering your prompt, configure Zotero's semantic filtering under `extra` in `config.yaml`:
-```yaml
-providers:
-  zotero:
-    enabled: true
-    mcp_server:
-      command: zotero-mcp
-    extra:
-      # Optimal threshold: -0.4. Discards negative similarity noise (like off-topic papers) 
-      # while preserving relevant priority queueing and network scheduling matches.
-      similarity_threshold: -0.4
-      include_abstract: false  # Set to true to include full abstracts in Zotero spans
-```
-
-### How the Agent Applies Cards
-When the agent requests context to write `section_methodology`, the system:
-1. **Expands the query**: Uses the target section title, override keywords, and task text to search.
-2. **Enforces Exclusions (Avoids)**: Instantly discards any retrieved text matching your defined `avoid` list.
-3. **Injects Rules & Terminology**: Directs the agent to respect constraints (e.g. `must_preserve`) and glossary terms during writing.
-
-> [!IMPORTANT]
-> **Modular documents are required.** This extension's noise-reduction algorithms heavily rely on the `path` defined in your section cards to perform "Target Boosts" and semantic scoping. If your entire manuscript is just a single monolithic `main.tex` or `main.md` file, the packer won't be able to distinguish the target section from background noise. Keep your writing modular (e.g., `sections/01_intro.tex`, `sections/02_methodology.tex`) for optimal results.
+### Single-File & Multi-File Manuscript Support
+`writing-context-rtfm` natively supports both:
+* **Multi-File Modular Projects**: Projects organized into sub-files (e.g. `sections/01_intro.tex`, `chapters/ch1.md`, `\input{...}`).
+* **Single-File Monolithic Manuscripts**: Monolithic single-file papers (e.g. `main.tex`, `paper.md`). The AST parser uses virtual section nodes (`find_section_node`) to resolve section cards, calculate character boundaries, and isolate target subsections seamlessly.
 
 ---
 
@@ -341,8 +328,17 @@ writing-context-rtfm show-graph
 # Clear the cached context packs
 writing-context-rtfm cache clear
 
-# Show cache database size and run statistics
-writing-context-rtfm cache stats
+# Validate section cards for stale references or missing targets
+writing-context-rtfm cards validate
+
+# Rebuild section cards (clears generated cards and re-scans fresh)
+writing-context-rtfm cards rebuild
+
+# Authenticate API keys/tokens (e.g. openai_semantic, huggingface) securely into SQLite cache
+writing-context-rtfm auth huggingface "hf_..."
+
+# Remove active background worker PID registrations
+writing-context-rtfm cleanup
 
 # Start MCP Server
 writing-context-rtfm serve

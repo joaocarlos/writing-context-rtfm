@@ -279,22 +279,28 @@ class ExtensionStore:
             conn.commit()
 
     def invalidate_for_fingerprint(self, fingerprint: str) -> None:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                DELETE FROM context_pack_runs
-                WHERE rtfm_index_fingerprint != ?
-            """,
-                (fingerprint,),
-            )
-            conn.commit()
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    DELETE FROM context_pack_runs
+                    WHERE rtfm_index_fingerprint != ?
+                """,
+                    (fingerprint,),
+                )
+                conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def clear(self) -> None:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM context_pack_runs")
-            conn.commit()
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM context_pack_runs")
+                conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
     def get_more_context(self, run_id: str, limit: int = 5) -> list[dict[str, Any]]:
         with self._connect() as conn:

@@ -54,8 +54,11 @@ result_b.txt
 
 # RTFM / Writing Context Cache
 .rtfm/
-.writing-context/context_cache.sqlite
+.writing-context/
+*.db*
+*.sqlite*
 *.log
+scratch/
 
 # Simulation Sandbox
 sandbox/
@@ -63,3 +66,5 @@ sandbox/
 # Local configuration and guidelines
 .claude/
 GEMINI.md
+AGENTS.md
+CLAUDE.md

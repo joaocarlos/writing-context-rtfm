@@ -722,6 +722,7 @@ def _load_runtime() -> tuple[
             if config.cache.invalidate_on_refresh:
                 rtfm_db = resolve_rtfm_db_path(Path(config.rtfm.project_root))
                 fingerprint = compute_rtfm_fingerprint(rtfm_db)
+                store.init_db()
                 store.invalidate_for_fingerprint(fingerprint)
         except Exception as e:
             logger.warning(f"Auto-sync failed before pack generation: {e}")
@@ -895,6 +896,7 @@ def handle_refresh_index(args: dict[str, Any]) -> dict[str, Any]:
 
     if config.cache.invalidate_on_refresh:
         store = ExtensionStore(config.cache.path)
+        store.init_db()
         rtfm_db = resolve_rtfm_db_path(Path(project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
         store.invalidate_for_fingerprint(fingerprint)

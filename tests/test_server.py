@@ -186,15 +186,20 @@ def test_process_message_valid_json(mock_stdout, mock_handle):
     assert mock_handle.called
 
     # Test initialize message
-    msg_init = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 2,
-            "method": "initialize",
-            "params": {"rootUri": "file:///path/to/root"},
-        }
-    )
-    process_message(msg_init)
+    from writing_context_rtfm import server
+    orig_root = server.WORKSPACE_ROOT
+    try:
+        msg_init = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {"rootUri": "file:///path/to/root"},
+            }
+        )
+        process_message(msg_init)
+    finally:
+        server.WORKSPACE_ROOT = orig_root
 
 
 @patch("writing_context_rtfm.server.sys.stdin")

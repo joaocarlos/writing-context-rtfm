@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "writing-context-rtfm": {
+      "command": "uv",
+      "args": [
+        "run",
+        "writing-context-rtfm",
+        "serve"
+      ]
+    }
+  }
+}

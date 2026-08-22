@@ -179,49 +179,64 @@ class ContextPackGenerator:
         if not target:
             return None, None, None
 
-        if not self.section_cards or not self.section_cards.sections:
-            # Fallback path check if target is a path
-            test_path = Path(pr) / target
-            if test_path.is_file() or target.endswith(
-                (".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")
-            ):
-                return None, None, target
-            return None, None, None
+        if self.section_cards and self.section_cards.sections:
+            # 1. Exact match in sections
+            if target in self.section_cards.sections:
+                card = self.section_cards.sections[target]
+                return target, card, card.path
 
-        # 1. Exact match in sections
-        if target in self.section_cards.sections:
-            card = self.section_cards.sections[target]
-            return target, card, card.path
+            # 2. Check f"section_{target}"
+            if f"section_{target}" in self.section_cards.sections:
+                card = self.section_cards.sections[f"section_{target}"]
+                return f"section_{target}", card, card.path
 
-        # 2. Check f"section_{target}"
-        if f"section_{target}" in self.section_cards.sections:
-            card = self.section_cards.sections[f"section_{target}"]
-            return f"section_{target}", card, card.path
+            # 3. Check target[8:] if target starts with "section_"
+            if target.startswith("section_") and target[8:] in self.section_cards.sections:
+                card = self.section_cards.sections[target[8:]]
+                return target[8:], card, card.path
 
-        # 3. Check target[8:] if target starts with "section_"
-        if target.startswith("section_") and target[8:] in self.section_cards.sections:
-            card = self.section_cards.sections[target[8:]]
-            return target[8:], card, card.path
-
-        # 4. Case-insensitive title scan or path stem scan
-        target_lower = target.lower()
-        for key, card in self.section_cards.sections.items():
-            # Check card title (case-insensitive)
-            if card.title and card.title.lower() == target_lower:
-                return key, card, card.path
-
-            # Check card path (stem or path matching)
-            if card.path:
-                card_path = Path(card.path)
-                # match stem (e.g. abstract to abstract.tex) or exact path or name
-                if (
-                    card_path.stem.lower() == target_lower
-                    or card_path.name.lower() == target_lower
-                    or card.path.lower() == target_lower
-                ):
+            # 4. Case-insensitive title scan or path stem scan
+            target_lower = target.lower()
+            for key, card in self.section_cards.sections.items():
+                if card.title and card.title.lower() == target_lower:
                     return key, card, card.path
+                if card.path:
+                    card_path = Path(card.path)
+                    if (
+                        card_path.stem.lower() == target_lower
+                        or card_path.name.lower() == target_lower
+                        or card.path.lower() == target_lower
+                    ):
+                        return key, card, card.path
 
-        # 5. Check if target is a file path in the workspace
+        # 5. Check if target matches a virtual section node in root document files (single-file or multi-file)
+        try:
+            doc_parser = VirtualDocumentParser(pr)
+            for entry in [
+                "main.tex",
+                "paper.tex",
+                "manuscript.tex",
+                "document.tex",
+                "main.md",
+                "paper.md",
+                "README.md",
+            ]:
+                if (Path(pr) / entry).is_file():
+                    with contextlib.suppress(Exception):
+                        doc_parser.parse(entry)
+                    node = doc_parser.find_section_node(target)
+                    if node:
+                        card = SectionCard(
+                            id=node.node_id,
+                            title=node.title,
+                            path=node.source_path,
+                            role=f"Section: {node.title}",
+                        )
+                        return node.node_id, card, node.source_path
+        except Exception:
+            pass
+
+        # 6. Check if target is a file path in the workspace
         test_path = Path(pr) / target
         if test_path.is_file() or target.endswith(
             (".tex", ".md", ".txt", ".py", ".json", ".yaml", ".yml", ".bib")
@@ -635,31 +650,35 @@ class ContextPackGenerator:
                     pack_mode=cached.get("pack_mode"),
                 )
 
-        # --- Target Line Range Resolution ---
+        # --- Target Line Range Resolution (Phase 2 & Phase 5) ---
         resolved_key, target_card, target_path = self._resolve_target(target, pr)
 
         all_candidates: list[SourceSpan] = []
         lines_prepended = False
-        if line_start is not None and line_end is not None:
-            if not target_path:
-                warnings.append(
-                    "line_start and line_end provided but target file path could not be resolved."
-                )
-                status = "degraded"
-            else:
-                try:
-                    full_path = Path(pr) / target_path
-                    if full_path.exists() and full_path.is_file():
-                        file_content = full_path.read_text(encoding="utf-8", errors="replace")
-                        lines = file_content.splitlines()
-                        num_lines = len(lines)
+        initial_token_budget = token_budget
+        has_explicit_line_range = line_start is not None and line_end is not None
 
-                        start = max(1, min(line_start, num_lines))
-                        end = max(1, min(line_end, num_lines))
+        if has_explicit_line_range and not target_path:
+            warnings.append(
+                "line_start and line_end provided but target file path could not be resolved."
+            )
+            status = "degraded"
+
+        if target_path:
+            try:
+                full_path = Path(pr) / target_path
+                if full_path.exists() and full_path.is_file():
+                    file_content = full_path.read_text(encoding="utf-8", errors="replace")
+                    lines = file_content.splitlines()
+                    num_lines = len(lines)
+
+                    # Case A: Explicit line range requested
+                    if has_explicit_line_range:
+                        start = max(1, min(line_start, num_lines))  # type: ignore[arg-type]
+                        end = max(1, min(line_end, num_lines))  # type: ignore[arg-type]
                         if start > end:
                             start, end = end, start
 
-                        # Extract target text span
                         target_snippet = "\n".join(lines[start - 1 : end])
                         target_span = SourceSpan(
                             path=target_path,
@@ -678,43 +697,75 @@ class ContextPackGenerator:
                             ctx_start = max(1, start - 15)
                             ctx_end = start - 1
                             before_snippet = "\n".join(lines[ctx_start - 1 : ctx_end])
-                            before_span = SourceSpan(
-                                path=target_path,
-                                line_start=ctx_start,
-                                line_end=ctx_end,
-                                reason="Surrounding target context (before)",
-                                score=0.9,
-                                priority="supporting",
-                                source_role="local_context",
-                                metadata={"snippet": before_snippet},
+                            all_candidates.append(
+                                SourceSpan(
+                                    path=target_path,
+                                    line_start=ctx_start,
+                                    line_end=ctx_end,
+                                    reason="Surrounding target context (before)",
+                                    score=0.9,
+                                    priority="supporting",
+                                    source_role="local_context",
+                                    metadata={"snippet": before_snippet},
+                                )
                             )
-                            all_candidates.append(before_span)
 
                         # Local context after
                         if end < num_lines:
                             ctx_start = end + 1
                             ctx_end = min(num_lines, end + 15)
                             after_snippet = "\n".join(lines[ctx_start - 1 : ctx_end])
-                            after_span = SourceSpan(
-                                path=target_path,
-                                line_start=ctx_start,
-                                line_end=ctx_end,
-                                reason="Surrounding target context (after)",
-                                score=0.9,
-                                priority="supporting",
-                                source_role="local_context",
-                                metadata={"snippet": after_snippet},
+                            all_candidates.append(
+                                SourceSpan(
+                                    path=target_path,
+                                    line_start=ctx_start,
+                                    line_end=ctx_end,
+                                    reason="Surrounding target context (after)",
+                                    score=0.9,
+                                    priority="supporting",
+                                    source_role="local_context",
+                                    metadata={"snippet": after_snippet},
+                                )
                             )
-                            all_candidates.append(after_span)
-
                         lines_prepended = True
-                    else:
+
+                    # Case B: Target section specified without line numbers -> Atomically extract target section
+                    elif target is not None:
+                        doc_parser_target = VirtualDocumentParser(pr)
+                        with contextlib.suppress(Exception):
+                            doc_parser_target.parse(target_path)
+
+                        target_node = doc_parser_target.find_section_node(target or resolved_key or "")
+                        if target_node and target_node.source_path == target_path:
+                            start = max(1, min(target_node.line_start, num_lines))
+                            end = max(1, min(target_node.line_end, num_lines))
+                        else:
+                            start = 1
+                            end = num_lines
+
+                        if start <= end and num_lines > 0:
+                            target_snippet = "\n".join(lines[start - 1 : end])
+                            target_span = SourceSpan(
+                                path=target_path,
+                                line_start=start,
+                                line_end=end,
+                                reason=f"Target section text (unbroken: {target_card.title if target_card and target_card.title else target})",
+                                score=1.0,
+                                priority="essential",
+                                source_role="target_text",
+                                metadata={"snippet": target_snippet},
+                            )
+                            all_candidates.append(target_span)
+                            lines_prepended = True
+                else:
+                    if has_explicit_line_range:
                         warnings.append(
                             f"Target file '{target_path}' not found for line range extraction."
                         )
                         status = "degraded"
-                except Exception as e:
-                    warnings.append(f"Failed to read target file '{target_path}': {e}")
+            except Exception as e:
+                warnings.append(f"Failed to read target file '{target_path}': {e}")
+                if has_explicit_line_range:
                     status = "degraded"
 
         # --- Query expansion (Fix 4) ---
@@ -724,7 +775,7 @@ class ContextPackGenerator:
             must_consider,
             task_type=task_type,
             pack_mode=pack_mode,
-            has_line_range=lines_prepended,
+            has_line_range=has_explicit_line_range,
         )
         quality.queries_issued = len(queries)
 
@@ -823,7 +874,7 @@ class ContextPackGenerator:
         snapped_candidates: list[SourceSpan] = []
         for span in all_candidates:
             if (
-                span.path.endswith(".tex")
+                (span.path.endswith(".tex") or span.path.endswith(".md"))
                 and span.line_start is not None
                 and span.line_end is not None
             ):
@@ -884,6 +935,45 @@ class ContextPackGenerator:
 
         # --- Apply MMR Diversity Re-ranking to suppress repetitive literature/background ---
         filtered = apply_mmr_diversity(filtered, lambda_param=0.75)
+
+        # Prioritize essential target text spans at the top of candidate list
+        filtered = sorted(
+            filtered,
+            key=lambda s: (
+                0 if (s.priority == "essential" or s.source_role == "target_text") else (1 if s.priority == "supporting" else 2),
+                -s.score,
+            ),
+        )
+
+        # --- Elastic Budget Auto-Scaling (Phase 3) ---
+        essential_tokens = sum(
+            self._estimate_tokens(s)
+            for s in filtered
+            if s.source_role in ("target_text", "local_context") or s.priority == "essential"
+        )
+        thesis_text = (
+            (self.section_cards.document.thesis if self.section_cards and self.section_cards.document else "")
+            or ""
+        )
+        constraints_text = " ".join(target_card.constraints if target_card and target_card.constraints else [])
+        baseline_tokens = essential_tokens + self._estimate_tokens(
+            SourceSpan(
+                path="",
+                line_start=0,
+                line_end=0,
+                reason="",
+                score=1.0,
+                metadata={"snippet": f"{thesis_text} {constraints_text}"},
+            )
+        ) + 150
+
+        if token_budget < baseline_tokens and not is_strict:
+            auto_budget = int(baseline_tokens * 1.2) + 500
+            warnings.append(
+                f"Note: The retrieved context ({baseline_tokens} tokens) exceeded the requested budget ({initial_token_budget}). "
+                f"Auto-expanded token budget from {initial_token_budget} to {auto_budget} to accommodate unbroken target section and reference elements."
+            )
+            token_budget = auto_budget
 
         # --- Token budget selection ---
         usable_budget = int(token_budget * (1.0 - self.config.context.reserved_generation_margin))

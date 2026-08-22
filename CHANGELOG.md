@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.0] - 2026-08-22
+
+### Added
+- **Unbroken Target Section Atomicity**: When generating a context pack for a target section (e.g., in drafting or editing workflows), the complete unbroken text of the target section is extracted as high-priority (`essential`, score 1.0) `target_text`, ensuring target prose continuity without fragmented chunking.
+- **Elastic Token Auto-Scaling**: Implemented intelligent dynamic budget expansion in `ContextPackGenerator` and `ProofreadPackGenerator`. When essential target prose and mandatory local context exceed an undersized budget, the generator automatically scales the budget to fit the essential context and returns `status: "complete"` with an informative expansion notice, preventing truncated prompts.
+- **Markdown AST Snapping Parity**: Extended AST-aware environment snapping in `VirtualDocumentParser` and `ContextPackGenerator` to Markdown files, automatically preserving display math blocks (`$$...$$`), fenced code blocks (``` / ~~~), and tables without breaking syntax across chunk boundaries.
+- **Single-File Virtual Section Resolution**: Added `find_section_node` helper to resolve and target virtual sections within monolithic files (`paper.md`, `main.tex`) by header or section ID, enabling full section card targeting for single-file manuscripts without splitting the document.
+- **Comprehensive Quality Test Suites**: Added deep test suites covering AST utilities, multi-layer section card merging, MCP JSON-RPC server handlers, CLI subcommands, and semantic extractor fallback chains, elevating total test coverage past 80% with 249 unit tests.
+
+### Changed
+- **Two-Tier Agent Protocol & Soft-Gatekeeping**: Updated agent guidelines across CLI initialization (`cli.py`), `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` to establish a clear two-tier protocol: agents retrieve curated context first via `get_writing_context_pack` / `get_proofreading_context_pack`, with authorized autonomous fallback to direct file reading when whole-chapter narrative flow or continuous prose synthesis is required.
+
+### Fixed
+- **Cache Invalidation on Fresh Workspaces**: Handled uninitialized SQLite tables gracefully during `invalidate_for_fingerprint` and `clear` operations in `ExtensionStore`.
+- **Global Workspace Root Isolation in MCP Tests**: Added proper test isolation to prevent module-level `WORKSPACE_ROOT` leakage across test executions.
+
 ## [0.8.1] - 2026-08-19
 
 ### Added

@@ -136,13 +136,13 @@ class TestCliInit(unittest.TestCase):
             # Running again should update the anchored block in-place
             # Let's verify by replacing a part of rules inside anchor and running init again
             content_mod = content.replace(
-                "1. **Always retrieve context first**", "1. **MODIFIED RULE**"
+                "1. **Retrieve Curated Context First**", "1. **MODIFIED RULE**"
             )
             md_file.write_text(content_mod)
 
             init_command(args)
             new_content = md_file.read_text()
-            self.assertIn("1. **Always retrieve context first**", new_content)
+            self.assertIn("1. **Retrieve Curated Context First**", new_content)
             self.assertNotIn("1. **MODIFIED RULE**", new_content)
 
     def test_init_creates_claude_settings_with_hooks(self):

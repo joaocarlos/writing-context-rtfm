@@ -29,7 +29,7 @@ _LATEX_AST_CACHE: dict[
 
 _MARKDOWN_AST_CACHE: dict[
     tuple[str, float, int],
-    tuple[list[dict[str, Any]], list[str], str],
+    tuple[list[dict[str, Any]], list[str], str, list[dict[str, Any]]],
 ] = {}
 
 
@@ -89,7 +89,7 @@ class VirtualDocumentParser:
         self.environments_by_file: dict[str, list[dict[str, Any]]] = {}
 
     def snap_to_environment(self, file_rel: str, line_start: int, line_end: int) -> tuple[int, int]:
-        """Expands line_start and line_end outwards if they intersect a structural LaTeX environment."""
+        """Expands line_start and line_end outwards if they intersect a structural LaTeX or Markdown environment."""
         envs = self.environments_by_file.get(file_rel, [])
         if not envs:
             return line_start, line_end
@@ -116,6 +116,9 @@ class VirtualDocumentParser:
             "theorem",
             "lemma",
             "definition",
+            "math_block",
+            "code_block",
+            "admonition",
         }
 
         cur_start, cur_end = line_start, line_end
@@ -130,6 +133,35 @@ class VirtualDocumentParser:
                     cur_end = max(cur_end, e_end)
 
         return cur_start, cur_end
+
+    def find_section_node(self, target: str) -> DocumentNode | None:
+        """Searches parsed nodes for a matching section ID, sanitized ID, title, or selector."""
+        if not target:
+            return None
+        if target in self.nodes:
+            return self.nodes[target]
+
+        s_id = sanitize_node_id(target)
+        if s_id in self.nodes:
+            return self.nodes[s_id]
+
+        if f"section_{target}" in self.nodes:
+            return self.nodes[f"section_{target}"]
+
+        if target.startswith("section_") and target[8:] in self.nodes:
+            return self.nodes[target[8:]]
+
+        t_lower = target.lower().strip()
+        for node in self.nodes.values():
+            if node.title.lower().strip() == t_lower:
+                return node
+            if node.node_id.lower().strip() == t_lower:
+                return node
+            if node.selector.lower().strip().endswith(t_lower):
+                return node
+            if Path(node.source_path).stem.lower().strip() == t_lower:
+                return node
+        return None
 
     def parse(self, entry_file: str) -> dict[str, DocumentNode]:
         """Entry point to build the tree starting from a root file."""
@@ -484,7 +516,7 @@ class VirtualDocumentParser:
             cache_key = None
 
         if cache_key and cache_key in _MARKDOWN_AST_CACHE:
-            headings, lines, content = _MARKDOWN_AST_CACHE[cache_key]
+            headings, lines, content, environments = _MARKDOWN_AST_CACHE[cache_key]
         else:
             try:
                 content = file_abs.read_text(encoding="utf-8")
@@ -493,8 +525,9 @@ class VirtualDocumentParser:
 
             lines = content.splitlines()
             headings = []
+            environments = []
 
-            # Find heading lines e.g. "## Introduction"
+            # 1. Find heading lines e.g. "## Introduction"
             for idx, line in enumerate(lines):
                 match = re.match(r"^(\#{1,6})\s+(.+)$", line)
                 if match:
@@ -516,8 +549,105 @@ class VirtualDocumentParser:
                         }
                     )
 
+            # 2. Extract structural environments: Math blocks ($$), Code blocks (``` or ~~~), and Tables
+            in_math = False
+            math_start = 1
+            in_code = False
+            code_start = 1
+            code_fence = ""
+            in_table = False
+            table_start = 1
+
+            for idx, line in enumerate(lines):
+                line_no = idx + 1
+                stripped = line.strip()
+
+                # Fenced code blocks
+                if stripped.startswith("```") or stripped.startswith("~~~"):
+                    fence = stripped[:3]
+                    if not in_code:
+                        in_code = True
+                        code_start = line_no
+                        code_fence = fence
+                    elif fence == code_fence:
+                        in_code = False
+                        environments.append(
+                            {
+                                "env_name": "code_block",
+                                "label": f"code_block_L{code_start}",
+                                "line_start": code_start,
+                                "line_end": line_no,
+                            }
+                        )
+                    continue
+
+                if in_code:
+                    continue
+
+                # Display math ($$)
+                if "$$" in stripped:
+                    count_delim = stripped.count("$$")
+                    if not in_math:
+                        if count_delim % 2 == 0 and count_delim >= 2:
+                            # Single-line display math
+                            environments.append(
+                                {
+                                    "env_name": "math_block",
+                                    "label": f"display_math_L{line_no}",
+                                    "line_start": line_no,
+                                    "line_end": line_no,
+                                }
+                            )
+                        else:
+                            in_math = True
+                            math_start = line_no
+                    else:
+                        in_math = False
+                        environments.append(
+                            {
+                                "env_name": "math_block",
+                                "label": f"display_math_L{math_start}",
+                                "line_start": math_start,
+                                "line_end": line_no,
+                            }
+                        )
+                    continue
+
+                if in_math:
+                    continue
+
+                # Markdown tables (lines starting and ending with |)
+                if stripped.startswith("|") and stripped.endswith("|") and len(stripped) > 1:
+                    if not in_table:
+                        in_table = True
+                        table_start = line_no
+                else:
+                    if in_table:
+                        in_table = False
+                        if line_no - 1 >= table_start + 1:  # Table must be at least 2 lines
+                            environments.append(
+                                {
+                                    "env_name": "table",
+                                    "label": f"table_L{table_start}",
+                                    "line_start": table_start,
+                                    "line_end": line_no - 1,
+                                }
+                            )
+
+            if in_table and len(lines) >= table_start + 1:
+                environments.append(
+                    {
+                        "env_name": "table",
+                        "label": f"table_L{table_start}",
+                        "line_start": table_start,
+                        "line_end": len(lines),
+                    }
+                )
+
             if cache_key:
-                _MARKDOWN_AST_CACHE[cache_key] = (headings, lines, content)
+                _MARKDOWN_AST_CACHE[cache_key] = (headings, lines, content, environments)
+
+        self.environments_by_file[file_rel] = environments
 
         if not headings:
             # Whole file is one node

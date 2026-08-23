@@ -1,4 +1,4 @@
-# Model Context Protocol (MCP) Tools & Resource Reference
+# Model Context Protocol (MCP) Tools & Prompts Reference
 
 `writing-context-rtfm` exposes a rich, 17-tool MCP interface designed to provide AI coding and writing agents (Claude Desktop, Cursor, Claude Code, Roo Code, Antigravity) with surgical context, section constraints, terminology auditing, and reference graph intelligence.
 
@@ -36,9 +36,10 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
 #### Parameters
 * **`task`** (*string*, required): Description of the writing or revision task.
 * **`target`** (*string*, optional): Section identifier (e.g. `section_methodology`, `subsec:hardware_eval`) or file path.
-* **`token_budget`** (*integer*, optional, default `12000`): Maximum token budget. If the non-negotiable target prose exceeds this budget, the engine automatically auto-scales to preserve atomicity.
-* **`task_type`** (*string*, optional, default `"standard"`): One of `"standard"`, `"write_new_section"`, `"revise_existing"`, `"expand_section"`, `"add_citations"`, `"synthesize"`.
+* **`token_budget`** (*integer*, optional): Maximum token budget. Defaults to the configured context budget, typically `6000`. If non-negotiable target prose exceeds a soft budget, the engine auto-scales to preserve atomicity.
+* **`task_type`** (*string*, optional): One of `"write_new_section"`, `"revise_existing_section"`, `"proofread"`, `"expand"`, `"condense"`, `"align_with_previous_sections"`, or `"review"`.
 * **`pack_mode`** (*string*, optional, default `"standard"`): Depth mode (`"minimal"`, `"standard"`, `"deep"`).
+* **`role_budgets`** (*object*, optional): Source-role fractions for `target_text`, `local_context`, `dependency`, and `reference`; values must sum to `1.0`.
 * **`strict_budget`** (*boolean*, optional, default `false`): When true, strictly caps tokens at the requested budget.
 
 #### Output Example
@@ -46,9 +47,8 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
 {
   "status": "complete",
   "task": "Draft subsection comparing latency on MCU platforms",
-  "target_section": "section_methodology",
-  "token_budget": 4000,
-  "total_tokens": 3840,
+  "target": "section_methodology",
+  "estimated_tokens": 3840,
   "document_thesis": "Parametric SLMs enable offline vehicle manual QA on MCUs.",
   "constraints": ["Write equations using LaTeX align environments"],
   "source_spans": [
@@ -58,8 +58,7 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
       "line_end": 272,
       "priority": "essential",
       "source_role": "target_text",
-      "score": 1.0,
-      "content": "..."
+      "score": 1.0
     },
     {
       "path": "references.bib",
@@ -67,8 +66,7 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
       "line_end": 286,
       "priority": "supporting",
       "source_role": "reference",
-      "score": 12.69,
-      "content": "@article{JungOptimizing2025, ...}"
+      "score": 12.69
     }
   ],
   "formatted_prompt": "You are writing/editing a manuscript section...",
@@ -83,11 +81,11 @@ Retrieves a targeted proofreading context pack for polishing, grammar correction
 
 #### Parameters
 * **`target_file`** (*string*, required): Path to the file being proofread (e.g. `access.tex`, `chapter1.md`).
-* **`line_start`** (*integer*, optional): Starting line number (1-indexed).
-* **`line_end`** (*integer*, optional): Ending line number (1-indexed).
-* **`mode`** (*string*, optional, default `"surface"`): Proofreading depth (`"surface"`, `"deep"`).
-* **`strictness`** (*string*, optional, default `"moderate"`): Rule strictness (`"lenient"`, `"moderate"`, `"strict"`).
-* **`max_tokens`** (*integer*, optional, default `3000`): Maximum token budget.
+* **`line_start`** (*integer*, required): Starting line number (1-indexed).
+* **`line_end`** (*integer*, required): Ending line number (1-indexed).
+* **`mode`** (*string*, optional, default `"surface"`): One of `"surface"`, `"academic_clarity"`, `"consistency"`, or `"latex_safe"`.
+* **`strictness`** (*string*, optional, default `"moderate"`): One of `"conservative"`, `"moderate"`, or `"assertive"`.
+* **`max_tokens`** (*integer*, optional, default `4000`): Maximum token budget.
 
 #### Safety Features
 * Extracts and catalogs all `\cite{...}`, `\ref{...}`, `\label{...}`, and math environments as **immutable tokens**.
@@ -154,11 +152,14 @@ Maps every declared `\label{...}` to its source file and line number, lists refe
 ---
 
 ### 8. `inspect_target_section`
-Provides a detailed deep-dive into an individual section card.
+Returns the effective merged section card, document title/thesis/style, and card-validation warnings. This is the read-before-write companion to the card mutation tools.
 
 #### Parameters
 * **`target`** (*string*, required): Section ID (e.g. `section_methodology`).
 * **`project_root`** (*string*, optional): Root workspace path.
+
+#### Output
+Returns section title, path, purpose, dependencies, key terms, facts that must be preserved, prohibited wording, and constraints.
 
 ---
 
@@ -171,22 +172,37 @@ Scans workspace drafts and scaffolds `.writing-context/cards.generated.yaml`.
 Lists pending candidate fields (purposes, facts, key terms, constraints) generated by deterministic scan or LLM inference.
 
 ### 11. `accept_card_candidate`
-Accepts a candidate value into `.writing-context/cards.overrides.yaml`.
+Accepts a candidate value into `.writing-context/cards.overrides.yaml` and appends an `accepted` event to the section history.
 
 ### 12. `reject_card_candidate`
-Rejects a candidate and records rejection in `.writing-context/cards.lock.json` to prevent re-extraction.
+Rejects a candidate, updates the decision snapshot, and appends a `rejected` event to `.writing-context/cards.lock.json`.
 
 ### 13. `edit_card_field`
-Directly edits or overrides a specific field in `cards.overrides.yaml`.
+Directly edits or deletes a field in `cards.overrides.yaml` and appends an `edited` or `deleted` history event.
 
 ### 14. `explain_card_candidate`
 Returns the model rationale, extraction confidence rating, and source provenance for a specific candidate value.
 
 ### 15. `get_card_field_diff`
-Calculates field-by-field diffs between generated and overridden section cards.
+Compares generated, explicit override, and effective merged values for a section card.
+
+#### Parameters
+* **`section_id`** (*string*, required): Section ID to compare.
+* **`project_root`** (*string*, optional): Root workspace path.
+
+#### Output
+Returns each field's `generated`, `override`, `effective`, `overridden`, and `changed` values plus `changed_fields`.
 
 ### 16. `get_section_card_history`
-Returns the decision history (accepted, rejected, modified) for a section card.
+Returns append-only accept, reject, edit, and delete events plus the current decision snapshot.
+
+#### Parameters
+* **`section_id`** (*string*, required): Section ID whose history should be returned.
+* **`limit`** (*integer*, optional, default `50`): Number of most-recent events, from `1` to `100`.
+* **`project_root`** (*string*, optional): Root workspace path.
+
+Older lock files remain valid and return an empty history until the first new mutation is recorded.
+The deliberately destructive `cards rebuild` command clears the lock file and its recorded history.
 
 ---
 
@@ -209,13 +225,6 @@ Clients supporting MCP Prompts (`prompts/list`, `prompts/get`) can hydrate promp
    - `target_file`: File path.
    - `line_start`: Starting line.
    - `line_end`: Ending line.
-   - `mode`: `"surface"` or `"deep"`.
+   - `mode`: `"surface"`, `"academic_clarity"`, `"consistency"`, or `"latex_safe"`.
 
----
-
-## MCP Resources
-
-* **`writing-context://config`**: The project's active `config.yaml`.
-* **`writing-context://section-cards`**: The merged section cards metadata.
-* **`writing-context://stats`**: Cache database metrics and token usage analytics.
-* **`writing-context://section/{section_id}`**: Direct inspection resource for an individual section.
+The server does not currently expose MCP resources. Section-card inspection is provided through `inspect_target_section` to avoid duplicating the same contract as both a tool and a resource.

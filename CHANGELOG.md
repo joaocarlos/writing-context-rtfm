@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+## [0.10.0] - 2026-08-23
+
+### Added
+- Implemented the documented `inspect_target_section`, `get_card_field_diff`, and `get_section_card_history` MCP tools.
+- Added append-only card mutation history for accepted, rejected, edited, and deleted values.
+- Exposed the existing strict token-budget mode through `get_writing_context_pack`.
+
+### Fixed
+- Advertised native MCP prompt support during server initialization.
+- Aligned the MCP reference with the runtime tool schemas and removed unsupported resource claims.
+
 ## [0.9.1] - 2026-08-22
 
 ### Changed

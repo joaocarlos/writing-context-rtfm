@@ -6,6 +6,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import (
     SectionCards,
     load_section_cards,
+    merge_cards,
     validate_section_cards,
 )
 from writing_context_rtfm.storage import ExtensionStore
@@ -312,6 +314,14 @@ def get_tools_list() -> dict[str, Any]:
                             ),
                             "additionalProperties": {"type": "number"},
                         },
+                        "strict_budget": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "When true, enforce token_budget as a hard cap instead of expanding "
+                                "it to preserve mandatory target context."
+                            ),
+                        },
                     },
                     "required": ["task"],
                 },
@@ -519,6 +529,24 @@ def get_tools_list() -> dict[str, Any]:
                 },
             },
             {
+                "name": "inspect_target_section",
+                "description": (
+                    "Inspect the effective metadata, purpose, constraints, terminology, and "
+                    "dependencies for one section card."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": {"type": "string", "description": "Section card ID to inspect."},
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path.",
+                        },
+                    },
+                    "required": ["target"],
+                },
+            },
+            {
                 "name": "review_card_candidates",
                 "description": "List all pending section card candidates from cards.generated.yaml with status 'generated'.",
                 "inputSchema": {
@@ -642,6 +670,55 @@ def get_tools_list() -> dict[str, Any]:
                         },
                     },
                     "required": ["section_id", "field", "value"],
+                },
+            },
+            {
+                "name": "get_card_field_diff",
+                "description": (
+                    "Compare generated, human override, and effective values for every field "
+                    "in a section card."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string",
+                            "description": "Section card ID to compare.",
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path.",
+                        },
+                    },
+                    "required": ["section_id"],
+                },
+            },
+            {
+                "name": "get_section_card_history",
+                "description": (
+                    "Return the append-only accept, reject, edit, and delete history for a "
+                    "section card, together with its current decision snapshot."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string",
+                            "description": "Section card ID whose history should be returned.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "default": 50,
+                            "minimum": 1,
+                            "maximum": 100,
+                            "description": "Maximum number of most-recent events to return.",
+                        },
+                        "project_root": {
+                            "type": "string",
+                            "description": "Optional project root path.",
+                        },
+                    },
+                    "required": ["section_id"],
                 },
             },
         ]
@@ -777,6 +854,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     line_end_val = args.get("line_end")
     pack_mode = args.get("pack_mode")
     role_budgets = args.get("role_budgets")
+    strict_budget = args.get("strict_budget")
 
     line_start = int(line_start_val) if line_start_val is not None else None
     line_end = int(line_end_val) if line_end_val is not None else None
@@ -792,6 +870,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             line_end=line_end,
             pack_mode=pack_mode,
             role_budgets=role_budgets,
+            strict_budget=strict_budget,
         )
     except Exception as e:
         logger.exception("Pack generation failed")
@@ -995,6 +1074,214 @@ def handle_get_manuscript_reference_graph(args: dict[str, Any]) -> dict[str, Any
         )
 
 
+def _load_card_data(
+    root: Path,
+) -> tuple[SectionCards, dict[str, Any], dict[str, Any], dict[str, Any], bool]:
+    """Load effective cards plus their generated, override, and lock sources."""
+    config = load_config(str(root))
+    cards_path = Path(config.section_cards.path)
+    if not cards_path.is_absolute():
+        cards_path = root / cards_path
+
+    cards = load_section_cards(str(cards_path), required=True)
+    if cards is None:  # pragma: no cover - required=True raises instead
+        raise FileNotFoundError(f"Section cards file {cards_path} not found.")
+
+    generated_path = cards_path.parent / "cards.generated.yaml"
+    overrides_path = cards_path.parent / "cards.overrides.yaml"
+    lock_path = cards_path.parent / "cards.lock.json"
+    if not generated_path.exists():
+        return cards, {}, {}, {}, False
+
+    import yaml
+
+    with open(generated_path, encoding="utf-8") as f:
+        generated = yaml.safe_load(f) or {}
+    overrides: dict[str, Any] = {}
+    if overrides_path.exists():
+        with open(overrides_path, encoding="utf-8") as f:
+            overrides = yaml.safe_load(f) or {}
+    lock: dict[str, Any] = {}
+    if lock_path.exists():
+        with open(lock_path, encoding="utf-8") as f:
+            lock = json.load(f) or {}
+    return cards, generated, overrides, lock, True
+
+
+def _section_card_values(card: Any) -> dict[str, Any]:
+    return {
+        "title": card.title,
+        "purpose": card.role,
+        "path": card.path,
+        "key_terms": card.key_terms or [],
+        "depends_on": card.depends_on or [],
+        "must_preserve": card.must_preserve or [],
+        "avoid": card.avoid or [],
+        "constraints": card.constraints or [],
+    }
+
+
+def _append_card_history(
+    section_lock: dict[str, Any],
+    *,
+    action: str,
+    field: str,
+    value: Any,
+    previous_value: Any,
+    changed: bool = True,
+) -> None:
+    history = section_lock.setdefault("history", [])
+    if not isinstance(history, list):
+        history = []
+        section_lock["history"] = history
+    history.append(
+        {
+            "action": action,
+            "field": field,
+            "value": value,
+            "previous_value": previous_value,
+            "changed": changed,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+def handle_inspect_target_section(args: dict[str, Any]) -> dict[str, Any]:
+    target_value = args.get("target")
+    if not isinstance(target_value, str) or not target_value:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: target")
+    target = target_value
+
+    try:
+        root = Path(args.get("project_root") or WORKSPACE_ROOT).resolve()
+        cards, _, _, _, _ = _load_card_data(root)
+        card = cards.sections.get(target)
+        if card is None:
+            return _error_response(ERROR_INVALID_INPUT, f"Section ID '{target}' not found.")
+        section = {"id": target, **_section_card_values(card)}
+        return _success_response(
+            {
+                "document": {
+                    "title": cards.document.title,
+                    "thesis": cards.document.thesis,
+                    "writing_style": cards.document.writing_style,
+                },
+                "section": section,
+                "warnings": validate_section_cards(cards),
+            }
+        )
+    except (FileNotFoundError, ValueError) as e:
+        return _error_response(ERROR_CONFIG, str(e), type(e).__name__)
+    except Exception as e:
+        logger.exception("Failed to inspect target section")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to inspect target section: {e}", type(e).__name__
+        )
+
+
+def handle_get_card_field_diff(args: dict[str, Any]) -> dict[str, Any]:
+    section_id_value = args.get("section_id")
+    if not isinstance(section_id_value, str) or not section_id_value:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: section_id")
+    section_id = section_id_value
+
+    try:
+        root = Path(args.get("project_root") or WORKSPACE_ROOT).resolve()
+        cards, generated, overrides, lock, is_split = _load_card_data(root)
+        effective_card = cards.sections.get(section_id)
+        if effective_card is None:
+            return _error_response(ERROR_INVALID_INPUT, f"Section ID '{section_id}' not found.")
+
+        effective_values = _section_card_values(effective_card)
+        generated_values = effective_values
+        section_overrides: dict[str, Any] = {}
+        if is_split:
+            baseline = merge_cards(generated, {}, lock).sections.get(section_id)
+            if baseline is not None:
+                generated_values = _section_card_values(baseline)
+            raw_overrides = (overrides.get("sections", {}) or {}).get(section_id, {}) or {}
+            if isinstance(raw_overrides, dict):
+                section_overrides = raw_overrides
+
+        fields: dict[str, Any] = {}
+        changed_fields: list[str] = []
+        for field, generated_value in generated_values.items():
+            override_key = "purpose" if field == "purpose" else field
+            overridden = override_key in section_overrides
+            override_value = section_overrides.get(override_key) if overridden else None
+            if field == "purpose" and not overridden and "role" in section_overrides:
+                overridden = True
+                override_value = section_overrides.get("role")
+            effective_value = effective_values[field]
+            changed = generated_value != effective_value
+            fields[field] = {
+                "generated": generated_value,
+                "override": override_value,
+                "effective": effective_value,
+                "overridden": overridden,
+                "changed": changed,
+            }
+            if changed:
+                changed_fields.append(field)
+
+        return _success_response(
+            {
+                "section_id": section_id,
+                "source_format": "split" if is_split else "legacy",
+                "fields": fields,
+                "changed_fields": changed_fields,
+            }
+        )
+    except (FileNotFoundError, ValueError) as e:
+        return _error_response(ERROR_CONFIG, str(e), type(e).__name__)
+    except Exception as e:
+        logger.exception("Failed to get card field diff")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to get card field diff: {e}", type(e).__name__
+        )
+
+
+def handle_get_section_card_history(args: dict[str, Any]) -> dict[str, Any]:
+    section_id_value = args.get("section_id")
+    if not isinstance(section_id_value, str) or not section_id_value:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: section_id")
+    section_id = section_id_value
+    try:
+        limit = int(args.get("limit", 50))
+    except (TypeError, ValueError):
+        return _error_response(ERROR_INVALID_INPUT, "limit must be an integer")
+    if limit < 1 or limit > 100:
+        return _error_response(ERROR_INVALID_INPUT, "limit must be between 1 and 100")
+
+    try:
+        root = Path(args.get("project_root") or WORKSPACE_ROOT).resolve()
+        cards, _, _, lock, _ = _load_card_data(root)
+        if section_id not in cards.sections:
+            return _error_response(ERROR_INVALID_INPUT, f"Section ID '{section_id}' not found.")
+        section_lock = (lock.get("sections", {}) or {}).get(section_id, {}) or {}
+        history = section_lock.get("history", []) or []
+        if not isinstance(history, list):
+            history = []
+        selected = history[-limit:]
+        decisions = section_lock.get("decisions", {}) or {}
+        return _success_response(
+            {
+                "section_id": section_id,
+                "history": selected,
+                "count": len(selected),
+                "total_count": len(history),
+                "decisions": decisions,
+            }
+        )
+    except (FileNotFoundError, ValueError) as e:
+        return _error_response(ERROR_CONFIG, str(e), type(e).__name__)
+    except Exception as e:
+        logger.exception("Failed to get section card history")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to get section card history: {e}", type(e).__name__
+        )
+
+
 def handle_review_card_candidates(args: dict[str, Any]) -> dict[str, Any]:
     project_root = args.get("project_root")
     try:
@@ -1193,10 +1480,17 @@ def handle_accept_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
         )
         decisions: dict[str, Any] = sec_lock.setdefault("decisions", {})
 
-        if field == "purpose":
-            decisions["purpose"] = "accepted"
-        else:
-            decisions[f"{field}:{value}"] = "accepted"
+        decision_key = "purpose" if field == "purpose" else f"{field}:{value}"
+        previous_decision = decisions.get(decision_key)
+        decisions[decision_key] = "accepted"
+        _append_card_history(
+            sec_lock,
+            action="accepted",
+            field=field,
+            value=value,
+            previous_value=previous_decision,
+            changed=previous_decision != "accepted",
+        )
 
         # Save files
         overrides_path.parent.mkdir(exist_ok=True, parents=True)
@@ -1338,10 +1632,17 @@ def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
         )
         decisions = sec_lock.setdefault("decisions", {})
 
-        if field == "purpose":
-            decisions["purpose"] = "rejected"
-        else:
-            decisions[f"{field}:{value}"] = "rejected"
+        decision_key = "purpose" if field == "purpose" else f"{field}:{value}"
+        previous_decision = decisions.get(decision_key)
+        decisions[decision_key] = "rejected"
+        _append_card_history(
+            sec_lock,
+            action="rejected",
+            field=field,
+            value=value,
+            previous_value=previous_decision,
+            changed=previous_decision != "rejected",
+        )
 
         # Save files
         with open(generated_path, "w", encoding="utf-8") as f:
@@ -1378,6 +1679,7 @@ def handle_edit_card_field(args: dict[str, Any]) -> dict[str, Any]:
     try:
         root = Path(project_root) if project_root else WORKSPACE_ROOT
         overrides_path = root / ".writing-context" / "cards.overrides.yaml"
+        lock_path = root / ".writing-context" / "cards.lock.json"
 
         import yaml
 
@@ -1393,6 +1695,8 @@ def handle_edit_card_field(args: dict[str, Any]) -> dict[str, Any]:
 
         over_sections = overrides_data.setdefault("sections", {})
         sec_over = over_sections.setdefault(section_id, {})
+        field_existed = field in sec_over
+        previous_value = sec_over.get(field)
 
         if value is None:
             # Delete field if value is null
@@ -1401,9 +1705,36 @@ def handle_edit_card_field(args: dict[str, Any]) -> dict[str, Any]:
         else:
             sec_over[field] = value
 
+        lock_data: dict[str, Any] = {"sections": {}}
+        if lock_path.exists():
+            try:
+                with open(lock_path, encoding="utf-8") as f:
+                    loaded_lock = json.load(f)
+                    if isinstance(loaded_lock, dict):
+                        lock_data = loaded_lock
+            except Exception:
+                pass
+        lock_sections: dict[str, Any] = lock_data.setdefault("sections", {})
+        sec_lock: dict[str, Any] = lock_sections.setdefault(
+            section_id, {"content_hash": "", "decisions": {}, "stale_fields": []}
+        )
+        changed = (field_existed and value is None) or (
+            value is not None and previous_value != value
+        )
+        _append_card_history(
+            sec_lock,
+            action="deleted" if value is None else "edited",
+            field=field,
+            value=value,
+            previous_value=previous_value,
+            changed=changed,
+        )
+
         overrides_path.parent.mkdir(exist_ok=True, parents=True)
         with open(overrides_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(overrides_data, f, sort_keys=False)
+        with open(lock_path, "w", encoding="utf-8") as f:
+            json.dump(lock_data, f, indent=2)
 
         # Invalidate runtime cache
         global _RUNTIME_CACHE
@@ -1546,7 +1877,7 @@ def process_message(line: str) -> str | None:
                         logger.exception(f"Failed to parse rootUri: {root_uri}")
                 result = {
                     "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
+                    "capabilities": {"tools": {}, "prompts": {}},
                     "serverInfo": {"name": "writing-context-rtfm", "version": __version__},
                 }
             elif method.startswith("notifications/"):
@@ -1771,6 +2102,8 @@ def process_message(line: str) -> str | None:
                     result = handle_get_term_context(call_args)
                 elif name == "get_manuscript_reference_graph":
                     result = handle_get_manuscript_reference_graph(call_args)
+                elif name == "inspect_target_section":
+                    result = handle_inspect_target_section(call_args)
                 elif name == "review_card_candidates":
                     result = handle_review_card_candidates(call_args)
                 elif name == "accept_card_candidate":
@@ -1781,6 +2114,10 @@ def process_message(line: str) -> str | None:
                     result = handle_edit_card_field(call_args)
                 elif name == "explain_card_candidate":
                     result = handle_explain_card_candidate(call_args)
+                elif name == "get_card_field_diff":
+                    result = handle_get_card_field_diff(call_args)
+                elif name == "get_section_card_history":
+                    result = handle_get_section_card_history(call_args)
                 else:
                     response = json.dumps(
                         {

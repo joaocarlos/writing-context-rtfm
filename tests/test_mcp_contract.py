@@ -1,13 +1,26 @@
 """Integration test simulating an MCP client to answer validation checklist."""
 
 import json
+import re
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from writing_context_rtfm.server import process_message
 
 
 class TestMCPClientValidation(unittest.TestCase):
+    def test_documented_tool_matrix_matches_runtime_catalog(self):
+        docs = Path("docs/mcp_tools_reference.md").read_text(encoding="utf-8")
+        documented = set(re.findall(r"^\| \[`([a-z_]+)`\]", docs, flags=re.MULTILINE))
+
+        req_list = {"jsonrpc": "2.0", "id": 100, "method": "tools/list"}
+        response = json.loads(process_message(json.dumps(req_list)))
+        runtime = {tool["name"] for tool in response["result"]["tools"]}
+
+        self.assertEqual(documented, runtime)
+        self.assertNotIn("writing-context://", docs)
+
     def test_checklist(self):
         # 1. Can the MCP client list get_writing_context_pack?
         req_list = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}

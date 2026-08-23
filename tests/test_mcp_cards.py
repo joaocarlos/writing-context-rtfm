@@ -134,6 +134,186 @@ class TestMCPCards(unittest.TestCase):
         self.assertIn("reject_card_candidate", tool_names)
         self.assertIn("edit_card_field", tool_names)
         self.assertIn("explain_card_candidate", tool_names)
+        self.assertIn("inspect_target_section", tool_names)
+        self.assertIn("get_card_field_diff", tool_names)
+        self.assertIn("get_section_card_history", tool_names)
+        self.assertEqual(len(tool_names), 17)
+
+    def test_initialize_advertises_tools_and_prompts(self):
+        req = {"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {}}
+        res = json.loads(process_message(json.dumps(req)))
+
+        capabilities = res["result"]["capabilities"]
+        self.assertEqual(capabilities, {"tools": {}, "prompts": {}})
+
+    def test_inspect_target_section(self):
+        req = {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "inspect_target_section",
+                "arguments": {
+                    "target": "section_intro",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res = json.loads(process_message(json.dumps(req)))
+        self.assertNotIn("isError", res.get("result", {}))
+        payload = json.loads(res["result"]["content"][0]["text"])
+
+        self.assertEqual(payload["section"]["id"], "section_intro")
+        self.assertEqual(payload["section"]["title"], "Introduction")
+        self.assertEqual(payload["section"]["purpose"], "Introduce the topic")
+        self.assertEqual(payload["section"]["path"], "sections/intro.tex")
+        self.assertEqual(payload["document"]["title"], "Test Paper")
+
+    def test_get_card_field_diff_reports_override_and_effective_value(self):
+        edit_req = {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "edit_card_field",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "field": "title",
+                    "value": "Custom Intro Title",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        process_message(json.dumps(edit_req))
+
+        diff_req = {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "get_card_field_diff",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res = json.loads(process_message(json.dumps(diff_req)))
+        self.assertNotIn("isError", res.get("result", {}))
+        payload = json.loads(res["result"]["content"][0]["text"])
+
+        title_diff = payload["fields"]["title"]
+        self.assertEqual(title_diff["generated"], "Introduction")
+        self.assertEqual(title_diff["override"], "Custom Intro Title")
+        self.assertEqual(title_diff["effective"], "Custom Intro Title")
+        self.assertTrue(title_diff["overridden"])
+        self.assertTrue(title_diff["changed"])
+        self.assertIn("title", payload["changed_fields"])
+
+    def test_section_card_history_records_mutations_in_order(self):
+        mutations = [
+            {
+                "name": "accept_card_candidate",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "field": "key_terms",
+                    "value": "FLC",
+                    "project_root": str(self.test_dir),
+                },
+            },
+            {
+                "name": "reject_card_candidate",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "field": "facts",
+                    "value": "The system is robust",
+                    "project_root": str(self.test_dir),
+                },
+            },
+            {
+                "name": "edit_card_field",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "field": "title",
+                    "value": "Revised Introduction",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        ]
+        for request_id, mutation in enumerate(mutations, start=12):
+            req = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "tools/call",
+                "params": mutation,
+            }
+            res = json.loads(process_message(json.dumps(req)))
+            self.assertNotIn("isError", res.get("result", {}))
+
+        history_req = {
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "tools/call",
+            "params": {
+                "name": "get_section_card_history",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res = json.loads(process_message(json.dumps(history_req)))
+        self.assertNotIn("isError", res.get("result", {}))
+        payload = json.loads(res["result"]["content"][0]["text"])
+
+        self.assertEqual(payload["count"], 3)
+        self.assertEqual(
+            [event["action"] for event in payload["history"]],
+            ["accepted", "rejected", "edited"],
+        )
+        self.assertTrue(all(event["created_at"] for event in payload["history"]))
+        self.assertIsNone(payload["history"][2]["previous_value"])
+
+        limited_req = {
+            "jsonrpc": "2.0",
+            "id": 16,
+            "method": "tools/call",
+            "params": {
+                "name": "get_section_card_history",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "limit": 2,
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        limited_res = json.loads(process_message(json.dumps(limited_req)))
+        limited_payload = json.loads(limited_res["result"]["content"][0]["text"])
+        self.assertEqual(limited_payload["count"], 2)
+        self.assertEqual(limited_payload["total_count"], 3)
+        self.assertEqual(
+            [event["action"] for event in limited_payload["history"]],
+            ["rejected", "edited"],
+        )
+
+    def test_section_card_history_rejects_invalid_limit(self):
+        req = {
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "tools/call",
+            "params": {
+                "name": "get_section_card_history",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "limit": 0,
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res = json.loads(process_message(json.dumps(req)))
+        self.assertTrue(res["result"]["isError"])
+        payload = json.loads(res["result"]["content"][0]["text"])
+        self.assertEqual(payload["error_code"], "invalid_input")
 
     def test_review_card_candidates(self):
         req = {
@@ -262,6 +442,23 @@ class TestMCPCards(unittest.TestCase):
         with open(self.wc_dir / "cards.overrides.yaml", encoding="utf-8") as f:
             over2 = yaml.safe_load(f)
         self.assertNotIn("title", over2["sections"]["section_intro"])
+
+        history_req = {
+            "jsonrpc": "2.0",
+            "id": 18,
+            "method": "tools/call",
+            "params": {
+                "name": "get_section_card_history",
+                "arguments": {
+                    "section_id": "section_intro",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        history_res = json.loads(process_message(json.dumps(history_req)))
+        history = json.loads(history_res["result"]["content"][0]["text"])["history"]
+        self.assertEqual([event["action"] for event in history], ["edited", "deleted"])
+        self.assertEqual(history[1]["previous_value"], "Custom Intro Title")
 
     def test_explain_card_candidate(self):
         req = {

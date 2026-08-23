@@ -8,13 +8,16 @@ This project uses `writing-context-rtfm` to supply context packs and constraints
 
 | Tool Name | When to Use | Key Arguments |
 |:---|:---|:---|
-| `get_writing_context_pack` | Before drafting, revising, or review. | `task` (query), `target` (section_id), `token_budget`, `task_type` (e.g. `"revise"`), `pack_mode` (`"minimal"`, `"standard"`, `"deep"`), `role_budgets` (JSON float overrides), `line_start`, `line_end` |
-| `get_proofreading_context_pack` | Before proofreading/editing lines. | `target_file`, `line_start`, `line_end`, `mode` (`"latex_safe"`, `"default"`) |
+| `get_writing_context_pack` | Before drafting, revising, or review. | `task`, `target`, `token_budget`, `task_type`, `pack_mode`, `role_budgets`, `strict_budget`, `line_start`, `line_end` |
+| `get_proofreading_context_pack` | Before proofreading/editing lines. | `target_file`, `line_start`, `line_end`, `mode`, `strictness`, `max_tokens` |
 | `get_term_context` | Check definitions/avoid variants for a term. | `term` (case-insensitive lookup), `project_root` |
 | `request_more_context` | Expand context when the budget was too tight. | `run_id` (from previous pack), `limit` (max 5) |
 | `submit_generation_feedback` | Log context quality evaluations. | `run_id`, `metric_name`, `metric_value`, `metric_text` |
 | `initialize_section_cards` | Scaffold YAML configs for untracked sections. | `project_root` |
 | `audit_manuscript_terminology` | Verify key terms and flag semantic drift. | `project_root` |
+| `inspect_target_section` | Read effective section metadata before changing cards. | `target`, `project_root` |
+| `get_card_field_diff` | Compare generated, overridden, and effective card values. | `section_id`, `project_root` |
+| `get_section_card_history` | Audit accepted, rejected, edited, and deleted card values. | `section_id`, `limit`, `project_root` |
 | `refresh_index` | Re-sync the RTFM index after making edits. | `project_root`, `corpus` |
 
 ---
@@ -65,4 +68,3 @@ graph TD
 3. **Verify Terms**: Call `get_term_context` to lookup definitions and avoid-terms.
 4. **Draft with surgical focus**: Use the `source_spans` categorized by `source_role`. Do not read entire raw files unless pack `status` is `"degraded"`.
 5. **Feed back**: Call `submit_generation_feedback` with `helpfulness=1.0` (helpful) or `hallucinations=1.0` to optimize caching.
-

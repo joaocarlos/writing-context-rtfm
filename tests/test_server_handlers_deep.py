@@ -2,9 +2,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import yaml
+
+from writing_context_rtfm.schemas import ContextPack
 from writing_context_rtfm.server import (
     handle_accept_card_candidate,
     handle_audit_manuscript_terminology,
@@ -86,9 +88,7 @@ sections:
                     "version": 2,
                     "document": {
                         "title": "Test Doc",
-                        "terminology": {
-                            "AI": {"definition": "Artificial Intelligence"}
-                        },
+                        "terminology": {"AI": {"definition": "Artificial Intelligence"}},
                     },
                     "sections": {
                         "section_intro": {
@@ -223,6 +223,30 @@ sections:
         data = json.loads(res["content"][0]["text"])
         self.assertIn("status", data)
 
+    @patch("writing_context_rtfm.server.ContextPackGenerator.generate")
+    def test_handle_get_writing_context_pack_forwards_strict_budget(self, mock_generate):
+        mock_generate.return_value = ContextPack(
+            task="Write intro",
+            target="section_intro",
+            document_thesis=None,
+            prior_claims=[],
+            terminology={},
+            constraints=[],
+            source_spans=[],
+            estimated_tokens=0,
+        )
+
+        res = handle_get_writing_context_pack(
+            {
+                "task": "Write intro",
+                "target": "section_intro",
+                "strict_budget": True,
+            }
+        )
+
+        self.assertNotIn("isError", res)
+        self.assertTrue(mock_generate.call_args.kwargs["strict_budget"])
+
     @patch("writing_context_rtfm.server.RTFMAdapter.sync")
     @patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter.search")
     def test_handle_get_proofreading_context_pack(self, mock_search, mock_sync):
@@ -268,6 +292,7 @@ sections:
 
         # 6. submit_generation_feedback
         from writing_context_rtfm.storage import ExtensionStore
+
         with ExtensionStore(str(self.wc_dir / "cache.sqlite")) as store:
             store.init_db()
             with store._connect() as conn:
@@ -278,7 +303,12 @@ sections:
                 conn.commit()
 
         res_fb = handle_submit_generation_feedback(
-            {"run_id": "test_run", "metric_name": "rating", "metric_value": 5.0, "metric_text": "Great context"}
+            {
+                "run_id": "test_run",
+                "metric_name": "rating",
+                "metric_value": 5.0,
+                "metric_text": "Great context",
+            }
         )
         data_fb = json.loads(res_fb["content"][0]["text"])
         self.assertEqual(data_fb["status"], "feedback_saved")
@@ -289,14 +319,18 @@ sections:
         res_prompts = json.loads(process_message(msg_prompts))
         self.assertIn("prompts", res_prompts["result"])
 
+        msg_initialize = json.dumps(
+            {"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {}}
+        )
+        res_initialize = json.loads(process_message(msg_initialize))
+        self.assertIn("prompts", res_initialize["result"]["capabilities"])
+
         # 2. resources/list and templates
         msg_res = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "resources/list"})
         res_res = json.loads(process_message(msg_res))
         self.assertEqual(res_res["result"], {"resources": []})
 
-        msg_tmpl = json.dumps(
-            {"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"}
-        )
+        msg_tmpl = json.dumps({"jsonrpc": "2.0", "id": 3, "method": "resources/templates/list"})
         res_tmpl = json.loads(process_message(msg_tmpl))
         self.assertEqual(res_tmpl["result"], {"resourceTemplates": []})
 

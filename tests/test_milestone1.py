@@ -184,6 +184,26 @@ class TestMilestone1(unittest.TestCase):
         self.assertEqual(span_20_30.line_end, 30)
         self.assertEqual(span_20_30.score, 0.6)
 
+    def test_deduplicate_spans_does_not_chain_boundary_only_overlaps(self):
+        spans = [
+            SourceSpan(
+                path="file.md",
+                line_start=start,
+                line_end=end,
+                reason=f"Chunk {start}",
+                score=0.8,
+                metadata={"snippet": "word\n" * (end - start + 1)},
+            )
+            for start, end in ((1, 100), (100, 200), (200, 300))
+        ]
+
+        merged = self.generator._deduplicate_spans(spans)
+
+        self.assertEqual(
+            [(span.line_start, span.line_end) for span in merged],
+            [(1, 100), (100, 200), (200, 300)],
+        )
+
     def test_cache_diagnostics_integration(self):
         # Mock RTFM adapter search response
         mock_result = MagicMock()

@@ -14,6 +14,33 @@ class RTFMResult:
     metadata: dict[str, Any]
 
 
+@dataclass(frozen=True, eq=False)
+class QuerySpec:
+    text: str
+    query_type: str  # task, intent, title, key_term, dep_intent, dep_title, dep_key_term, task_keyword, must_consider, thesis
+    family: str = "task"  # task, intent, terms, deps, thesis
+    weight: float = 1.0
+    is_verified: bool = True
+    metadata: dict[str, Any] | None = None
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, str):
+            return self.text == other
+        if isinstance(other, QuerySpec):
+            return (self.text, self.query_type, self.family, self.weight, self.is_verified) == (
+                other.text,
+                other.query_type,
+                other.family,
+                other.weight,
+                other.is_verified,
+            )
+        return False
+
+    def __hash__(self) -> int:
+        return hash((self.text, self.query_type, self.family, self.weight, self.is_verified))
+
+
+
 @dataclass(frozen=True)
 class SourceSpan:
     path: str
@@ -25,6 +52,9 @@ class SourceSpan:
     query: str | None = None
     metadata: dict[str, Any] | None = None
     source_role: str = "reference"  # "target_text" | "local_context" | "dependency" | "reference"
+    retrieval_score: float | None = None
+    fusion_score: float | None = None
+    structural_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +82,10 @@ class PackQuality:
     dropped_for_budget: int = 0
     truncated: bool = False
     estimated_tokens: int = 0
+    minimum_required_tokens: int | None = None
+    card_uncertainties: dict[str, Any] | None = None
+    atomic_coverage: dict[str, Any] | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)

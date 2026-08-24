@@ -18,10 +18,13 @@ class RTFMConfig:
 @dataclass(frozen=True)
 class ContextConfig:
     default_token_budget: int = 12000
+    max_token_budget: int = 32000
     reserved_generation_margin: float = 0.10
     max_search_results_per_query: int = 10
     max_source_spans: int = 35
     include_source_excerpts: bool = False
+    output_mode: str = "prompt"
+    enable_rrf: bool = False
     min_score: float = 0.01
     min_relative_score: float = 0.05
     role_budgets: dict[str, float] = field(

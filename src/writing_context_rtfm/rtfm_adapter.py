@@ -19,8 +19,11 @@ class RTFMAdapterError(Exception):
 class RTFMAdapter:
     """Wrapper around the RTFM CLI with optional direct SQLite fast-path."""
 
-    def __init__(self, project_root: str | None = None) -> None:
+    def __init__(
+        self, project_root: str | None = None, *, allow_cli_fallback: bool = True
+    ) -> None:
         self.project_root = project_root
+        self.allow_cli_fallback = allow_cli_fallback
         self.resolved_rtfm = "rtfm"
 
         resolved = shutil.which("rtfm")
@@ -79,18 +82,33 @@ class RTFMAdapter:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            sql = """
+            book_columns = {
+                str(row["name"]) for row in cursor.execute("PRAGMA table_info(books)")
+            }
+            if "path" in book_columns:
+                book_file_column = "path"
+            elif "filename" in book_columns:
+                book_file_column = "filename"
+            else:
+                raise sqlite3.DatabaseError(
+                    "RTFM books table has neither a path nor filename column"
+                )
+            corpus_clause = " AND b.corpus = ?" if "corpus" in book_columns else ""
+            sql = f"""
                 SELECT c.id, c.content, c.line_start, c.line_end, c.chapter_title,
-                       b.path AS book_file, b.title AS book_title,
+                       b.{book_file_column} AS book_file, b.title AS book_title,
                        bm25(chunks_fts) AS rank_score
                 FROM chunks_fts
                 JOIN chunks c ON chunks_fts.rowid = c.id
                 JOIN books b ON c.book_id = b.id
-                WHERE chunks_fts MATCH ?
+                WHERE chunks_fts MATCH ?{corpus_clause}
                 ORDER BY rank_score ASC
                 LIMIT ?
             """
-            cursor.execute(sql, (fts_query, limit))
+            parameters: tuple[object, ...] = (
+                (fts_query, corpus, limit) if corpus_clause else (fts_query, limit)
+            )
+            cursor.execute(sql, parameters)
             rows = cursor.fetchall()
             results = []
             for item in rows:
@@ -111,7 +129,11 @@ class RTFMAdapter:
                     )
                 )
             return results
-        except Exception:
+        except Exception as exc:
+            if not self.allow_cli_fallback:
+                raise RTFMAdapterError(
+                    f"Direct SQLite search failed for {db_path}: {exc}"
+                ) from exc
             return None
         finally:
             if conn:
@@ -123,6 +145,10 @@ class RTFMAdapter:
         direct_results = self._direct_sqlite_search(query, corpus=corpus, limit=limit)
         if direct_results is not None:
             return direct_results
+        if not self.allow_cli_fallback:
+            raise RTFMAdapterError(
+                "Direct SQLite search is unavailable and CLI fallback is disabled"
+            )
 
         cmd = [
             "rtfm",

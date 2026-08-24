@@ -8,7 +8,42 @@ document:
     avoid:
       - "real-time deployment claims without caveats"
 
+version: 1
+
+document:
+  title: "TinyML Fault Detection in Water Pump Systems"
+  thesis: "TinyML models can support fault detection and monitoring directly on water pumps using acoustic analysis."
+  writing_style:
+    tone: "academic, formal, concise"
+    avoid:
+      - "real-time deployment claims without caveats"
+
 sections:
+  section_intro:
+    title: "Introduction"
+    role: "Establish industrial context, acoustic monitoring advantages, and research motivation."
+    path: "sections/01_intro.tex"
+    key_terms:
+      - "TinyML"
+      - "acoustic monitoring"
+      - "water pump"
+    depends_on: []
+    must_preserve:
+      - "Acoustic signal analysis enables non-invasive fault diagnosis."
+    avoid: []
+
+  section_related:
+    title: "Related Work"
+    role: "Survey prior acoustic analysis and edge machine learning methods."
+    path: "sections/02_related.tex"
+    key_terms:
+      - "vibration analysis"
+      - "deep learning"
+      - "edge computing"
+    depends_on:
+      - "section_intro"
+    must_preserve: []
+    avoid: []
   section_approach:
     title: "Proposed approach"
     role: "Describe dataset, pipeline, algorithm selection, and quantization."
@@ -17,6 +52,22 @@ sections:
       - "MIMII"
       - "CNN"
       - "quantization"
-    depends_on: []
+    depends_on:
+      - "section_intro"
+    must_preserve:
+      - "Train-test split is fixed and reproducible across trials."
+    avoid: []
+
+  section_results:
+    title: "Results and Discussion"
+    role: "Report classification accuracy, latency, and memory footprint on microcontrollers."
+    path: "sections/04_results.tex"
+    key_terms:
+      - "accuracy"
+      - "F1-score"
+      - "latency"
+      - "memory footprint"
+    depends_on:
+      - "section_approach"
     must_preserve: []
     avoid: []

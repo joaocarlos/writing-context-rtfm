@@ -5,17 +5,22 @@ import hashlib
 import re
 import uuid
 from collections import defaultdict
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
-from writing_context_rtfm.hashing import compute_rtfm_fingerprint, compute_task_hash, stable_hash
+from writing_context_rtfm.hashing import (
+    compute_retrieval_fingerprint,
+    compute_task_hash,
+    stable_hash,
+)
 from writing_context_rtfm.providers.base import BaseContextProvider
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import (
     CacheDiagnostics,
     ContextPack,
     PackQuality,
+    QuerySpec,
     RTFMResult,
     SourceSpan,
 )
@@ -40,15 +45,230 @@ def _path_matches(path: str, card_path: str | None) -> bool:
     return p_norm.endswith(c_norm)
 
 
-def compute_jaccard_similarity(text_a: str, text_b: str) -> float:
-    """Compute word-level Jaccard similarity between two texts."""
-    words_a = {w for w in re.sub(r"[^\w\s]", " ", text_a.lower()).split() if len(w) >= 3}
-    words_b = {w for w in re.sub(r"[^\w\s]", " ", text_b.lower()).split() if len(w) >= 3}
+def _lexical_signature(
+    text: str, shingle_size: int = 2
+) -> tuple[set[str], set[tuple[str, ...]]]:
+    clean = re.sub(r"[^\w\s]", " ", text.lower()).split()
+    words = set(clean)
+    shingles = {
+        tuple(clean[index : index + shingle_size])
+        for index in range(len(clean) - shingle_size + 1)
+    }
+    return words, shingles
+
+
+def _signature_similarity(
+    signature_a: tuple[set[str], set[tuple[str, ...]]],
+    signature_b: tuple[set[str], set[tuple[str, ...]]],
+) -> float:
+    words_a, shingles_a = signature_a
+    words_b, shingles_b = signature_b
     if not words_a or not words_b:
         return 0.0
-    intersection = len(words_a & words_b)
-    union = len(words_a | words_b)
-    return intersection / max(1, union)
+
+    word_jac = len(words_a & words_b) / max(1, len(words_a | words_b))
+    if shingles_a and shingles_b:
+        shingle_jac = len(shingles_a & shingles_b) / max(1, len(shingles_a | shingles_b))
+    else:
+        shingle_jac = word_jac
+    return round(0.4 * word_jac + 0.6 * shingle_jac, 4)
+
+
+def compute_lexical_similarity_v2(text_a: str, text_b: str, shingle_size: int = 2) -> float:
+    """Compute character and word-shingle Jaccard similarity between two texts."""
+    return _signature_similarity(
+        _lexical_signature(text_a, shingle_size),
+        _lexical_signature(text_b, shingle_size),
+    )
+
+
+def compute_jaccard_similarity(text_a: str, text_b: str) -> float:
+    """Compute word-level Jaccard similarity between two texts."""
+    clean_a = re.sub(r"[^\w\s]", " ", text_a.lower()).split()
+    clean_b = re.sub(r"[^\w\s]", " ", text_b.lower()).split()
+    words_a = {w for w in clean_a if len(w) >= 3} or set(clean_a)
+    words_b = {w for w in clean_b if len(w) >= 3} or set(clean_b)
+    if not words_a or not words_b:
+        return 0.0
+    return round(len(words_a & words_b) / max(1, len(words_a | words_b)), 4)
+
+
+@dataclass(frozen=True)
+class AtomicObligation:
+    """One explicit piece of evidence that the returned packet must cover."""
+
+    id: str
+    kind: str
+    label: str
+
+
+_ATOM_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "with",
+}
+
+
+def _normalized_atom_text(text: str) -> str:
+    return " ".join(re.findall(r"[\w-]+", text.casefold()))
+
+
+def _atom_terms(text: str) -> set[str]:
+    return {
+        term
+        for term in re.findall(r"[\w-]+", text.casefold())
+        if term not in _ATOM_STOPWORDS and len(term) > 1
+    }
+
+
+def _extract_task_citation_keys(task: str) -> list[str]:
+    keys: list[str] = []
+    latex_pattern = r"\\[A-Za-z]*cite[A-Za-z]*(?:\[[^\]]*\])*\{([^{}]+)\}"
+    for group in re.findall(latex_pattern, task):
+        keys.extend(key.strip() for key in group.split(",") if key.strip())
+    keys.extend(
+        match.group(1)
+        for match in re.finditer(r"(?<![\w\\])@([A-Za-z0-9][\w:./+-]*)", task)
+    )
+    return list(dict.fromkeys(keys))
+
+
+def _build_atomic_obligations(
+    task: str, must_consider: list[str]
+) -> list[AtomicObligation]:
+    obligations = [
+        AtomicObligation(
+            id=f"must_consider:{index}",
+            kind="must_consider",
+            label=value.strip(),
+        )
+        for index, value in enumerate(must_consider, start=1)
+        if value.strip()
+    ]
+    obligations.extend(
+        AtomicObligation(id=f"citation:{key}", kind="citation", label=key)
+        for key in _extract_task_citation_keys(task)
+    )
+    return obligations
+
+
+def _uncovered_atomic_payload(
+    obligations: list[AtomicObligation],
+    requested_token_budget: int,
+    effective_token_budget: int,
+    minimum_coverage_tokens: int,
+) -> dict[str, object]:
+    return {
+        "required": len(obligations),
+        "covered": 0,
+        "ratio": 0.0 if obligations else 1.0,
+        "uncovered": [obligation.id for obligation in obligations],
+        "obligations": [
+            {
+                "id": obligation.id,
+                "kind": obligation.kind,
+                "label": obligation.label,
+                "covered": False,
+                "source_paths": [],
+            }
+            for obligation in obligations
+        ],
+        "requested_token_budget": requested_token_budget,
+        "effective_token_budget": effective_token_budget,
+        "expanded_for_coverage": False,
+        "minimum_coverage_tokens": minimum_coverage_tokens,
+    }
+
+
+def _obligation_matches_text(obligation: AtomicObligation, text: str) -> bool:
+    if not text:
+        return False
+    normalized_text = _normalized_atom_text(text)
+    if obligation.kind == "citation":
+        return obligation.label.casefold() in {
+            token.casefold() for token in re.findall(r"[A-Za-z0-9][\w:./+-]*", text)
+        }
+
+    normalized_label = _normalized_atom_text(obligation.label)
+    if normalized_label and normalized_label in normalized_text:
+        return True
+    required_terms = _atom_terms(obligation.label)
+    if not required_terms:
+        return False
+    present = len(required_terms & _atom_terms(text))
+    threshold = len(required_terms) if len(required_terms) <= 2 else max(
+        2, (4 * len(required_terms) + 4) // 5
+    )
+    return present >= threshold
+
+
+def _span_evidence_text(span: SourceSpan) -> str:
+    metadata = span.metadata or {}
+    parts = [
+        str(metadata.get("snippet") or ""),
+        str(metadata.get("citekey") or ""),
+        span.path,
+    ]
+    return "\n".join(part for part in parts if part)
+
+
+def _span_obligation_ids(
+    span: SourceSpan, obligations: list[AtomicObligation]
+) -> set[str]:
+    text = _span_evidence_text(span)
+    return {
+        obligation.id
+        for obligation in obligations
+        if _obligation_matches_text(obligation, text)
+    }
+
+
+def _greedy_atomic_cover(
+    candidates: list[SourceSpan],
+    obligations: list[AtomicObligation],
+    already_covered: set[str],
+) -> tuple[list[SourceSpan], dict[int, set[str]]]:
+    """Choose a compact, high-ranked set of spans without issuing more searches."""
+    span_hits = {
+        id(span): _span_obligation_ids(span, obligations) - already_covered
+        for span in candidates
+    }
+    uncovered = {obligation.id for obligation in obligations} - already_covered
+    cover: list[SourceSpan] = []
+    remaining = list(candidates)
+    while uncovered:
+        useful = [span for span in remaining if span_hits[id(span)] & uncovered]
+        if not useful:
+            break
+        best = max(
+            useful,
+            key=lambda span: (
+                len(span_hits[id(span)] & uncovered),
+                span.score,
+                -ContextPackGenerator._estimate_tokens(span),
+            ),
+        )
+        cover.append(best)
+        uncovered -= span_hits[id(best)]
+        remaining.remove(best)
+    return cover, span_hits
+
 
 
 def apply_reciprocal_rank_fusion(
@@ -56,7 +276,7 @@ def apply_reciprocal_rank_fusion(
     weights: dict[str, float] | None = None,
     k: int = 60,
 ) -> list[SourceSpan]:
-    """Fuse multiple ranked streams of SourceSpan using Reciprocal Rank Fusion (RRF)."""
+    """Fuse multiple ranked streams of SourceSpan preserving retrieval_score, fusion_score, and structural_score."""
     weights = weights or {}
     rrf_scores: dict[tuple[str, int | None, int | None, str], float] = defaultdict(float)
     span_map: dict[tuple[str, int | None, int | None, str], SourceSpan] = {}
@@ -75,17 +295,29 @@ def apply_reciprocal_rank_fusion(
     max_rrf = max(rrf_scores.values()) if rrf_scores else 1.0
     fused: list[SourceSpan] = []
     for key, base_span in span_map.items():
-        normalized_score = round(min(1.0, 0.4 + (rrf_scores[key] / max(1e-6, max_rrf)) * 0.6), 3)
+        norm_fusion = round(min(1.0, (rrf_scores[key] / max(1e-6, max_rrf))), 3)
+        struct_score: float | None
+        if base_span.source_role in ("target_text", "local_context") or base_span.priority == "essential":
+            final_score = base_span.score
+            struct_score = base_span.structural_score or base_span.score
+        else:
+            raw_retrieval = base_span.retrieval_score if base_span.retrieval_score is not None else base_span.score
+            final_score = round(0.5 * raw_retrieval + 0.5 * norm_fusion, 3)
+            struct_score = base_span.structural_score
+
         updated_span = SourceSpan(
             path=base_span.path,
             line_start=base_span.line_start,
             line_end=base_span.line_end,
             reason=base_span.reason,
-            score=normalized_score,
+            score=final_score,
             priority=base_span.priority,
             query=base_span.query,
             metadata=base_span.metadata,
             source_role=base_span.source_role,
+            retrieval_score=base_span.retrieval_score if base_span.retrieval_score is not None else base_span.score,
+            fusion_score=norm_fusion,
+            structural_score=struct_score,
         )
         fused.append(updated_span)
 
@@ -94,12 +326,19 @@ def apply_reciprocal_rank_fusion(
 
 
 def apply_mmr_diversity(spans: list[SourceSpan], lambda_param: float = 0.75) -> list[SourceSpan]:
-    """Re-rank candidate spans using Maximal Marginal Relevance (MMR) for semantic diversity."""
+    """Re-rank candidate spans using Maximal Marginal Relevance (MMR) for lexical/semantic diversity."""
     if len(spans) <= 1:
         return spans
 
     selected: list[SourceSpan] = []
     remaining = list(spans)
+    snippets = {id(span): str((span.metadata or {}).get("snippet", "")) for span in spans}
+    signatures = {
+        span_id: _lexical_signature(snippet)
+        for span_id, snippet in snippets.items()
+        if snippet
+    }
+    similarity_cache: dict[tuple[int, int], float] = {}
 
     remaining.sort(key=lambda s: -s.score)
     selected.append(remaining.pop(0))
@@ -108,21 +347,28 @@ def apply_mmr_diversity(spans: list[SourceSpan], lambda_param: float = 0.75) -> 
         best_score = -float("inf")
         best_idx = 0
 
-        for i, cand in enumerate(remaining):
-            cand_snippet = (cand.metadata or {}).get("snippet", "")
+        for idx, cand in enumerate(remaining):
+            cand_id = id(cand)
+            cand_snippet = snippets[cand_id]
             max_sim = 0.0
-            if cand_snippet:
-                for sel in selected:
-                    sel_snippet = (sel.metadata or {}).get("snippet", "")
-                    if sel_snippet:
-                        sim = compute_jaccard_similarity(cand_snippet, sel_snippet)
-                        if sim > max_sim:
-                            max_sim = sim
+            for sel in selected:
+                sel_id = id(sel)
+                sel_snippet = snippets[sel_id]
+                if cand_snippet and sel_snippet:
+                    pair = (min(cand_id, sel_id), max(cand_id, sel_id))
+                    sim = similarity_cache.get(pair)
+                    if sim is None:
+                        sim = _signature_similarity(signatures[cand_id], signatures[sel_id])
+                        similarity_cache[pair] = sim
+                else:
+                    sim = 1.0 if cand.path == sel.path else 0.0
+                if sim > max_sim:
+                    max_sim = sim
 
-            mmr_score = (lambda_param * cand.score) - ((1.0 - lambda_param) * max_sim)
-            if mmr_score > best_score:
-                best_score = mmr_score
-                best_idx = i
+            mmr_val = lambda_param * cand.score - (1.0 - lambda_param) * max_sim
+            if mmr_val > best_score:
+                best_score = mmr_val
+                best_idx = idx
 
         selected.append(remaining.pop(best_idx))
 
@@ -256,44 +502,56 @@ class ContextPackGenerator:
         task_type: str | None = None,
         pack_mode: str | None = None,
         has_line_range: bool = False,
-    ) -> tuple[list[str], SectionCard | None, list[SectionCard], dict[str, str]]:
-        """Returns (queries, target_card, dep_cards, query_type_map).
-
-        query_type_map maps each query string to one of:
-          'task'         — the raw task string
-          'title'        — target section title
-          'key_term'     — a key term from section cards (scoped to target file)
-          'dep_title'    — dependency section title
-          'task_keyword' — keyword extracted from raw task
-          'must_consider'— explicit user override
-          'thesis'       - document thesis
-        """
+    ) -> tuple[list[QuerySpec], SectionCard | None, list[SectionCard], dict[str, str]]:
+        """Returns (query_specs, target_card, dep_cards, query_type_map)."""
+        specs: list[QuerySpec] = []
         queries: list[str] = []
         query_type_map: dict[str, str] = {}
         target_card: SectionCard | None = None
         dep_cards: list[SectionCard] = []
 
-        def _add(q: str, qtype: str) -> None:
-            if q and q not in query_type_map:
-                queries.append(q)
-                query_type_map[q] = qtype
-
-        # 1. Raw task
-        _add(task, "task")
-
-        # 2. Document thesis (if review)
-        if task_type == "review" and self.section_cards and self.section_cards.document.thesis:
-            _add(self.section_cards.document.thesis, "thesis")
+        unverified_terms_set: set[str] = set()
+        unverified_deps_set: set[str] = set()
 
         if self.section_cards and target and target in self.section_cards.sections:
             target_card = self.section_cards.sections[target]
+            unverified_terms_set = set(target_card.unverified_key_terms or [])
+            unverified_deps_set = set(target_card.unverified_dependencies or [])
 
+        def _add(
+            q: str,
+            qtype: str,
+            family: str = "task",
+            weight: float = 1.0,
+            is_verified: bool = True,
+        ) -> None:
+            if q and q not in query_type_map:
+                queries.append(q)
+                query_type_map[q] = qtype
+                specs.append(
+                    QuerySpec(
+                        text=q,
+                        query_type=qtype,
+                        family=family,
+                        weight=weight,
+                        is_verified=is_verified,
+                    )
+                )
+
+        # 1. Raw task
+        _add(task, "task", family="task", weight=1.0, is_verified=True)
+
+        # 2. Document thesis (if review)
+        if task_type == "review" and self.section_cards and self.section_cards.document.thesis:
+            _add(self.section_cards.document.thesis, "thesis", family="thesis", weight=0.9, is_verified=True)
+
+        if target_card:
             # 3. Target section intent, title, and key terms (skip key terms if minimal or line range exists)
             if not has_line_range and pack_mode != "minimal":
                 if target_card.role:
-                    _add(target_card.role, "intent")
+                    _add(target_card.role, "intent", family="intent", weight=0.95, is_verified=True)
                 if target_card.title:
-                    _add(target_card.title, "title")
+                    _add(target_card.title, "title", family="intent", weight=0.9, is_verified=True)
 
                 # Align with previous sections scales down target key terms
                 if task_type == "align_with_previous_sections":
@@ -304,38 +562,43 @@ class ContextPackGenerator:
                     max_kt = 6
 
                 for kt in (target_card.key_terms or [])[:max_kt]:
-                    _add(kt, "key_term")
+                    is_ver = kt not in unverified_terms_set
+                    kt_weight = 0.85 if is_ver else 0.65
+                    _add(kt, "key_term", family="terms", weight=kt_weight, is_verified=is_ver)
             elif not has_line_range and pack_mode == "minimal":
                 if target_card.role:
-                    _add(target_card.role, "intent")
+                    _add(target_card.role, "intent", family="intent", weight=0.95, is_verified=True)
                 if target_card.title:
-                    _add(target_card.title, "title")
+                    _add(target_card.title, "title", family="intent", weight=0.9, is_verified=True)
 
             # 4. Dependency section intents, titles and key terms (skip key terms if minimal)
             for dep_id in target_card.depends_on or []:
-                if dep_id in self.section_cards.sections:
+                if self.section_cards and dep_id in self.section_cards.sections:
                     dep_card = self.section_cards.sections[dep_id]
                     dep_cards.append(dep_card)
+                    dep_is_ver = dep_id not in unverified_deps_set
+                    dep_weight = 0.85 if dep_is_ver else 0.65
                     if dep_card.role:
-                        _add(dep_card.role, "dep_intent")
+                        _add(dep_card.role, "dep_intent", family="deps", weight=dep_weight, is_verified=dep_is_ver)
                     if dep_card.title:
-                        _add(dep_card.title, "dep_title")
+                        _add(dep_card.title, "dep_title", family="deps", weight=dep_weight * 0.95, is_verified=dep_is_ver)
 
                     if pack_mode != "minimal":
                         max_dep_kt = 6 if pack_mode == "deep" else 3
                         for kt in (dep_card.key_terms or [])[:max_dep_kt]:
-                            _add(kt, "dep_key_term")
+                            _add(kt, "dep_key_term", family="deps", weight=0.75, is_verified=True)
 
         # 5. Task keywords (skip if minimal or review)
         if pack_mode != "minimal" and task_type != "review":
             for kw in extract_keywords(task):
-                _add(kw, "task_keyword")
+                _add(kw, "task_keyword", family="task", weight=0.7, is_verified=True)
 
         # 6. Explicit must-consider
         for mc in must_consider:
-            _add(mc, "must_consider")
+            _add(mc, "must_consider", family="task", weight=1.0, is_verified=True)
 
-        return queries, target_card, dep_cards, query_type_map
+        return specs, target_card, dep_cards, query_type_map
+
 
     # -----------------------------------------------------------------------
     # Deduplication
@@ -367,9 +630,26 @@ class ContextPackGenerator:
                 curr_start = span.line_start or 1
                 curr_end = span.line_end or curr_start
 
-                # Overlap or adjacency check:
-                # If current interval starts within or adjacent to previous interval
-                if curr_start <= prev_end + 1:
+                overlap_lines = max(
+                    0,
+                    min(prev_end, curr_end) - max(prev_start, curr_start) + 1,
+                )
+                shorter_span_lines = min(
+                    prev_end - prev_start + 1,
+                    curr_end - curr_start + 1,
+                )
+                overlap_ratio = overlap_lines / max(1, shorter_span_lines)
+                roles = {prev.source_role, span.source_role}
+                is_target_context_union = roles == {"target_text", "local_context"}
+                is_adjacent_or_overlapping = curr_start <= prev_end + 1
+
+                # Merge duplicates and meaningfully overlapping chunks, but do not
+                # transitively chain large retrieved spans that merely share a boundary
+                # line. Target text and its deliberately adjacent local context remain
+                # one structural span.
+                if overlap_ratio >= 0.25 or (
+                    is_target_context_union and is_adjacent_or_overlapping
+                ):
                     new_end = max(prev_end, curr_end)
 
                     # Combine reasons
@@ -442,6 +722,22 @@ class ContextPackGenerator:
                     )
 
                     # Replace the last element with the merged span
+                    merged_retrieval = (
+                        max(prev.retrieval_score or 0.0, span.retrieval_score or 0.0)
+                        if (prev.retrieval_score is not None or span.retrieval_score is not None)
+                        else None
+                    )
+                    merged_fusion = (
+                        max(prev.fusion_score or 0.0, span.fusion_score or 0.0)
+                        if (prev.fusion_score is not None or span.fusion_score is not None)
+                        else None
+                    )
+                    merged_structural = (
+                        max(prev.structural_score or 0.0, span.structural_score or 0.0)
+                        if (prev.structural_score is not None or span.structural_score is not None)
+                        else None
+                    )
+
                     current_merged[-1] = SourceSpan(
                         path=path,
                         line_start=prev_start,
@@ -452,7 +748,11 @@ class ContextPackGenerator:
                         query=combined_query,
                         metadata=merged_meta,
                         source_role=merged_role,
+                        retrieval_score=merged_retrieval,
+                        fusion_score=merged_fusion,
+                        structural_score=merged_structural,
                     )
+
                 else:
                     current_merged.append(span)
 
@@ -554,12 +854,17 @@ class ContextPackGenerator:
         pack_mode: str | None = None,
         role_budgets: dict[str, float] | None = None,
         strict_budget: bool | None = None,
+        output_mode: str | None = None,
     ) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
         task_type = task_type or "write_new_section"
         pack_mode = pack_mode or "standard"
         is_strict = strict_budget if strict_budget is not None else (pack_mode == "minimal")
+        output_mode = str(
+            output_mode or getattr(self.config.context, "output_mode", "prompt") or "prompt"
+        )
+        obligations = _build_atomic_obligations(task, must_consider)
 
         # Apply pack mode defaults / overrides
         if pack_mode == "minimal":
@@ -594,10 +899,14 @@ class ContextPackGenerator:
             task,
             target,
             token_budget,
+            must_consider=must_consider,
             task_type=task_type,
             line_start=line_start,
             line_end=line_end,
             pack_mode=pack_mode,
+            strict_budget=is_strict,
+            role_budgets=role_budgets,
+            output_mode=output_mode,
         )
 
         # Calculate real config file content hash
@@ -609,12 +918,18 @@ class ContextPackGenerator:
         sc_fallback = stable_hash(str(self.section_cards.version) if self.section_cards else "none")
         sc_hash = self._get_file_hash(sc_path, sc_fallback)
 
-        # Compute real RTFM database fingerprint based on mtime and size
+        # Compute combined retrieval fingerprint (RTFM DB + provider fingerprints)
         rtfm_db = resolve_rtfm_db_path(Path(self.config.rtfm.project_root))
-        fingerprint = compute_rtfm_fingerprint(rtfm_db)
+        provider_fps = []
+        for p in self.providers:
+            with contextlib.suppress(Exception):
+                fp = p.get_fingerprint(self.config)
+                if fp:
+                    provider_fps.append(f"{p.provider_id}:{fp}")
+        retrieval_fingerprint = compute_retrieval_fingerprint(rtfm_db, provider_fps)
 
         if self.config.cache.enabled:
-            cached = self.store.get_cached_pack(task_hash, config_hash, sc_hash, fingerprint)
+            cached = self.store.get_cached_pack(task_hash, config_hash, sc_hash, retrieval_fingerprint)
             if cached:
                 spans = [SourceSpan(**s) for s in cached.get("source_spans", [])]
                 cd_data = cached.get("cache")
@@ -629,7 +944,7 @@ class ContextPackGenerator:
                         task_hash=task_hash,
                         config_hash=config_hash,
                         section_cards_hash=sc_hash,
-                        rtfm_index_fingerprint=fingerprint,
+                        rtfm_index_fingerprint=retrieval_fingerprint,
                     )
                 return ContextPack(
                     task=cached["task"],
@@ -654,7 +969,6 @@ class ContextPackGenerator:
         resolved_key, target_card, target_path = self._resolve_target(target, pr)
 
         all_candidates: list[SourceSpan] = []
-        lines_prepended = False
         initial_token_budget = token_budget
         has_explicit_line_range = line_start is not None and line_end is not None
 
@@ -673,9 +987,9 @@ class ContextPackGenerator:
                     num_lines = len(lines)
 
                     # Case A: Explicit line range requested
-                    if has_explicit_line_range:
-                        start = max(1, min(line_start, num_lines))  # type: ignore[arg-type]
-                        end = max(1, min(line_end, num_lines))  # type: ignore[arg-type]
+                    if line_start is not None and line_end is not None:
+                        start = max(1, min(line_start, num_lines))
+                        end = max(1, min(line_end, num_lines))
                         if start > end:
                             start, end = end, start
 
@@ -686,6 +1000,7 @@ class ContextPackGenerator:
                             line_end=end,
                             reason="Target text range",
                             score=1.0,
+                            structural_score=1.0,
                             priority="essential",
                             source_role="target_text",
                             metadata={"snippet": target_snippet},
@@ -704,6 +1019,7 @@ class ContextPackGenerator:
                                     line_end=ctx_end,
                                     reason="Surrounding target context (before)",
                                     score=0.9,
+                                    structural_score=0.9,
                                     priority="supporting",
                                     source_role="local_context",
                                     metadata={"snippet": before_snippet},
@@ -722,12 +1038,12 @@ class ContextPackGenerator:
                                     line_end=ctx_end,
                                     reason="Surrounding target context (after)",
                                     score=0.9,
+                                    structural_score=0.9,
                                     priority="supporting",
                                     source_role="local_context",
                                     metadata={"snippet": after_snippet},
                                 )
                             )
-                        lines_prepended = True
 
                     # Case B: Target section specified without line numbers -> Atomically extract target section
                     elif target is not None:
@@ -751,12 +1067,12 @@ class ContextPackGenerator:
                                 line_end=end,
                                 reason=f"Target section text (unbroken: {target_card.title if target_card and target_card.title else target})",
                                 score=1.0,
+                                structural_score=1.0,
                                 priority="essential",
                                 source_role="target_text",
                                 metadata={"snippet": target_snippet},
                             )
                             all_candidates.append(target_span)
-                            lines_prepended = True
                 else:
                     if has_explicit_line_range:
                         warnings.append(
@@ -768,8 +1084,129 @@ class ContextPackGenerator:
                 if has_explicit_line_range:
                     status = "degraded"
 
-        # --- Query expansion (Fix 4) ---
-        queries, target_card, dep_cards, query_type_map = self._build_queries(
+        # --- Baseline Tokens & Strict Overflow Check (Stop before retrieval) ---
+        essential_tokens = sum(
+            self._estimate_tokens(s)
+            for s in all_candidates
+            if s.source_role in ("target_text", "local_context") or s.priority == "essential"
+        )
+        thesis_text = (
+            (self.section_cards.document.thesis if self.section_cards and self.section_cards.document else "")
+            or ""
+        )
+        constraints_text = " ".join(target_card.constraints if target_card and target_card.constraints else [])
+        baseline_tokens = essential_tokens + self._estimate_tokens(
+            SourceSpan(
+                path="",
+                line_start=0,
+                line_end=0,
+                reason="",
+                score=1.0,
+                metadata={"snippet": f"{thesis_text} {constraints_text}"},
+            )
+        ) + 150
+
+        if is_strict and baseline_tokens > token_budget:
+            quality.minimum_required_tokens = baseline_tokens
+            quality.reason = "budget_too_small_for_atomic_target"
+            quality.atomic_coverage = _uncovered_atomic_payload(
+                obligations,
+                initial_token_budget,
+                token_budget,
+                baseline_tokens,
+            )
+            quality.dropped_for_budget = 0
+            quality.truncated = False
+            quality.selected_count = 0
+            overflow_msg = (
+                f"The atomic target section requires a minimum of {baseline_tokens} tokens, "
+                f"which exceeds the strict token_budget of {token_budget}. "
+                f"Please retry with token_budget >= {baseline_tokens}."
+            )
+            warnings.append(overflow_msg)
+            run_id = str(uuid.uuid4())
+            return ContextPack(
+                task=task,
+                target=target,
+                document_thesis=self.section_cards.document.thesis if self.section_cards and self.section_cards.document else None,
+                prior_claims=[],
+                terminology={},
+                constraints=target_card.constraints if target_card and target_card.constraints else [],
+                source_spans=[],
+                estimated_tokens=0,
+                status="degraded",
+                warnings=warnings,
+                quality=asdict(quality),
+                summary=overflow_msg,
+                run_id=run_id,
+                cache=CacheDiagnostics(
+                    enabled=self.config.cache.enabled,
+                    hit=False,
+                    task_hash=task_hash,
+                    config_hash=config_hash,
+                    section_cards_hash=sc_hash,
+                    rtfm_index_fingerprint=retrieval_fingerprint,
+                ),
+                task_type=task_type,
+                pack_mode=pack_mode,
+            )
+
+        if not is_strict:
+            max_budget = getattr(self.config.context, "max_token_budget", 32000)
+            if baseline_tokens > max_budget:
+                quality.minimum_required_tokens = baseline_tokens
+                quality.reason = "budget_too_small_for_atomic_target"
+                quality.atomic_coverage = _uncovered_atomic_payload(
+                    obligations,
+                    initial_token_budget,
+                    max_budget,
+                    baseline_tokens,
+                )
+                quality.dropped_for_budget = 0
+                quality.truncated = False
+                quality.selected_count = 0
+                overflow_msg = (
+                    f"The atomic target section requires a minimum of {baseline_tokens} tokens, "
+                    f"which exceeds the maximum configured token budget of {max_budget}. "
+                    f"Please retry with max_token_budget >= {baseline_tokens}."
+                )
+                warnings.append(overflow_msg)
+                run_id = str(uuid.uuid4())
+                return ContextPack(
+                    task=task,
+                    target=target,
+                    document_thesis=self.section_cards.document.thesis if self.section_cards and self.section_cards.document else None,
+                    prior_claims=[],
+                    terminology={},
+                    constraints=target_card.constraints if target_card and target_card.constraints else [],
+                    source_spans=[],
+                    estimated_tokens=0,
+                    status="degraded",
+                    warnings=warnings,
+                    quality=asdict(quality),
+                    summary=overflow_msg,
+                    run_id=run_id,
+                    cache=CacheDiagnostics(
+                        enabled=self.config.cache.enabled,
+                        hit=False,
+                        task_hash=task_hash,
+                        config_hash=config_hash,
+                        section_cards_hash=sc_hash,
+                        rtfm_index_fingerprint=retrieval_fingerprint,
+                    ),
+                    task_type=task_type,
+                    pack_mode=pack_mode,
+                )
+            elif token_budget < baseline_tokens:
+                auto_budget = min(max_budget, int(baseline_tokens * 1.2) + 500)
+                warnings.append(
+                    f"Note: The retrieved context ({baseline_tokens} tokens) exceeded the requested budget ({initial_token_budget}). "
+                    f"Auto-expanded token budget from {initial_token_budget} to {auto_budget} to accommodate unbroken target section and reference elements."
+                )
+                token_budget = auto_budget
+
+        # --- Query expansion & telemetry ---
+        query_specs, target_card, dep_cards, query_type_map = self._build_queries(
             task,
             resolved_key or target,
             must_consider,
@@ -777,53 +1214,124 @@ class ContextPackGenerator:
             pack_mode=pack_mode,
             has_line_range=has_explicit_line_range,
         )
+        queries = [qs.text for qs in query_specs]
         quality.queries_issued = len(queries)
+        quality.card_uncertainties = {
+            "unverified_key_terms": list(target_card.unverified_key_terms or []) if target_card else [],
+            "unverified_dependencies": list(target_card.unverified_dependencies or []) if target_card else [],
+        }
 
-        # --- Retrieval ---
-        for q in queries:
+        # --- Retrieval & Stream Fusion ---
+        stream_candidates: dict[str, list[SourceSpan]] = defaultdict(list)
+        enable_rrf = getattr(self.config.context, "enable_rrf", False)
+        active_providers = [
+            provider for provider in self.providers if provider.is_available(self.config)
+        ]
+        structured_bibtex_active = any(
+            provider.provider_id == "bibtex" for provider in active_providers
+        )
+
+        for i, qs in enumerate(query_specs):
+            q = qs.text
+            stream_key = f"query_{qs.family}_{i}"
             try:
                 results = self.adapter.search(
                     q,
                     corpus=self.config.rtfm.corpus,
                     limit=self.config.context.max_search_results_per_query,
                 )
-                for r in results:
-                    if not is_allowed_source(r.path):  # Fix 2
+                for retrieval_rank, r in enumerate(results, start=1):
+                    if structured_bibtex_active and Path(r.path).suffix.lower() == ".bib":
                         quality.discarded_excluded_path += 1
                         continue
-                    # Combined scoring with query-type scoping
-                    query_type = query_type_map.get(q, "task_keyword")
+                    if not is_allowed_source(r.path):
+                        quality.discarded_excluded_path += 1
+                        continue
+                    query_type = qs.query_type
+                    raw_score = r.score if r.score is not None else 0.5
                     score = self._compute_final_score(
-                        r, target_card, dep_cards, must_consider, q, query_type, task_type=task_type
-                    )
+                        r,
+                        target_card,
+                        dep_cards,
+                        must_consider,
+                        q,
+                        query_type,
+                        task_type=task_type,
+                        target_line_start=line_start,
+                        target_line_end=line_end,
+                        retrieval_rank=retrieval_rank,
+                    ) * qs.weight
                     span = SourceSpan(
                         path=r.path,
                         line_start=r.line_start,
                         line_end=r.line_end,
                         reason=self._build_reason(r, target_card, dep_cards, query_type, q),
                         score=score,
+                        retrieval_score=raw_score,
                         query=q,
-                        metadata={**(r.metadata or {}), "snippet": r.snippet},
+                        metadata={
+                            **(r.metadata or {}),
+                            "snippet": r.snippet,
+                            "retrieval_rank": retrieval_rank,
+                        },
                     )
-                    all_candidates.append(span)
+                    stream_candidates[stream_key].append(span)
+                    if not enable_rrf:
+                        all_candidates.append(span)
             except Exception as e:
                 warnings.append(f"Search failed for query '{q}': {e}")
 
         # --- Providers Context Retrieval ---
-        for provider in self.providers:
-            if provider.is_available(self.config):
+        provider_role_budgets = dict(self.config.context.role_budgets)
+        if role_budgets:
+            provider_role_budgets.update(role_budgets)
+        provider_limit = max(
+            0,
+            min(
+                max_spans,
+                int(max_spans * provider_role_budgets.get("reference", 0.0)),
+            ),
+        )
+        for provider in active_providers:
+            if provider_limit:
                 try:
                     p_spans = provider.fetch_context(
                         queries,
                         target,
-                        limit=max_spans,
+                        limit=provider_limit,
                         query_type_map=query_type_map,
                         task_type=task_type,
                     )
-                    all_candidates.extend(p_spans)
+                    stream_key = f"provider_{provider.provider_id}"
+                    for ps in p_spans:
+                        span_with_scores = replace(
+                            ps,
+                            retrieval_score=ps.retrieval_score if ps.retrieval_score is not None else ps.score,
+                            metadata={
+                                **(ps.metadata or {}),
+                                "provider_id": provider.provider_id,
+                            },
+                        )
+                        stream_candidates[stream_key].append(span_with_scores)
+                        if not enable_rrf:
+                            all_candidates.append(span_with_scores)
                 except Exception as e:
                     warnings.append(f"Provider '{provider.provider_id}' failed: {e}")
                     status = "degraded"
+
+        # Apply multi-stream RRF when enabled
+        if enable_rrf and stream_candidates:
+            family_weights = {"task": 1.0, "intent": 0.9, "terms": 0.8, "deps": 0.8, "thesis": 0.8}
+            stream_weights = {}
+            for sk in stream_candidates:
+                weight = 1.0
+                for fam, w in family_weights.items():
+                    if f"_{fam}_" in sk:
+                        weight = w
+                        break
+                stream_weights[sk] = weight
+            fused_spans = apply_reciprocal_rank_fusion(stream_candidates, weights=stream_weights)
+            all_candidates.extend(fused_spans)
 
         # --- 1-Hop Reference Graph Resolution (Figures, Equations, Tables, Subsections) ---
         if target_card and target_path:
@@ -846,7 +1354,7 @@ class ContextPackGenerator:
                                     f_abs = Path(pr) / file_rel
                                     if f_abs.is_file():
                                         f_lines = f_abs.read_text(
-                                            encoding="utf-8", errors="replace"
+                                             encoding="utf-8", errors="replace"
                                         ).splitlines()
                                         e_start = max(1, env.get("line_start", 1))
                                         e_end = min(len(f_lines), env.get("line_end", e_start))
@@ -857,6 +1365,7 @@ class ContextPackGenerator:
                                             line_end=e_end,
                                             reason=f"Referenced {env.get('env_name', 'element')} (\\ref{{{ref_label}}})",
                                             score=0.92,
+                                            structural_score=0.92,
                                             priority="supporting",
                                             source_role="dependency",
                                             metadata={
@@ -881,34 +1390,47 @@ class ContextPackGenerator:
                 if span.path not in doc_parser_snap.environments_by_file:
                     with contextlib.suppress(Exception):
                         doc_parser_snap.parse(span.path)
+
                 snapped_start, snapped_end = doc_parser_snap.snap_to_environment(
                     span.path, span.line_start, span.line_end
                 )
-                if snapped_start != span.line_start or snapped_end != span.line_end:
+                if (snapped_start, snapped_end) != (span.line_start, span.line_end):
                     f_abs = Path(pr) / span.path
+                    new_snippet = None
                     if f_abs.is_file():
                         with contextlib.suppress(Exception):
                             f_lines = f_abs.read_text(
                                 encoding="utf-8", errors="replace"
                             ).splitlines()
-                            meta = dict(span.metadata or {})
-                            meta["snippet"] = "\n".join(f_lines[snapped_start - 1 : snapped_end])
-                            snapped_candidates.append(
-                                replace(
-                                    span,
-                                    line_start=snapped_start,
-                                    line_end=snapped_end,
-                                    metadata=meta,
-                                )
-                            )
-                            continue
-            snapped_candidates.append(span)
-        all_candidates = snapped_candidates
+                            new_snippet = "\n".join(f_lines[snapped_start - 1 : snapped_end])
 
-        quality.candidate_count = len(all_candidates)
+                    updated_meta = dict(span.metadata or {})
+                    if new_snippet is not None:
+                        updated_meta["snippet"] = new_snippet
 
-        # --- Dedup ---
-        deduped = self._deduplicate_spans(all_candidates)
+                    snapped_candidates.append(
+                        SourceSpan(
+                            path=span.path,
+                            line_start=snapped_start,
+                            line_end=snapped_end,
+                            reason=span.reason + " [AST snapped]",
+                            score=span.score,
+                            priority=span.priority,
+                            query=span.query,
+                            metadata=updated_meta,
+                            source_role=span.source_role,
+                            retrieval_score=span.retrieval_score,
+                            fusion_score=span.fusion_score,
+                            structural_score=span.structural_score,
+                        )
+                    )
+                else:
+                    snapped_candidates.append(span)
+            else:
+                snapped_candidates.append(span)
+
+        # --- Deduplication ---
+        deduped = self._deduplicate_spans(snapped_candidates)
 
         # --- Score filtering ---
         filtered, discarded_count = self._filter_by_score(deduped, target_card, dep_cards)
@@ -923,7 +1445,7 @@ class ContextPackGenerator:
         if role_budgets:
             resolved_budgets.update(role_budgets)
 
-        # --- Classify priority and roles BEFORE selection so we have source_role populated ---
+        # --- Classify priority and roles BEFORE selection ---
         filtered = self._classify_priority(
             filtered,
             target_card,
@@ -933,10 +1455,10 @@ class ContextPackGenerator:
             line_end=line_end,
         )
 
-        # --- Apply MMR Diversity Re-ranking to suppress repetitive literature/background ---
+        # --- Apply MMR Diversity Re-ranking ---
         filtered = apply_mmr_diversity(filtered, lambda_param=0.75)
 
-        # Prioritize essential target text spans at the top of candidate list
+        # Prioritize essential target text spans at the top
         filtered = sorted(
             filtered,
             key=lambda s: (
@@ -945,41 +1467,80 @@ class ContextPackGenerator:
             ),
         )
 
-        # --- Elastic Budget Auto-Scaling (Phase 3) ---
-        essential_tokens = sum(
-            self._estimate_tokens(s)
-            for s in filtered
-            if s.source_role in ("target_text", "local_context") or s.priority == "essential"
+        # --- Atomic evidence coverage (single pass; no retrieval retry loop) ---
+        fixed_packet_parts = [
+            str((span.metadata or {}).get("snippet") or "")
+            for span in filtered
+            if span.source_role == "target_text"
+        ]
+        if self.section_cards and self.section_cards.document.thesis:
+            fixed_packet_parts.append(self.section_cards.document.thesis)
+        if target_card:
+            fixed_packet_parts.extend(target_card.constraints or [])
+            fixed_packet_parts.extend(target_card.must_preserve or [])
+        for dep_card in dep_cards:
+            for fact in dep_card.verified_facts or []:
+                fixed_packet_parts.append(
+                    str(fact.get("value") if isinstance(fact, dict) else fact)
+                )
+        fixed_packet_text = "\n".join(fixed_packet_parts)
+        fixed_covered = {
+            obligation.id
+            for obligation in obligations
+            if _obligation_matches_text(obligation, fixed_packet_text)
+        }
+        atomic_cover, atomic_hits = _greedy_atomic_cover(
+            filtered, obligations, fixed_covered
         )
-        thesis_text = (
-            (self.section_cards.document.thesis if self.section_cards and self.section_cards.document else "")
-            or ""
+        atomic_span_ids = {id(span) for span in atomic_cover}
+        original_order = {id(span): rank for rank, span in enumerate(filtered)}
+        filtered = sorted(
+            filtered,
+            key=lambda span: (
+                0
+                if span.priority == "essential" or span.source_role == "target_text"
+                else (1 if id(span) in atomic_span_ids else 2),
+                original_order[id(span)],
+            ),
         )
-        constraints_text = " ".join(target_card.constraints if target_card and target_card.constraints else [])
-        baseline_tokens = essential_tokens + self._estimate_tokens(
-            SourceSpan(
-                path="",
-                line_start=0,
-                line_end=0,
-                reason="",
-                score=1.0,
-                metadata={"snippet": f"{thesis_text} {constraints_text}"},
-            )
-        ) + 150
 
-        if token_budget < baseline_tokens and not is_strict:
-            auto_budget = int(baseline_tokens * 1.2) + 500
-            warnings.append(
-                f"Note: The retrieved context ({baseline_tokens} tokens) exceeded the requested budget ({initial_token_budget}). "
-                f"Auto-expanded token budget from {initial_token_budget} to {auto_budget} to accommodate unbroken target section and reference elements."
-            )
-            token_budget = auto_budget
+        expanded_for_coverage = False
+        required_atomic_spans = [
+            span
+            for span in filtered
+            if span.source_role == "target_text" or id(span) in atomic_span_ids
+        ]
+        minimum_atomic_tokens = sum(
+            self._estimate_tokens(span) for span in required_atomic_spans
+        )
+        if not is_strict and minimum_atomic_tokens > token_budget:
+            max_budget = getattr(self.config.context, "max_token_budget", 32000)
+            effective_budget = min(max_budget, minimum_atomic_tokens)
+            if effective_budget > token_budget:
+                previous_budget = token_budget
+                token_budget = effective_budget
+                expanded_for_coverage = True
+                warnings.append(
+                    "Note: Atomic evidence coverage expanded the token budget once "
+                    f"from {previous_budget} to {token_budget} tokens "
+                    f"(configured maximum: {max_budget})."
+                )
+        filtered_order = {id(span): rank for rank, span in enumerate(filtered)}
 
         # --- Token budget selection ---
         usable_budget = int(token_budget * (1.0 - self.config.context.reserved_generation_margin))
         selected: list[SourceSpan] = []
         current_tokens = 0
         tokens_by_role = dict.fromkeys(resolved_budgets, 0)
+        provider_reference_tokens = 0
+        provider_reference_limit = int(
+            resolved_budgets.get("reference", 0.0) * usable_budget
+        )
+
+        def is_provider_reference(span: SourceSpan) -> bool:
+            return span.source_role == "reference" and bool(
+                (span.metadata or {}).get("provider_id")
+            )
 
         # Pass 1: Strict allocation based on role fractions (soft guidance)
         pass2_candidates: list[SourceSpan] = []
@@ -991,11 +1552,13 @@ class ContextPackGenerator:
             if len(selected) < max_spans and tokens_by_role.get(role, 0) + est <= role_limit:
                 selected.append(span)
                 tokens_by_role[role] = tokens_by_role.get(role, 0) + est
+                if is_provider_reference(span):
+                    provider_reference_tokens += est
                 current_tokens += est
             else:
                 pass2_candidates.append(span)
 
-        # Pass 2: Fill remaining spans up to max_spans
+        # Pass 2: Fill remaining spans up to max_spans with strict ceiling bounding
         budget_dropped = 0
         cap_truncated = False
         for span in pass2_candidates:
@@ -1005,19 +1568,85 @@ class ContextPackGenerator:
                 continue
 
             est = self._estimate_tokens(span)
-            if is_strict:
-                if (current_tokens + est <= token_budget) or (len(selected) == 0):
-                    selected.append(span)
-                    current_tokens += est
-                    tokens_by_role[span.source_role] = tokens_by_role.get(span.source_role, 0) + est
-                else:
-                    budget_dropped += 1
-            else:
+            role_limit = int(resolved_budgets.get(span.source_role, 0.0) * usable_budget)
+            if (
+                is_strict
+                and is_provider_reference(span)
+                and provider_reference_tokens + est > provider_reference_limit
+            ):
+                budget_dropped += 1
+                continue
+            fits_budget = current_tokens + est <= token_budget
+            if not fits_budget and not is_strict and not selected:
+                max_budget = getattr(self.config.context, "max_token_budget", 32000)
+                if est <= max_budget:
+                    previous_budget = token_budget
+                    token_budget = est
+                    fits_budget = True
+                    warnings.append(
+                        f"Note: The retrieved context ({est} tokens) exceeded the requested "
+                        f"budget ({previous_budget}). Auto-expanded token budget once to "
+                        f"{token_budget} tokens (configured maximum: {max_budget})."
+                    )
+            if fits_budget:
                 selected.append(span)
                 current_tokens += est
                 tokens_by_role[span.source_role] = tokens_by_role.get(span.source_role, 0) + est
+                if is_provider_reference(span):
+                    provider_reference_tokens += est
+            else:
+                budget_dropped += 1
 
-        if current_tokens > token_budget or cap_truncated or (is_strict and budget_dropped > 0):
+        quality.dropped_for_budget = budget_dropped
+        quality.truncated = cap_truncated or (budget_dropped > 0)
+        quality.selected_count = len(selected)
+        selected.sort(key=lambda span: filtered_order[id(span)])
+
+        selected_paths_by_obligation: dict[str, list[str]] = {
+            obligation.id: [] for obligation in obligations
+        }
+        covered_ids = set(fixed_covered)
+        for span in selected:
+            for obligation_id in atomic_hits.get(id(span), set()):
+                covered_ids.add(obligation_id)
+                selected_paths_by_obligation[obligation_id].append(span.path)
+        obligation_records = [
+            {
+                "id": obligation.id,
+                "kind": obligation.kind,
+                "label": obligation.label,
+                "covered": obligation.id in covered_ids,
+                "source_paths": list(
+                    dict.fromkeys(selected_paths_by_obligation[obligation.id])
+                ),
+            }
+            for obligation in obligations
+        ]
+        uncovered_ids = [
+            obligation.id for obligation in obligations if obligation.id not in covered_ids
+        ]
+        quality.atomic_coverage = {
+            "required": len(obligations),
+            "covered": len(covered_ids),
+            "ratio": round(len(covered_ids) / len(obligations), 4)
+            if obligations
+            else 1.0,
+            "uncovered": uncovered_ids,
+            "obligations": obligation_records,
+            "requested_token_budget": initial_token_budget,
+            "effective_token_budget": token_budget,
+            "expanded_for_coverage": expanded_for_coverage,
+            "minimum_coverage_tokens": minimum_atomic_tokens,
+        }
+        if uncovered_ids:
+            quality.reason = "atomic_coverage_incomplete"
+            warnings.append(
+                "Atomic evidence coverage is incomplete for "
+                f"{', '.join(uncovered_ids)}. Use request_more_context or a direct-read "
+                "of the target dependencies before drafting."
+            )
+
+        if current_tokens > token_budget or cap_truncated or budget_dropped > 0:
             if current_tokens > token_budget:
                 msg = f"Note: The retrieved context ({current_tokens} tokens) exceeded the requested budget ({token_budget}). All highly-relevant spans up to max_spans were included to prevent context bloat."
                 warnings.append(msg)
@@ -1025,12 +1654,10 @@ class ContextPackGenerator:
                 warnings.append(
                     f"{budget_dropped} candidate span(s) were dropped because the max_source_spans={max_spans} cap was reached."
                 )
-            elif is_strict and budget_dropped > 0 and current_tokens <= token_budget:
+            elif budget_dropped > 0 and current_tokens <= token_budget:
                 warnings.append(
                     f"{budget_dropped} candidate span(s) were dropped to strictly respect the token budget ({current_tokens}/{token_budget} tokens)."
                 )
-
-        quality.selected_count = len(selected)
 
         # LaTeX safety layer scanning
         latex_commands = []
@@ -1049,7 +1676,7 @@ class ContextPackGenerator:
                 f"and must not be modified or deleted: {', '.join(unique_latex)}"
             )
 
-        # --- Build pack metadata ---
+        # --- Build pack metadata & prior claims ---
         constraints: list[str] = []
         doc_thesis: str | None = None
         if self.section_cards:
@@ -1058,11 +1685,23 @@ class ContextPackGenerator:
                 constraints.extend(target_card.constraints or [])
                 constraints.extend(target_card.must_preserve or [])
 
-        # Include constraint serialization in token estimate so clients can
-        # budget downstream generation accurately.
+        # Include constraint serialization in token estimate
         constraint_tokens = estimate_tokens("\n".join(constraints)) if constraints else 0
         if doc_thesis:
             constraint_tokens += estimate_tokens(doc_thesis)
+
+        # Populate prior claims from dependency verified facts with section provenance
+        prior_claims: list[str] = []
+        for dc in dep_cards:
+            if dc.verified_facts:
+                for vf in dc.verified_facts:
+                    fact_val = vf.get("value") if isinstance(vf, dict) else str(vf)
+                    claim_str = f"[{dc.id}] {fact_val}"
+                    if claim_str not in prior_claims:
+                        prior_claims.append(claim_str)
+
+        if prior_claims:
+            constraint_tokens += estimate_tokens("\n".join(prior_claims))
 
         terminology_pack: dict[str, str] = {}
         if (
@@ -1115,7 +1754,7 @@ class ContextPackGenerator:
             task=task,
             target=target,
             document_thesis=doc_thesis,
-            prior_claims=[],
+            prior_claims=prior_claims,
             terminology=terminology_pack,
             constraints=constraints,
             source_spans=selected,
@@ -1131,7 +1770,7 @@ class ContextPackGenerator:
                 task_hash=task_hash,
                 config_hash=config_hash,
                 section_cards_hash=sc_hash,
-                rtfm_index_fingerprint=fingerprint,
+                rtfm_index_fingerprint=retrieval_fingerprint,
             ),
             task_type=task_type,
             pack_mode=pack_mode,
@@ -1147,7 +1786,8 @@ class ContextPackGenerator:
                 "token_budget": token_budget,
                 "config_hash": config_hash,
                 "section_cards_hash": sc_hash,
-                "rtfm_index_fingerprint": fingerprint,
+                "rtfm_index_fingerprint": retrieval_fingerprint,
+                "retrieval_fingerprint": retrieval_fingerprint,
             }
             payload = asdict(pack)
 
@@ -1178,18 +1818,36 @@ class ContextPackGenerator:
         query: str,
         query_type: str = "task",
         task_type: str | None = None,
+        target_line_start: int | None = None,
+        target_line_end: int | None = None,
+        retrieval_rank: int | None = None,
     ) -> float:
+
         score = 0.0
         path_lower = result.path.replace("\\", "/").lower()
         content = result.snippet or ""
         metadata = result.metadata or {}
 
         is_target_file = _path_matches(result.path, target_card.path if target_card else None)
+        if (
+            is_target_file
+            and target_line_start is not None
+            and target_line_end is not None
+            and result.line_start is not None
+            and result.line_end is not None
+        ):
+            local_start = max(1, target_line_start - 15)
+            local_end = target_line_end + 15
+            is_target_file = max(local_start, result.line_start) <= min(
+                local_end, result.line_end
+            )
         is_dep_file = any(_path_matches(result.path, dc.path) for dc in dep_cards)
 
         # RTFM semantic relevance (weight 1.0)
         rtfm_score = result.score or 0.0
         score += 1.0 * rtfm_score
+        if retrieval_rank is not None and retrieval_rank > 0:
+            score += 0.1 / retrieval_rank
 
         # Key-term scoping penalty: if this query is a key_term and the result
         # is NOT from the target or dependency file, penalize heavily.

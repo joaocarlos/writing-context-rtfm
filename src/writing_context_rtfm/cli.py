@@ -1092,7 +1092,9 @@ def main() -> None:
     parser_pack.add_argument("--target", help="Target section ID")
     parser_pack.add_argument("--budget", type=int, default=6000, help="Token budget")
     parser_pack.add_argument(
-        "--must-consider", nargs="*", help="Explicit files or concepts to consider"
+        "--must-consider",
+        nargs="*",
+        help="Required concepts, facts, literals, or citation keys the context must cover",
     )
     parser_pack.add_argument(
         "--task-type",

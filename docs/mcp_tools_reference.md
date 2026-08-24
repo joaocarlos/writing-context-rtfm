@@ -24,7 +24,9 @@
 | [`explain_card_candidate`](#14-explain_card_candidate) | Retrieve model rationale, confidence, and provenance for a candidate. | Card Management |
 | [`get_card_field_diff`](#15-get_card_field_diff) | Inspect changes between generated and overridden section cards. | Card Management |
 | [`get_section_card_history`](#16-get_section_card_history) | View modification history and candidate decisions for a section. | Card Management |
-| [`refresh_index`](#17-refresh_index) | Re-sync RTFM retrieval index and invalidate stale cache entries. | Maintenance |
+| [`get_target_feedback_summary`](#17-get_target_feedback_summary) | Retrieve aggregated feedback metrics for a target section for offline inspection. | Evaluation |
+| [`refresh_index`](#18-refresh_index) | Re-sync RTFM retrieval index and invalidate stale cache entries. | Maintenance |
+
 
 ---
 
@@ -37,10 +39,13 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
 * **`task`** (*string*, required): Description of the writing or revision task.
 * **`target`** (*string*, optional): Section identifier (e.g. `section_methodology`, `subsec:hardware_eval`) or file path.
 * **`token_budget`** (*integer*, optional): Maximum token budget. Defaults to the configured context budget, typically `6000`. If non-negotiable target prose exceeds a soft budget, the engine auto-scales to preserve atomicity.
+* **`must_consider`** (*array of strings*, optional): Required evidence atoms. Add each concrete concept, fact, protected literal, or citation key that the returned context must support. The pack reports coverage in `quality.atomic_coverage`.
 * **`task_type`** (*string*, optional): One of `"write_new_section"`, `"revise_existing_section"`, `"proofread"`, `"expand"`, `"condense"`, `"align_with_previous_sections"`, or `"review"`.
 * **`pack_mode`** (*string*, optional, default `"standard"`): Depth mode (`"minimal"`, `"standard"`, `"deep"`).
 * **`role_budgets`** (*object*, optional): Source-role fractions for `target_text`, `local_context`, `dependency`, and `reference`; values must sum to `1.0`.
 * **`strict_budget`** (*boolean*, optional, default `false`): When true, strictly caps tokens at the requested budget.
+
+With the default elastic budget, the selector expands at most once—never through an open-ended retrieval loop—and never beyond `context.max_token_budget`. It first reserves evidence for required atoms and then fills remaining space by relevance. If the ceiling prevents full coverage, the result is degraded and names the uncovered atom IDs.
 
 #### Output Example
 ```json
@@ -49,6 +54,17 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
   "task": "Draft subsection comparing latency on MCU platforms",
   "target": "section_methodology",
   "estimated_tokens": 3840,
+  "quality": {
+    "atomic_coverage": {
+      "required": 2,
+      "covered": 2,
+      "ratio": 1.0,
+      "uncovered": [],
+      "requested_token_budget": 3000,
+      "effective_token_budget": 3840,
+      "expanded_for_coverage": true
+    }
+  },
   "document_thesis": "Parametric SLMs enable offline vehicle manual QA on MCUs.",
   "constraints": ["Write equations using LaTeX align environments"],
   "source_spans": [
@@ -206,10 +222,19 @@ The deliberately destructive `cards rebuild` command clears the lock file and it
 
 ---
 
+### 17. `get_target_feedback_summary`
+Retrieve aggregated feedback metrics for a target section for offline inspection and evaluation.
+
+#### Parameters
+* **`target`** (*string*, required): Target section ID (e.g. `section_methodology`).
+
+---
+
 ## 5. Maintenance & Indexing Tools
 
-### 17. `refresh_index`
+### 18. `refresh_index`
 Triggers an index synchronization and clears cached context packs.
+
 
 ---
 

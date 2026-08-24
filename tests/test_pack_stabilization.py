@@ -1,6 +1,7 @@
 """Stabilization tests for context_pack.py fixes."""
 
 import unittest
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.config import load_config
@@ -142,6 +143,90 @@ class TestSourceExclusion(unittest.TestCase):
 
 
 class TestScoreFiltering(unittest.TestCase):
+    def test_single_file_target_boost_is_scoped_to_explicit_range(self):
+        gen, _, _ = make_generator()
+        target_card = replace(
+            gen.section_cards.sections["section_approach"], path="main.tex"
+        )
+        inside = make_result("main.tex", 100, 110, 1.0, snippet="target evidence")
+        outside = make_result("main.tex", 400, 410, 1.0, snippet="unrelated section")
+
+        inside_score = gen._compute_final_score(
+            inside,
+            target_card,
+            [],
+            [],
+            "write target",
+            target_line_start=100,
+            target_line_end=110,
+        )
+        outside_score = gen._compute_final_score(
+            outside,
+            target_card,
+            [],
+            [],
+            "write target",
+            target_line_start=100,
+            target_line_end=110,
+        )
+
+        assert inside_score == 1.8
+        assert outside_score == 1.0
+
+    def test_retrieval_rank_breaks_equal_score_ties(self):
+        gen, _, _ = make_generator()
+        result = make_result("sections/04_results.tex", 1, 5, 1.0, snippet="evidence")
+
+        first_score = gen._compute_final_score(
+            result,
+            None,
+            [],
+            [],
+            "write target",
+            retrieval_rank=1,
+        )
+        eighth_score = gen._compute_final_score(
+            result,
+            None,
+            [],
+            [],
+            "write target",
+            retrieval_rank=8,
+        )
+
+        assert first_score > eighth_score
+
+    def test_quota_backfill_restores_ranked_output_order(self):
+        gen, _, _ = make_generator()
+        gen.adapter.search.return_value = [
+            make_result(
+                "sections/high.tex",
+                1,
+                20,
+                1.0,
+                snippet="high relevance " * 100,
+            ),
+            make_result(
+                "sections/low.tex",
+                1,
+                5,
+                0.5,
+                snippet="lower relevance " * 20,
+            ),
+        ]
+
+        pack = gen.generate(
+            task="write evidence",
+            target=None,
+            token_budget=1000,
+            strict_budget=True,
+        )
+
+        assert [span.path for span in pack.source_spans[:2]] == [
+            "sections/high.tex",
+            "sections/low.tex",
+        ]
+
     def test_near_zero_noise_discarded(self):
         gen, config, _ = make_generator()
         gen.adapter.search.return_value = [
@@ -187,11 +272,12 @@ class TestScoreFiltering(unittest.TestCase):
         gen, config, _ = make_generator()
         gen.adapter.search.return_value = [
             make_result("sections/03_approach.tex", 5, 11, 2.5, snippet="MIMII dataset"),
-            make_result("sections/01_intro.tex", 1, 5, 0.000001, snippet="intro text"),
-            make_result("sections/02_related.tex", 1, 8, 0.000001, snippet="related"),
+            make_result("sections/02_related.tex", 1, 5, 0.000001, snippet="intro text"),
+            make_result("sections/99_misc.tex", 1, 8, 0.000001, snippet="misc"),
         ]
         pack = gen.generate(task="write methodology", target="section_approach", token_budget=1000)
         assert pack.quality["discarded_low_score"] >= 2
+
 
 
 # ---------------------------------------------------------------------------

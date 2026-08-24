@@ -217,6 +217,9 @@ We do **not** replace or fork RTFM. We wrap it. RTFM is built to fetch memory. `
 ### 1. Unbroken Target Atomicity & Elastic Auto-Scaling
 When writing or revising a specific section, the extension extracts the contiguous, unbroken target text as highest-priority (`essential`) context. If the requested token budget is too small to fit the mandatory target text and constraints, the generator automatically scales the budget to fit the essential context and returns `"status": "complete"` with an informative notice, preventing severed prompts.
 
+### 1a. Coverage-First Retrieval
+Pass concrete required evidence through `must_consider`. Each item becomes an atomic obligation, and citation keys explicitly present in the task become citation obligations. The selector reserves the smallest high-ranked set of spans that covers those atoms before adding ordinary background. In elastic mode it may increase the budget once, up to `context.max_token_budget`; it never starts an unbounded retrieve-and-expand loop. Inspect `quality.atomic_coverage` before drafting. Missing atoms produce a degraded result and a direct-read/`request_more_context` warning.
+
 ### 2. AST-Aware Environment Snapping (LaTeX & Markdown)
 Retrieved source slices are automatically checked against document ASTs. If a chunk boundary intersects an equation (`equation`, `align`, `$$...$$`), table (`tabular`, Markdown pipe table), code fence (` ``` ` / `~~~`), figure, or algorithm environment, the boundary automatically snaps outward to preserve the entire syntactic block.
 

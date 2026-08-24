@@ -11,6 +11,10 @@ from writing_context_rtfm.schemas import SourceSpan
 
 logger = logging.getLogger("mcp-server")
 
+_ENTRY_HEADER = re.compile(
+    r"@(?P<type>[a-zA-Z]+)\s*(?P<open>[{(])\s*(?P<key>[^,\s]+)\s*,",
+)
+
 
 @dataclass
 class BibEntry:
@@ -69,19 +73,52 @@ def parse_bibtex_file(file_path: Path) -> dict[str, BibEntry]:
         logger.warning(f"Failed to read BibTeX file {file_path}: {e}")
         return entries
 
-    # Match @type{citekey, ... }
-    # Use regex scanning across entries
-    pattern = re.compile(
-        r"@(?P<type>[a-zA-Z]+)\s*\{\s*(?P<key>[^,\s]+)\s*,\s*(?P<body>.*?)\n\s*\}",
-        re.DOTALL,
-    )
-
-    for match in pattern.finditer(content):
+    for match in _ENTRY_HEADER.finditer(content):
         entry_type = match.group("type").strip().lower()
         if entry_type in ("comment", "preamble", "string"):
             continue
         citekey = match.group("key").strip()
-        body = match.group("body")
+        opener = match.group("open")
+        closer = "}" if opener == "{" else ")"
+        depth = 1
+        curly_depth = 0
+        quoted = False
+        escaped = False
+        entry_end: int | None = None
+        for index in range(match.end(), len(content)):
+            char = content[index]
+            if escaped:
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == '"' and curly_depth == 0:
+                quoted = not quoted
+                continue
+            if quoted:
+                continue
+            if opener == "{":
+                if char == opener:
+                    depth += 1
+                elif char == closer:
+                    depth -= 1
+            else:
+                if char == "{":
+                    curly_depth += 1
+                elif char == "}" and curly_depth:
+                    curly_depth -= 1
+                elif curly_depth == 0 and char == opener:
+                    depth += 1
+                elif curly_depth == 0 and char == closer:
+                    depth -= 1
+            if depth == 0:
+                entry_end = index
+                break
+        if entry_end is None:
+            logger.warning("Unterminated BibTeX entry %s in %s", citekey, file_path)
+            continue
+        body = content[match.end() : entry_end]
 
         fields: dict[str, str] = {}
         # Parse fields: name = {value} or name = "value" or name = 123
@@ -105,7 +142,7 @@ def parse_bibtex_file(file_path: Path) -> dict[str, BibEntry]:
             entry_type=entry_type,
             citekey=citekey,
             fields=fields,
-            raw=match.group(0),
+            raw=content[match.start() : entry_end + 1],
         )
 
     return entries
@@ -134,6 +171,24 @@ class BibTeXProvider(BaseContextProvider):
         except Exception:
             return False
 
+    def get_fingerprint(self, config: AppConfig) -> str | None:
+        """Compute stable fingerprint based on mtime and size of all bib files."""
+        if not self.is_available(config):
+            return None
+        bib_files = self._find_bib_files()
+        if not bib_files:
+            return "no-bibtex-files"
+        parts = []
+        for bf in sorted(bib_files):
+            try:
+                st = bf.stat()
+                parts.extend([bf.name, str(st.st_mtime_ns), str(st.st_size)])
+            except OSError:
+                parts.append(bf.name)
+        from writing_context_rtfm.hashing import stable_hash
+        return stable_hash("bibtex", *parts)
+
+
     def _find_bib_files(self) -> list[Path]:
         root = Path(self.config.rtfm.project_root)
         provider_cfg = self.config.providers.get("bibtex")
@@ -161,6 +216,32 @@ class BibTeXProvider(BaseContextProvider):
             all_entries.update(entries)
         return all_entries
 
+    def _section_text(self, root: Path, section_id: str, path: str) -> str:
+        """Read one card section, falling back to whole-file text only for section fragments."""
+        file_path = root / path
+        if not file_path.is_file():
+            return ""
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        try:
+            from writing_context_rtfm.virtual_doc import VirtualDocumentParser
+
+            parser = VirtualDocumentParser(str(root))
+            parser.parse(path)
+            node = parser.find_section_node(section_id)
+            if node is not None:
+                source = (root / node.source_path).read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                return source[node.char_start : node.char_end]
+        except Exception as exc:
+            logger.debug("Could not resolve BibTeX section %s: %s", section_id, exc)
+        if re.search(r"\\(?:part|chapter|section|subsection|subsubsection)\*?\{", text):
+            return ""
+        return text
+
     def fetch_context(
         self,
         queries: list[str],
@@ -178,7 +259,7 @@ class BibTeXProvider(BaseContextProvider):
 
         # 1. Parse citation keys from target file and dependencies
         cite_keys: list[str] = []
-        target_files: list[Path] = []
+        target_sections: list[tuple[str, str]] = []
 
         try:
             from writing_context_rtfm.section_cards import load_section_cards
@@ -191,30 +272,31 @@ class BibTeXProvider(BaseContextProvider):
         if cards and target and target in cards.sections:
             target_card = cards.sections[target]
             if target_card.path:
-                target_files.append(root / target_card.path)
+                target_sections.append((target, target_card.path))
             for dep_id in target_card.depends_on or []:
                 if dep_id in cards.sections:
                     dep_card = cards.sections[dep_id]
                     if dep_card.path:
-                        target_files.append(root / dep_card.path)
+                        target_sections.append((dep_id, dep_card.path))
 
-        for fpath in target_files:
-            if fpath.is_file():
-                try:
-                    content = fpath.read_text(encoding="utf-8", errors="replace")
-                    # LaTeX \cite{...}
-                    for match in re.findall(r"\\cite(?:[a-zA-Z]*)\{([^}]+)\}", content):
-                        for k in match.split(","):
-                            clean_k = k.strip()
-                            if clean_k and clean_k not in cite_keys:
-                                cite_keys.append(clean_k)
-                    # Markdown [@key]
-                    for match in re.findall(r"@([a-zA-Z0-9_\-]+)", content):
-                        clean_k = match.strip()
+        for section_id, path in target_sections:
+            try:
+                content = self._section_text(root, section_id, path)
+                # LaTeX \cite{...}
+                for match in re.findall(r"\\cite(?:[a-zA-Z]*)\{([^}]+)\}", content):
+                    for k in match.split(","):
+                        clean_k = k.strip()
                         if clean_k and clean_k not in cite_keys:
                             cite_keys.append(clean_k)
-                except Exception as e:
-                    logger.warning(f"BibTeXProvider failed to extract citations from {fpath}: {e}")
+                # Markdown [@key]
+                for match in re.findall(r"@([a-zA-Z0-9_\-]+)", content):
+                    clean_k = match.strip()
+                    if clean_k and clean_k not in cite_keys:
+                        cite_keys.append(clean_k)
+            except Exception as e:
+                logger.warning(
+                    "BibTeXProvider failed to extract citations from %s: %s", path, e
+                )
 
         # Resolve explicit citation keys
         for key in cite_keys:
@@ -227,7 +309,7 @@ class BibTeXProvider(BaseContextProvider):
                         line_start=None,
                         line_end=None,
                         reason=f"BibTeX reference for citation key '{key}'",
-                        score=0.95,
+                        score=0.9,
                         priority="supporting",
                         source_role="reference",
                         metadata={"snippet": entry.format_snippet(), "citekey": key},
@@ -253,8 +335,11 @@ class BibTeXProvider(BaseContextProvider):
                     f"{entry.citekey} {entry.title} {entry.author} {entry.abstract}".lower()
                 )
                 matches = sum(1 for w in query_words if w in searchable)
-                if matches > 0:
-                    score = round(min(0.9, 0.5 + (matches / max(1, len(query_words))) * 0.4), 3)
+                if matches >= 2 and matches / max(1, len(query_words)) >= 0.25:
+                    score = round(
+                        min(0.8, 0.25 + (matches / max(1, len(query_words))) * 0.55),
+                        3,
+                    )
                     scored_entries.append((score, key, entry))
 
             scored_entries.sort(key=lambda x: x[0], reverse=True)

@@ -75,6 +75,25 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
             token = store.get_provider_token("openai_semantic")
             return bool(token)
 
+    def get_fingerprint(self, config: AppConfig) -> str | None:
+        """Return fingerprint incorporating model name and embedding store state."""
+        if not self.is_available(config):
+            return None
+        extra = self._get_provider_extra()
+        model = extra.get("model", "text-embedding-3-small")
+        try:
+            with ExtensionStore(config.cache.path) as store:
+                stats = store.get_openai_embeddings_stats(model)
+                from writing_context_rtfm.hashing import stable_hash
+                return stable_hash(
+                    "openai_semantic",
+                    model,
+                    str(stats.get("count", 0)),
+                    str(stats.get("latest_updated") or ""),
+                )
+        except Exception:
+            return f"openai_semantic-{model}"
+
     def _get_api_key(self, store: Any) -> str | None:
         return os.environ.get("OPENAI_API_KEY") or store.get_provider_token("openai_semantic")
 
@@ -83,11 +102,15 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         if not self.is_available(self.config):
             return
 
-        missing = store.get_missing_openai_chunks(rtfm_db_path)
+        extra = self._get_provider_extra()
+        model = extra.get("model", "text-embedding-3-small")
+
+        missing = store.get_missing_openai_chunks(rtfm_db_path, model=model)
         if not missing:
             return
 
-        logger.info(f"OpenAI Semantic Sync: {len(missing)} missing chunks to embed.")
+        logger.info(f"OpenAI Semantic Sync: {len(missing)} missing chunks to embed for model {model}.")
+
         extra = self._get_provider_extra()
         model = extra.get("model", "text-embedding-3-small")
         batch_size = 100

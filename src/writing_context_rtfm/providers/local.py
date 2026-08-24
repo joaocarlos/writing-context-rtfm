@@ -26,6 +26,19 @@ class ZoteroProvider(BaseContextProvider):
             and provider_cfg.mcp_server is not None
         )
 
+    def get_fingerprint(self, config: AppConfig) -> str | None:
+        """Return lightweight revision token or fingerprint for Zotero provider if configured."""
+        if not self.is_available(config):
+            return None
+        provider_cfg = config.providers.get("zotero")
+        extra_cfg = (provider_cfg.extra or {}) if provider_cfg else {}
+        revision = extra_cfg.get("revision_token") or extra_cfg.get("library_version")
+        if revision:
+            from writing_context_rtfm.hashing import stable_hash
+            return stable_hash("zotero", str(revision))
+        return None
+
+
     def fetch_context(
         self,
         queries: list[str],

@@ -1,10 +1,15 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from writing_context_rtfm import token_budget
 from writing_context_rtfm.token_budget import estimate_span_tokens, estimate_tokens
 
 
 class TestTokenBudget(unittest.TestCase):
+    def test_tokenizer_initialization_error_uses_offline_fallback(self):
+        with patch("tiktoken.get_encoding", side_effect=OSError("offline")):
+            self.assertIsNone(token_budget._load_encoding())
+
     def test_estimate_span_tokens(self):
         # Default behavior: 15 tokens per line
         # 1 line (start=10, end=10)

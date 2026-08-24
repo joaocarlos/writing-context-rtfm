@@ -10,7 +10,7 @@ from writing_context_rtfm.config import (
 )
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.providers.base import BaseContextProvider
-from writing_context_rtfm.schemas import ProviderConfig, SourceSpan
+from writing_context_rtfm.schemas import ProviderConfig, RTFMResult, SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 
 
@@ -23,6 +23,7 @@ class MockContextProvider(BaseContextProvider):
         self._raise_error = raise_error
         self.spans = spans or []
         self.fetch_context_called = False
+        self.last_limit = None
 
     @property
     def provider_id(self) -> str:
@@ -36,9 +37,10 @@ class MockContextProvider(BaseContextProvider):
         self, queries, target, limit, query_type_map=None, task_type="write_new_section"
     ):
         self.fetch_context_called = True
+        self.last_limit = limit
         if self._raise_error:
             raise RuntimeError("Mock provider failure")
-        return self.spans
+        return self.spans[:limit]
 
 
 class TestProvidersBase(unittest.TestCase):
@@ -168,6 +170,88 @@ class TestProvidersBase(unittest.TestCase):
         self.assertTrue(
             any("exceeded the requested budget" in w for w in pack_small_budget.warnings)
         )
+
+    def test_strict_budget_hard_caps_reference_role_and_provider_count(self):
+        references = [
+            SourceSpan(
+                path=f"bibtex:key-{index}",
+                line_start=None,
+                line_end=None,
+                reason="Structured reference",
+                score=0.9,
+                priority="supporting",
+                source_role="reference",
+                metadata={"snippet": "reference " * 200, "citekey": f"key-{index}"},
+            )
+            for index in range(20)
+        ]
+        provider = MockContextProvider("mock_prov", spans=references)
+        generator = ContextPackGenerator(
+            self.config, None, self.adapter, self.store, providers=[provider]
+        )
+
+        pack = generator.generate(
+            task="write analysis",
+            target=None,
+            token_budget=6000,
+            strict_budget=True,
+        )
+
+        reference_tokens = sum(
+            generator._estimate_tokens(span)
+            for span in pack.source_spans
+            if span.source_role == "reference"
+        )
+        self.assertEqual(provider.last_limit, 7)
+        self.assertLessEqual(reference_tokens, 1200)
+
+    def test_structured_bibtex_suppresses_raw_bib_chunks(self):
+        self.config.providers["bibtex"] = ProviderConfig(enabled=True)
+        self.adapter.search.return_value = [
+            RTFMResult(
+                path="references.bib",
+                line_start=1,
+                line_end=10,
+                score=0.99,
+                snippet="@article{localKey, title={Local evidence}}",
+                metadata={},
+            ),
+            RTFMResult(
+                path="sections/method.tex",
+                line_start=1,
+                line_end=10,
+                score=0.8,
+                snippet="The manuscript method evidence.",
+                metadata={},
+            ),
+        ]
+        provider = MockContextProvider(
+            "bibtex",
+            spans=[
+                SourceSpan(
+                    path="bibtex:localKey",
+                    line_start=None,
+                    line_end=None,
+                    reason="Structured reference",
+                    score=0.9,
+                    priority="supporting",
+                    source_role="reference",
+                    metadata={"snippet": "Local evidence", "citekey": "localKey"},
+                )
+            ],
+        )
+        generator = ContextPackGenerator(
+            self.config, None, self.adapter, self.store, providers=[provider]
+        )
+
+        pack = generator.generate(
+            task="write method", target=None, token_budget=6000, strict_budget=True
+        )
+
+        paths = {span.path for span in pack.source_spans}
+        self.assertIn("bibtex:localKey", paths)
+        self.assertIn("sections/method.tex", paths)
+        self.assertNotIn("references.bib", paths)
 
 
 if __name__ == "__main__":

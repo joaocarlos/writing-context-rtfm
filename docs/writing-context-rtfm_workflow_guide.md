@@ -131,8 +131,10 @@ AI agents working in a repository equipped with `writing-context-rtfm` adhere to
 * **Rule**: If a warning begins with `LaTeX Safety:`, pay extreme attention to the listed environments and labels (e.g. `\begin{equation} ... \end{equation}`, `\ref{...}`, `\cite{...}`). You **must not** delete or break these LaTeX markers during edits.
 
 ### C. Self-Correct Token Budgets & Elastic Scaling
-* **Rule**: The generator automatically scales undersized budgets to fit mandatory unbroken target text and local constraints.
-* **Rule**: If the status is `"degraded"` and a warning recommends a larger budget, retry the call with the recommended value (`token_budget` or `max_tokens` set to `X` or higher) to retrieve deeper background spans.
+* **Rule**: Put each concrete required idea, fact, literal, or citation key in `must_consider` and inspect `quality.atomic_coverage` before drafting.
+* **Rule**: The generator automatically scales undersized budgets once to fit mandatory target text and atomic evidence, bounded by `context.max_token_budget`. This replaces repeated retrieval loops for evidence already present in the candidate pool.
+* **Rule**: Retrieval quality has priority over token savings in elastic mode. Use `strict_budget=true` only for a genuine external hard limit.
+* **Rule**: If coverage remains incomplete, use `request_more_context` or directly read the target dependencies named by the pack before drafting.
 
 ---
 

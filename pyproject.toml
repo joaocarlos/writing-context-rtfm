@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "writing-context-rtfm"
-version = "0.10.0"
+version = "0.10.1"
 description = "MCP extension for writing-context retrieval relying on RTFM"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -112,4 +112,3 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-

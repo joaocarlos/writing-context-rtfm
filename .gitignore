@@ -68,3 +68,15 @@ sandbox/
 GEMINI.md
 AGENTS.md
 CLAUDE.md
+
+# Private real-corpus benchmark inputs and outputs
+benchmark/*.zip
+benchmark/*.local.yaml
+benchmark/*.local.yml
+benchmark/workspaces.local/
+benchmark/private.local/
+benchmark/artifacts.local/
+benchmark/reports.local/
+benchmark/**/*prompt*.json
+benchmark/**/*generation*.json
+benchmark/**/*judgment*.json

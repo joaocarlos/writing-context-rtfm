@@ -2,13 +2,19 @@
 
 from typing import Any
 
-_ENCODING: Any | None = None
-try:
-    import tiktoken  # type: ignore[import-not-found]
 
-    _ENCODING = tiktoken.get_encoding("cl100k_base")
-except ImportError:
-    _ENCODING = None
+def _load_encoding() -> Any | None:
+    try:
+        import tiktoken
+
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        # tiktoken may be installed while its encoding data is unavailable offline.
+        # Token estimation already has a deterministic character-count fallback.
+        return None
+
+
+_ENCODING: Any | None = _load_encoding()
 
 
 def estimate_tokens(text: str) -> int:

@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import sqlite3
+import zlib
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -60,10 +61,18 @@ class ExtensionStore:
                 config_hash TEXT,
                 section_cards_hash TEXT,
                 rtfm_index_fingerprint TEXT,
+                retrieval_fingerprint TEXT,
+                provider_fingerprint TEXT,
+                context_fingerprint TEXT,
                 extension_version TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            # Migration for older databases: add fingerprint columns if missing
+            for col in ("retrieval_fingerprint", "provider_fingerprint", "context_fingerprint"):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    cursor.execute(f"ALTER TABLE context_pack_runs ADD COLUMN {col} TEXT;")
 
             cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_context_pack_runs_task_hash
@@ -133,10 +142,24 @@ class ExtensionStore:
                 metric_name TEXT NOT NULL,
                 metric_value REAL,
                 metric_text TEXT,
+                source_id TEXT,
+                source_path TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
             );
             """)
+
+            # Migration for evaluation_records columns
+            for col, col_type in (
+                ("source_id", "TEXT"),
+                ("source_path", "TEXT"),
+                ("line_start", "INTEGER"),
+                ("line_end", "INTEGER"),
+            ):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    cursor.execute(f"ALTER TABLE evaluation_records ADD COLUMN {col} {col_type};")
 
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS provider_tokens (
@@ -159,23 +182,20 @@ class ExtensionStore:
 
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS openai_embeddings (
-                chunk_id TEXT PRIMARY KEY,
-                embedding BLOB NOT NULL,
+                chunk_id TEXT NOT NULL,
                 model TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                embedding BLOB NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (chunk_id, model)
             );
             """)
             conn.commit()
 
     def _compress(self, data: str) -> bytes:
-        import zlib
+        return zlib.compress(data.encode("utf-8"))
 
-        return zlib.compress(data.encode("utf-8"), level=6)
-
-    def _decompress(self, data: Any) -> str:
-        if isinstance(data, (bytes, bytearray, memoryview)):
-            import zlib
-
+    def _decompress(self, data: bytes | str) -> str:
+        if isinstance(data, (bytes, memoryview)):
             try:
                 return zlib.decompress(data).decode("utf-8")
             except zlib.error:
@@ -197,11 +217,11 @@ class ExtensionStore:
                 WHERE r.task_hash = ?
                   AND r.config_hash = ?
                   AND r.section_cards_hash = ?
-                  AND r.rtfm_index_fingerprint = ?
+                  AND (r.retrieval_fingerprint = ? OR r.rtfm_index_fingerprint = ? OR r.context_fingerprint = ?)
                 ORDER BY r.created_at DESC
                 LIMIT 1
             """,
-                (task_hash, config_hash, section_cards_hash, index_fingerprint),
+                (task_hash, config_hash, section_cards_hash, index_fingerprint, index_fingerprint, index_fingerprint),
             )
             row = cursor.fetchone()
             if row:
@@ -221,8 +241,8 @@ class ExtensionStore:
             cursor.execute(
                 """
                 INSERT INTO context_pack_runs
-                (run_id, task_hash, task, target, corpus, token_budget, config_hash, section_cards_hash, rtfm_index_fingerprint, extension_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (run_id, task_hash, task, target, corpus, token_budget, config_hash, section_cards_hash, rtfm_index_fingerprint, retrieval_fingerprint, extension_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     run_id,
@@ -233,7 +253,8 @@ class ExtensionStore:
                     run_data["token_budget"],
                     run_data["config_hash"],
                     run_data["section_cards_hash"],
-                    run_data["rtfm_index_fingerprint"],
+                    run_data.get("rtfm_index_fingerprint"),
+                    run_data.get("retrieval_fingerprint") or run_data.get("rtfm_index_fingerprint"),
                     run_data.get("extension_version", "0.1.0"),
                 ),
             )
@@ -347,18 +368,68 @@ class ExtensionStore:
             return results
 
     def submit_feedback(
-        self, run_id: str, metric_name: str, metric_value: float, metric_text: str | None = None
+        self,
+        run_id: str,
+        metric_name: str,
+        metric_value: float,
+        metric_text: str | None = None,
+        source_id: str | None = None,
+        source_path: str | None = None,
+        line_start: int | None = None,
+        line_end: int | None = None,
     ) -> None:
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO evaluation_records (run_id, metric_name, metric_value, metric_text)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO evaluation_records
+                (run_id, metric_name, metric_value, metric_text, source_id, source_path, line_start, line_end)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (run_id, metric_name, metric_value, metric_text),
+                (run_id, metric_name, metric_value, metric_text, source_id, source_path, line_start, line_end),
             )
             conn.commit()
+
+    def get_feedback_for_target(self, target: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Retrieve run-level and source-level feedback for a target section for offline evaluation."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT e.id, e.run_id, e.metric_name, e.metric_value, e.metric_text,
+                       e.source_id, e.source_path, e.line_start, e.line_end, e.created_at
+                FROM evaluation_records e
+                JOIN context_pack_runs r ON e.run_id = r.run_id
+                WHERE r.target = ?
+                ORDER BY e.created_at DESC
+                LIMIT ?
+            """,
+                (target, limit),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_target_feedback_summary(self, target: str) -> dict[str, Any]:
+        """Compute aggregated feedback metrics for a target section for offline inspection."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT e.metric_name, AVG(e.metric_value) as avg_value, COUNT(*) as count
+                FROM evaluation_records e
+                JOIN context_pack_runs r ON e.run_id = r.run_id
+                WHERE r.target = ?
+                GROUP BY e.metric_name
+            """,
+                (target,),
+            )
+            metrics_summary = {
+                row["metric_name"]: {
+                    "avg_value": round(float(row["avg_value"]), 3),
+                    "count": row["count"],
+                }
+                for row in cursor.fetchall()
+            }
+            return {"target": target, "metrics": metrics_summary}
 
     def get_provider_token(self, provider_id: str) -> str | None:
         with self._connect() as conn:
@@ -430,10 +501,28 @@ class ExtensionStore:
             )
             conn.commit()
 
-    def get_all_openai_embeddings(self) -> list[dict[str, Any]]:
+    def get_openai_embeddings_stats(self, model: str) -> dict[str, Any]:
         with self._connect() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT chunk_id, embedding, model FROM openai_embeddings")
+            cursor.execute(
+                "SELECT COUNT(*) as count, MAX(updated_at) as latest_updated FROM openai_embeddings WHERE model = ?",
+                (model,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return {"count": row["count"], "latest_updated": row["latest_updated"]}
+            return {"count": 0, "latest_updated": None}
+
+    def get_all_openai_embeddings(self, model: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            if model:
+                cursor.execute(
+                    "SELECT chunk_id, embedding, model FROM openai_embeddings WHERE model = ?",
+                    (model,),
+                )
+            else:
+                cursor.execute("SELECT chunk_id, embedding, model FROM openai_embeddings")
             return [
                 {"chunk_id": row["chunk_id"], "embedding": row["embedding"], "model": row["model"]}
                 for row in cursor.fetchall()
@@ -442,21 +531,35 @@ class ExtensionStore:
     def store_openai_embeddings(self, embeddings_data: list[dict[str, Any]]) -> None:
         with self._connect() as conn:
             cursor = conn.cursor()
+            normalized = []
+            for item in embeddings_data:
+                emb = item["embedding"]
+                if isinstance(emb, list):
+                    emb = json.dumps(emb)
+                normalized.append(
+                    {
+                        "chunk_id": item["chunk_id"],
+                        "model": item.get("model", "text-embedding-3-small"),
+                        "embedding": emb,
+                    }
+                )
             cursor.executemany(
                 """
-                INSERT INTO openai_embeddings (chunk_id, embedding, model, updated_at)
-                VALUES (:chunk_id, :embedding, :model, CURRENT_TIMESTAMP)
-                ON CONFLICT(chunk_id) DO UPDATE SET
+                INSERT INTO openai_embeddings (chunk_id, model, embedding, updated_at)
+                VALUES (:chunk_id, :model, :embedding, CURRENT_TIMESTAMP)
+                ON CONFLICT(chunk_id, model) DO UPDATE SET
                     embedding=excluded.embedding,
-                    model=excluded.model,
                     updated_at=CURRENT_TIMESTAMP
             """,
-                embeddings_data,
+                normalized,
             )
             conn.commit()
 
-    def get_missing_openai_chunks(self, rtfm_db_path: str) -> list[dict[str, Any]]:
-        """Returns chunks from RTFM DB that do not have an OpenAI embedding in the cache."""
+
+    def get_missing_openai_chunks(
+        self, rtfm_db_path: str, model: str = "text-embedding-3-small"
+    ) -> list[dict[str, Any]]:
+        """Returns chunks from RTFM DB that do not have an OpenAI embedding for the configured model in cache."""
         missing = []
         try:
             rtfm_conn = sqlite3.connect(rtfm_db_path, check_same_thread=False)
@@ -467,14 +570,17 @@ class ExtensionStore:
             rtfm_conn.execute(f"ATTACH DATABASE '{escaped_cache_path}' AS cache_db")
 
             cursor = rtfm_conn.cursor()
-            # Select chunks from RTFM that are NOT in cache_db.openai_embeddings
-            cursor.execute("""
+            # Select chunks from RTFM that are NOT in cache_db.openai_embeddings for the specific model
+            cursor.execute(
+                """
                 SELECT c.chunk_id, c.content, b.filename as file_path, c.line_start, c.line_end
                 FROM chunks c
                 JOIN books b ON c.book_id = b.id
-                LEFT JOIN cache_db.openai_embeddings e ON c.chunk_id = e.chunk_id
+                LEFT JOIN cache_db.openai_embeddings e ON c.chunk_id = e.chunk_id AND e.model = ?
                 WHERE e.chunk_id IS NULL
-            """)
+            """,
+                (model,),
+            )
 
             for row in cursor.fetchall():
                 missing.append(

@@ -179,7 +179,7 @@ class TestMilestone3(unittest.TestCase):
                 path="sec1.md",
                 line_start=1,
                 line_end=10,
-                snippet="B" * 1200,
+                snippet="B" * 400,
                 score=0.9,
                 metadata={},
             ),
@@ -187,7 +187,7 @@ class TestMilestone3(unittest.TestCase):
                 path="sec1.md",
                 line_start=15,
                 line_end=25,
-                snippet="B" * 1200,
+                snippet="B" * 400,
                 score=0.85,
                 metadata={},
             ),
@@ -195,7 +195,7 @@ class TestMilestone3(unittest.TestCase):
                 path="sec2.md",
                 line_start=1,
                 line_end=20,
-                snippet="B" * 1200,
+                snippet="B" * 400,
                 score=0.8,
                 metadata={},
             ),
@@ -203,10 +203,11 @@ class TestMilestone3(unittest.TestCase):
                 path="ref.md",
                 line_start=1,
                 line_end=20,
-                snippet="B" * 1200,
+                snippet="B" * 400,
                 score=0.75,
                 metadata={},
             ),
+
         ]
         self.adapter.search.return_value = mock_results
 

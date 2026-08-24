@@ -52,6 +52,24 @@ def test_parse_bibtex_file(tmp_path):
     assert "**DOI:** 10.5555/3295222.3295349" in snippet
 
 
+def test_parse_bibtex_file_accepts_same_line_entry_closure(tmp_path):
+    bib_file = tmp_path / "references.bib"
+    bib_file.write_text(
+        """@ARTICLE{sameLine,
+  author={Doe, Jane},
+  title={A nested {BibTeX} title},
+  year={2026},
+  doi={10.1000/example}}
+""",
+        encoding="utf-8",
+    )
+
+    entries = parse_bibtex_file(bib_file)
+
+    assert set(entries) == {"sameLine"}
+    assert entries["sameLine"].year == "2026"
+
+
 def test_bibtex_provider_availability(tmp_path):
     config = AppConfig(
         version=1,
@@ -108,6 +126,38 @@ def test_bibtex_provider_fetch_context_explicit_citations(tmp_path):
     assert spans[0].source_role == "reference"
     assert spans[0].metadata["citekey"] == "vaswani2017attention"
     assert "Attention Is All You Need" in spans[0].metadata["snippet"]
+    assert spans[0].score == 0.9
+
+
+def test_bibtex_provider_scopes_citations_to_selected_section(tmp_path):
+    (tmp_path / "refs.bib").write_text(SAMPLE_BIB, encoding="utf-8")
+    (tmp_path / "main.tex").write_text(
+        r"""\section{Target}
+Local evidence \cite{vaswani2017attention}.
+\section{Other}
+Unrelated evidence \cite{devlin2019bert}.
+""",
+        encoding="utf-8",
+    )
+    config = AppConfig(
+        version=1,
+        rtfm=RTFMConfig(project_root=str(tmp_path)),
+        context=ContextConfig(),
+        cache=CacheConfig(enabled=False),
+        section_cards=SectionCardsConfig(path="dummy.yaml"),
+        providers={"bibtex": ProviderConfig(enabled=True)},
+    )
+    provider = BibTeXProvider(config)
+    mock_cards = MagicMock()
+    mock_card = MagicMock()
+    mock_card.path = "main.tex"
+    mock_card.depends_on = []
+    mock_cards.sections = {"section_target": mock_card}
+
+    with patch("writing_context_rtfm.section_cards.load_section_cards", return_value=mock_cards):
+        spans = provider.fetch_context(queries=[], target="section_target", limit=5)
+
+    assert [span.metadata["citekey"] for span in spans] == ["vaswani2017attention"]
 
 
 def test_bibtex_provider_fetch_context_keyword_query(tmp_path):
@@ -131,3 +181,46 @@ def test_bibtex_provider_fetch_context_keyword_query(tmp_path):
     assert len(spans) == 1
     assert spans[0].path == "bibtex:devlin2019bert"
     assert "BERT" in spans[0].metadata["snippet"]
+    assert spans[0].score <= 0.8
+
+
+def test_bibtex_provider_rejects_single_word_keyword_noise(tmp_path):
+    (tmp_path / "refs.bib").write_text(SAMPLE_BIB, encoding="utf-8")
+
+    config = AppConfig(
+        version=1,
+        rtfm=RTFMConfig(project_root=str(tmp_path)),
+        context=ContextConfig(),
+        cache=CacheConfig(enabled=False),
+        section_cards=SectionCardsConfig(path="dummy.yaml"),
+        providers={"bibtex": ProviderConfig(enabled=True)},
+    )
+    provider = BibTeXProvider(config)
+
+    spans = provider.fetch_context(queries=["transformers"], target=None, limit=5)
+
+    assert spans == []
+
+
+def test_bibtex_provider_rejects_low_fraction_keyword_overlap(tmp_path):
+    (tmp_path / "refs.bib").write_text(SAMPLE_BIB, encoding="utf-8")
+
+    config = AppConfig(
+        version=1,
+        rtfm=RTFMConfig(project_root=str(tmp_path)),
+        context=ContextConfig(),
+        cache=CacheConfig(enabled=False),
+        section_cards=SectionCardsConfig(path="dummy.yaml"),
+        providers={"bibtex": ProviderConfig(enabled=True)},
+    )
+    provider = BibTeXProvider(config)
+
+    spans = provider.fetch_context(
+        queries=[
+            "academic writing bidirectional transformers benchmark analysis evidence manuscript context"
+        ],
+        target=None,
+        limit=5,
+    )
+
+    assert spans == []

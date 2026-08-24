@@ -27,3 +27,7 @@ class BaseContextProvider(ABC):
     ) -> list[SourceSpan]:
         """Query the provider source and return a list of normalized SourceSpan objects."""
         pass
+
+    def get_fingerprint(self, config: AppConfig) -> str | None:
+        """Return a cache invalidation fingerprint for this provider's data source, if applicable."""
+        return None

@@ -26,16 +26,26 @@ graph TD
 
 ### Component Details
 
+#### Evaluation Candidates for v0.11.0
+
+The first local evaluation should compare two embedding tiers and one optional reranker:
+
+* **Quality-oriented embedding model**: `mixedbread-ai/mxbai-embed-large-v1`.
+* **Lightweight embedding model**: `sentence-transformers/all-MiniLM-L6-v2`.
+* **Optional deep reranker**: `Alibaba-NLP/gte-reranker-modernbert-base`, applied only to a bounded top candidate set.
+
+These are evaluation candidates, not release defaults. Selection should be based on required-evidence coverage, irrelevant-source rate, warm-query latency, memory use, and the amount of manual context repair needed in personal writing tasks. Exact citation keys, labels, references, equations, and protected numeric values must continue to bypass semantic matching.
+
 #### A. Dense Embedding Retrieval (Bi-Encoder)
 *   **Pluggable Drivers**: Supports both local CPU/GPU execution and remote cloud APIs.
 *   **Model Selection**:
-    *   *Local (Maximum Accuracy)*: `BAAI/bge-base-en-v1.5` (768-dimensional vectors) or `BAAI/bge-small-en-v1.5` (384-dimensional vectors).
-    *   *API-Based (Zero-Footprint)*: Gemini `text-embedding-004` or OpenAI `text-embedding-3-small`.
-    *   *Local (Baseline)*: `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional dense vectors).
+    *   *Local (Quality Candidate)*: `mixedbread-ai/mxbai-embed-large-v1`.
+    *   *Local (Lightweight Candidate)*: `sentence-transformers/all-MiniLM-L6-v2`.
 *   **Storage**: Leverage `numpy` for blazing-fast, zero-dependency in-memory cosine similarity, storing vectors as raw BLOBs in the existing `.writing-context/context_cache.sqlite` database. This avoids complex C++ extension compilation (`sqlite-vss`) across different OS platforms.
 *   **Index Construction**:
-    *   During RTFM synchronization, trigger a background worker (or lazy-load on fetch) to read chunks from RTFM and compute dense embeddings.
-    *   Store vector blobs alongside chunk metadata in standard SQLite tables and load into `numpy` memory maps on query.
+    *   Compute embeddings during an explicit foreground synchronization step. Do not launch detached or recursively restarting background workers.
+    *   Store vector blobs alongside chunk metadata in standard SQLite tables, keyed by content hash, model identifier, model revision, and chunking-policy version.
+    *   Load vectors in bounded batches or memory maps and guarantee model/process cleanup when synchronization finishes.
 
 #### B. Reciprocal Rank Fusion (RRF)
 To combine BM25 scores (lexical) and cosine similarities (dense) without calibrating distinct scale systems, apply Reciprocal Rank Fusion:
@@ -44,11 +54,8 @@ Where $r_m(d)$ is the rank of document/chunk $d$ in the retriever $m$, and $k$ i
 
 #### C. Cross-Encoder Re-ranking (Deep Mode / Maximum Accuracy)
 For the `"deep"` packing mode, pass the top-ranked hybrid results to a Cross-Encoder to compute full cross-attention:
-*   **Model Selection**:
-    *   *Local (Maximum Accuracy)*: `BAAI/bge-reranker-v2-m3` (handles multilingual text, spelling variations, and up to 8k context length) or `mixedbread-ai/mxbai-rerank-large-v1` (highly optimized for English).
-    *   *API-Based (Zero-Footprint)*: Cohere Rerank v3 (`rerank-english-v3.0` / `rerank-multilingual-v3.0`).
-    *   *Local (Baseline)*: `cross-encoder/ms-marco-MiniLM-L-6-v2`.
-*   **Filtering**: Compute cross-attention between `(Query, Candidate Chunk)` to get an absolute relevance probability. Filter out any chunks falling below a threshold (e.g., $< 0.35$).
+*   **Model Selection**: Evaluate `Alibaba-NLP/gte-reranker-modernbert-base` as an optional deep-mode reranker.
+*   **Filtering**: Rerank only a bounded lexical/dense candidate set. Calibrate any threshold on personal writing tasks; do not treat semantic relevance as proof that a factual, citation, numeric, or protected-content obligation is satisfied.
 
 #### D. Configuration Schema (`.writing-context/config.yaml`)
 To support switching between local lightweight configurations and maximum-accuracy environments, the following schema will be used:
@@ -61,12 +68,12 @@ retrieval:
     
   embedding:
     provider: local  # options: local, gemini, openai
-    model_name: "BAAI/bge-base-en-v1.5" # 768-dimensional, high accuracy
+    model_name: "mixedbread-ai/mxbai-embed-large-v1"
     
   reranker:
     enabled: true
     provider: local  # options: local, cohere, jina
-    model_name: "BAAI/bge-reranker-v2-m3" # 8k context, SOTA accuracy
+    model_name: "Alibaba-NLP/gte-reranker-modernbert-base"
 ```
 
 ---

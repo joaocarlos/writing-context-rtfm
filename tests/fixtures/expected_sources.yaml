@@ -1,6 +1,21 @@
 tasks:
   - id: write_methodology
-    task: "Write the methodology section, detailing the dataset, algorithm selection, and deployment."
+    task: "Write the methodology section detailing dataset partitioning, CNN architecture, and 8-bit quantization."
     target_section: "section_approach"
     expected_sources:
       - "sections/03_approach.tex"
+      - "sections/01_intro.tex"
+
+  - id: write_results
+    task: "Report classification accuracy, inference latency, and memory footprint comparisons on microcontrollers."
+    target_section: "section_results"
+    expected_sources:
+      - "sections/04_results.tex"
+      - "sections/03_approach.tex"
+
+  - id: survey_related_work
+    task: "Survey edge machine learning techniques and prior acoustic signal analysis methods."
+    target_section: "section_related"
+    expected_sources:
+      - "sections/02_related.tex"
+      - "sections/01_intro.tex"

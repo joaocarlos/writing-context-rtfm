@@ -205,21 +205,28 @@ def _success_response(payload: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(payload)}]}
 
 
-def _sanitize_span_for_output(span_dict: dict[str, Any]) -> dict[str, Any]:
-    """Strip internal-only fields (e.g., raw snippet metadata) from a serialized SourceSpan.
+def _sanitize_span_for_output(span_dict: dict[str, Any], output_mode: str = "prompt") -> dict[str, Any]:
+    """Strip internal-only fields from a serialized SourceSpan.
 
-    The `metadata` dict is used internally for token estimation and avoid-filtering
-    but its contents already appear in `reason`, so emitting it doubles bytes.
+    In 'prompt' mode, metadata is omitted since text appears in formatted_prompt.
+    In 'structured' or 'both' mode, snippet is exposed as 'excerpt'.
     """
     out = dict(span_dict)
-    out.pop("metadata", None)
+    meta = out.pop("metadata", None) or {}
+    if output_mode in ("structured", "both"):
+        snippet = meta.get("snippet")
+        if snippet:
+            out["excerpt"] = snippet
     return out
 
 
-def _sanitize_pack_for_output(pack_dict: dict[str, Any]) -> dict[str, Any]:
+def _sanitize_pack_for_output(pack_dict: dict[str, Any], output_mode: str = "prompt") -> dict[str, Any]:
     spans = pack_dict.get("source_spans") or []
-    pack_dict["source_spans"] = [_sanitize_span_for_output(s) for s in spans]
+    pack_dict["source_spans"] = [_sanitize_span_for_output(s, output_mode=output_mode) for s in spans]
+    if output_mode == "structured":
+        pack_dict.pop("formatted_prompt", None)
     return pack_dict
+
 
 
 # --- Tool catalog -----------------------------------------------------------
@@ -238,7 +245,8 @@ def get_tools_list() -> dict[str, Any]:
                     "'formatted_prompt', and an execution 'guidance' string. Prefer this over reading the manuscript directly: "
                     "the pack is scoped to the task, deduplicated, and stays within token budgets. "
                     "Output shape: {task, target, document_thesis, prior_claims, terminology, constraints, "
-                    "source_spans[], estimated_tokens, formatted_prompt, guidance, status ('complete' | 'degraded'), warnings[]}. "
+                    "source_spans[], estimated_tokens, quality.atomic_coverage, formatted_prompt, guidance, "
+                    "status ('complete' | 'degraded'), warnings[]}. "
                     "When status='degraded', inspect warnings before proceeding."
                 ),
                 "inputSchema": {
@@ -274,9 +282,9 @@ def get_tools_list() -> dict[str, Any]:
                             "type": "array",
                             "items": {"type": "string"},
                             "description": (
-                                "Substrings matched case-insensitively against retrieved paths. Any span "
-                                "whose path contains a listed substring gets a +1.0 score boost. Use this "
-                                "to force inclusion of specific files when the section card doesn't cover them."
+                                "Required evidence atoms: concrete concepts, facts, literals, or citation "
+                                "keys that the pack must support. Coverage-first selection reserves matching "
+                                "spans and elastic mode may expand once up to max_token_budget."
                             ),
                         },
                         "task_type": {
@@ -320,6 +328,15 @@ def get_tools_list() -> dict[str, Any]:
                             "description": (
                                 "When true, enforce token_budget as a hard cap instead of expanding "
                                 "it to preserve mandatory target context."
+                            ),
+                        },
+                        "output_mode": {
+                            "type": "string",
+                            "enum": ["prompt", "structured", "both"],
+                            "default": "prompt",
+                            "description": (
+                                "Output rendering format: 'prompt' returns formatted_prompt without duplicating excerpts in source_spans; "
+                                "'structured' returns excerpt inside source_spans without prompt; 'both' returns both."
                             ),
                         },
                     },
@@ -401,7 +418,9 @@ def get_tools_list() -> dict[str, Any]:
                     "properties": {
                         "project_root": {
                             "type": "string",
-                            "description": "Path to the project root. Defaults to the configured project root.",
+                            "description": (
+                                "Custom project root path (optional). Defaults to the workspace root."
+                            ),
                         },
                         "corpus": {
                             "type": "string",
@@ -413,15 +432,18 @@ def get_tools_list() -> dict[str, Any]:
             {
                 "name": "initialize_section_cards",
                 "description": (
-                    "Scan the workspace for .tex and .md files and generate or append missing section cards "
-                    "to section_cards.yaml. Proposes section IDs, file paths, and default constraints."
+                    "Inspect the manuscript structure and generate a starter .writing-context/section_cards.yaml "
+                    "and .writing-context/config.yaml file if they don't already exist. Safe to run: does NOT "
+                    "overwrite existing files."
                 ),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "project_root": {
                             "type": "string",
-                            "description": "Custom project root path (optional). Defaults to current workspace.",
+                            "description": (
+                                "Custom project root path (optional). Defaults to current workspace."
+                            ),
                         }
                     },
                 },
@@ -429,8 +451,8 @@ def get_tools_list() -> dict[str, Any]:
             {
                 "name": "request_more_context",
                 "description": (
-                    "Retrieve the next page/tier of unselected supporting/background context spans from a previous "
-                    "context generation run. Useful when initial token budgets were too restrictive."
+                    "Fetch the next batch of discarded/unselected context spans from a prior get_writing_context_pack run. "
+                    "Use this when the initial pack was slightly too narrow and you need more supporting background spans."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -443,6 +465,12 @@ def get_tools_list() -> dict[str, Any]:
                             "type": "integer",
                             "description": "Maximum number of extra context spans to fetch (default: 5).",
                         },
+                        "output_mode": {
+                            "type": "string",
+                            "enum": ["structured", "prompt", "both"],
+                            "default": "structured",
+                            "description": "Output rendering format (default: 'structured').",
+                        },
                     },
                     "required": ["run_id"],
                 },
@@ -450,7 +478,7 @@ def get_tools_list() -> dict[str, Any]:
             {
                 "name": "submit_generation_feedback",
                 "description": (
-                    "Log quality evaluation feedback for a context pack generation run to improve subsequent context selection."
+                    "Log quality evaluation feedback for a context pack generation run to record offline evaluation metrics."
                 ),
                 "inputSchema": {
                     "type": "object",
@@ -471,8 +499,40 @@ def get_tools_list() -> dict[str, Any]:
                             "type": "string",
                             "description": "Optional text details or description of issue/helpfulness.",
                         },
+                        "source_id": {
+                            "type": "string",
+                            "description": "Optional identifier for a specific source span evaluated.",
+                        },
+                        "source_path": {
+                            "type": "string",
+                            "description": "Optional file path of the specific source span evaluated.",
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "description": "Optional start line number of the specific source span.",
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "description": "Optional end line number of the specific source span.",
+                        },
                     },
                     "required": ["run_id", "metric_name", "metric_value"],
+                },
+            },
+            {
+                "name": "get_target_feedback_summary",
+                "description": (
+                    "Retrieve aggregated feedback metrics for a target section for offline inspection."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "target": {
+                            "type": "string",
+                            "description": "Target section ID (e.g. 'section_methodology').",
+                        },
+                    },
+                    "required": ["target"],
                 },
             },
             {
@@ -829,6 +889,15 @@ def _load_runtime() -> tuple[
     return config, cards, card_warnings, adapter, store
 
 
+def _is_degrading_pack_warning(warning: str) -> bool:
+    """Keep informational budget/safety notices from changing pack status."""
+    return (
+        not warning.startswith("LaTeX Safety:")
+        and not warning.startswith("Note:")
+        and "candidate span(s) were dropped" not in warning
+    )
+
+
 def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     if not args or "task" not in args:
         return _error_response(ERROR_INVALID_INPUT, "Missing required argument: task")
@@ -858,6 +927,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
 
     line_start = int(line_start_val) if line_start_val is not None else None
     line_end = int(line_end_val) if line_end_val is not None else None
+    output_mode = str(args.get("output_mode") or config.context.output_mode or "prompt")
 
     try:
         pack = generator.generate(
@@ -871,13 +941,15 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             pack_mode=pack_mode,
             role_budgets=role_budgets,
             strict_budget=strict_budget,
+            output_mode=output_mode,
         )
     except Exception as e:
         logger.exception("Pack generation failed")
         return _error_response(ERROR_RETRIEVAL, "Context pack generation failed.", type(e).__name__)
 
     payload = asdict(pack)
-    payload["formatted_prompt"] = _format_write_section_prompt(pack)
+    if output_mode != "structured":
+        payload["formatted_prompt"] = _format_write_section_prompt(pack)
     payload["guidance"] = (
         f"Writing Context Pack generated for task: '{task}'. "
         f"Target section: '{target or 'General'}'. "
@@ -888,10 +960,10 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
         all_warnings.extend(card_warnings)
     if all_warnings:
         payload["warnings"] = all_warnings
-        has_degrading_warning = any(not w.startswith("LaTeX Safety:") for w in all_warnings)
+        has_degrading_warning = any(_is_degrading_pack_warning(w) for w in all_warnings)
         if has_degrading_warning and payload.get("status") == "complete":
             payload["status"] = "degraded"
-    return _success_response(_sanitize_pack_for_output(payload))
+    return _success_response(_sanitize_pack_for_output(payload, output_mode=output_mode))
 
 
 def handle_get_proofreading_context_pack(args: dict[str, Any]) -> dict[str, Any]:
@@ -950,38 +1022,34 @@ def handle_get_proofreading_context_pack(args: dict[str, Any]) -> dict[str, Any]
         has_degrading_warning = any(not w.startswith("LaTeX Safety:") for w in all_warnings)
         if has_degrading_warning and payload.get("status") == "complete":
             payload["status"] = "degraded"
-    return _success_response(payload)
+    return _success_response(_sanitize_pack_for_output(payload))
 
 
 def handle_refresh_index(args: dict[str, Any]) -> dict[str, Any]:
+    project_root = args.get("project_root") or str(WORKSPACE_ROOT)
+    corpus = args.get("corpus")
     try:
-        config = load_config(str(WORKSPACE_ROOT))
-    except Exception as e:
-        logger.exception("Failed to load config for refresh_index")
-        return _error_response(ERROR_CONFIG, "Failed to load configuration.", str(e))
+        config = load_config(project_root)
+        c_name = corpus or config.rtfm.corpus
+        adapter = RTFMAdapter(project_root=project_root)
+        adapter.sync(corpus=c_name)
 
-    project_root = args.get("project_root", config.rtfm.project_root)
-
-    adapter = RTFMAdapter(project_root=project_root)
-
-    sync_path = args.get("project_root")
-    sync_corpus = args.get("corpus")
-
-    try:
-        adapter.sync(sync_path, corpus=sync_corpus)
-    except Exception as e:
-        logger.exception("RTFM sync raised")
-        return _error_response(ERROR_RETRIEVAL, f"RTFM sync failed: {e}", type(e).__name__)
-
-    if config.cache.invalidate_on_refresh:
         store = ExtensionStore(config.cache.path)
         store.init_db()
         rtfm_db = resolve_rtfm_db_path(Path(project_root))
         fingerprint = compute_rtfm_fingerprint(rtfm_db)
         store.invalidate_for_fingerprint(fingerprint)
-    return _success_response(
-        {"status": "ok", "cache_invalidated": config.cache.invalidate_on_refresh}
-    )
+
+        return _success_response(
+            {
+                "status": "ok",
+                "rtfm_sync": "completed",
+                "cache_invalidated": True,
+            }
+        )
+    except Exception as e:
+        logger.exception("Failed to refresh RTFM index")
+        return _error_response(ERROR_INTERNAL, f"Index refresh failed: {e}", type(e).__name__)
 
 
 def handle_initialize_section_cards(args: dict[str, Any]) -> dict[str, Any]:
@@ -999,12 +1067,14 @@ def handle_request_more_context(args: dict[str, Any]) -> dict[str, Any]:
     if not run_id:
         return _error_response(ERROR_INVALID_INPUT, "Missing required argument: run_id")
     limit = args.get("limit", 5)
+    output_mode = str(args.get("output_mode", "structured"))
     try:
         config = load_config(str(WORKSPACE_ROOT))
         store = ExtensionStore(config.cache.path)
         store.init_db()
         results = store.get_more_context(run_id, limit)
-        return _success_response({"run_id": run_id, "source_spans": results, "count": len(results)})
+        sanitized = [_sanitize_span_for_output(s, output_mode=output_mode) for s in results]
+        return _success_response({"run_id": run_id, "source_spans": sanitized, "count": len(sanitized)})
     except Exception as e:
         logger.exception("Failed to request more context")
         return _error_response(
@@ -1017,6 +1087,11 @@ def handle_submit_generation_feedback(args: dict[str, Any]) -> dict[str, Any]:
     metric_name = args.get("metric_name")
     metric_value = args.get("metric_value")
     metric_text = args.get("metric_text")
+    source_id = args.get("source_id")
+    source_path = args.get("source_path")
+    line_start = int(args["line_start"]) if "line_start" in args and args["line_start"] is not None else None
+    line_end = int(args["line_end"]) if "line_end" in args and args["line_end"] is not None else None
+
     if not run_id or not metric_name or metric_value is None:
         return _error_response(
             ERROR_INVALID_INPUT, "Missing required arguments: run_id, metric_name, and metric_value"
@@ -1025,11 +1100,41 @@ def handle_submit_generation_feedback(args: dict[str, Any]) -> dict[str, Any]:
         config = load_config(str(WORKSPACE_ROOT))
         store = ExtensionStore(config.cache.path)
         store.init_db()
-        store.submit_feedback(run_id, metric_name, float(metric_value), metric_text)
+        if any(x is not None for x in (source_id, source_path, line_start, line_end)):
+            store.submit_feedback(
+                run_id,
+                metric_name,
+                float(metric_value),
+                metric_text,
+                source_id=source_id,
+                source_path=source_path,
+                line_start=line_start,
+                line_end=line_end,
+            )
+        else:
+            store.submit_feedback(run_id, metric_name, float(metric_value), metric_text)
         return _success_response({"status": "feedback_saved", "run_id": run_id})
     except Exception as e:
         logger.exception("Failed to submit feedback")
         return _error_response(ERROR_INTERNAL, f"Failed to submit feedback: {e}", type(e).__name__)
+
+
+
+def handle_get_target_feedback_summary(args: dict[str, Any]) -> dict[str, Any]:
+    target = args.get("target")
+    if not target:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: target")
+    try:
+        config = load_config(str(WORKSPACE_ROOT))
+        store = ExtensionStore(config.cache.path)
+        store.init_db()
+        summary = store.get_target_feedback_summary(str(target))
+        return _success_response(summary)
+    except Exception as e:
+        logger.exception("Failed to get target feedback summary")
+        return _error_response(
+            ERROR_INTERNAL, f"Failed to get target feedback summary: {e}", type(e).__name__
+        )
 
 
 def handle_audit_manuscript_terminology(args: dict[str, Any]) -> dict[str, Any]:
@@ -2118,7 +2223,10 @@ def process_message(line: str) -> str | None:
                     result = handle_get_card_field_diff(call_args)
                 elif name == "get_section_card_history":
                     result = handle_get_section_card_history(call_args)
+                elif name == "get_target_feedback_summary":
+                    result = handle_get_target_feedback_summary(call_args)
                 else:
+
                     response = json.dumps(
                         {
                             "jsonrpc": "2.0",

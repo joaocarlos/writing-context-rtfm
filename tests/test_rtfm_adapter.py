@@ -256,6 +256,43 @@ class TestResolveRtfmDbPath(unittest.TestCase):
         self.assertEqual(results[0].path, "intro.tex")
         self.assertIn("quantization", results[0].snippet.lower())
 
+    def test_direct_sqlite_search_rtfm_028_schema_and_corpus(self):
+        import sqlite3
+
+        db_path = self.project_root / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT, title TEXT, corpus TEXT);"
+        )
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content);")
+        conn.execute("INSERT INTO books VALUES (1, 'intro.tex', 'Intro', 'manuscript');")
+        conn.execute("INSERT INTO books VALUES (2, 'other.tex', 'Other', 'other');")
+        conn.execute("INSERT INTO chunks VALUES (1, 1, 'routing mechanism', 1, 2, 'Routing');")
+        conn.execute("INSERT INTO chunks VALUES (2, 2, 'routing elsewhere', 3, 4, 'Other');")
+        conn.execute("INSERT INTO chunks_fts(rowid, content) VALUES (1, 'routing mechanism');")
+        conn.execute("INSERT INTO chunks_fts(rowid, content) VALUES (2, 'routing elsewhere');")
+        conn.commit()
+        conn.close()
+
+        adapter = RTFMAdapter(
+            project_root=str(self.project_root), allow_cli_fallback=False
+        )
+        results = adapter.search("routing", corpus="manuscript", limit=1)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].path, "intro.tex")
+
+    @patch.object(RTFMAdapter, "_run_command")
+    def test_strict_local_search_never_uses_cli(self, run_command):
+        adapter = RTFMAdapter(
+            project_root=str(self.project_root), allow_cli_fallback=False
+        )
+        with self.assertRaises(RTFMAdapterError):
+            adapter.search("routing", corpus="manuscript", limit=1)
+        run_command.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

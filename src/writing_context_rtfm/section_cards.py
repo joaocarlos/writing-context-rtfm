@@ -28,6 +28,9 @@ class SectionCard:
     must_preserve: list[str] | None = None
     avoid: list[str] | None = None
     constraints: list[str] | None = None
+    verified_facts: list[dict[str, Any]] | None = None
+    unverified_key_terms: list[str] | None = None
+    unverified_dependencies: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -92,50 +95,27 @@ def migrate_legacy_cards(project_root: str) -> bool:
     return False
 
 
-def merge_cards(
+def _merge_split_cards(
     generated: dict[str, Any], overrides: dict[str, Any], lock: dict[str, Any]
 ) -> SectionCards:
-    """Merges generated cards, overrides and lock data into legacy SectionCards format."""
-    doc_gen = generated.get("document", {}) or {}
-    doc_over = overrides.get("document", {}) or {}
+    """Merges cards.generated.yaml, cards.overrides.yaml, and cards.lock.json into SectionCards."""
+    gen_doc = generated.get("document", {})
+    over_doc = overrides.get("document", {})
 
-    doc_title = doc_over.get("title") or doc_gen.get("title") or "My Manuscript"
-    doc_thesis = doc_over.get("thesis") or doc_gen.get("thesis")
-    doc_writing_style = doc_over.get("writing_style") or doc_gen.get("writing_style")
-
-    terminology = {}
-    term_gen = doc_gen.get("terminology") or {}
-    term_over = doc_over.get("terminology") or {}
-    all_terms = set(term_gen.keys()) | set(term_over.keys())
-    for term in all_terms:
-        details_gen = term_gen.get(term) or {}
-        details_over = term_over.get(term) or {}
-
-        if isinstance(details_over, str):
-            details_over = {"definition": details_over}
-        if isinstance(details_gen, str):
-            details_gen = {"definition": details_gen}
-
-        terminology[term] = {
-            "definition": details_over.get("definition") or details_gen.get("definition") or "",
-            "variants": list(
-                set(details_over.get("variants", []) or [])
-                | set(details_gen.get("variants", []) or [])
-            ),
-            "avoid": list(
-                set(details_over.get("avoid", []) or []) | set(details_gen.get("avoid", []) or [])
-            ),
-        }
+    doc_title = over_doc.get("title") or gen_doc.get("title")
+    doc_thesis = over_doc.get("thesis") or gen_doc.get("thesis")
+    doc_style = over_doc.get("writing_style") or gen_doc.get("writing_style")
+    doc_term = over_doc.get("terminology") or gen_doc.get("terminology")
 
     document = DocumentCard(
-        title=doc_title, thesis=doc_thesis, writing_style=doc_writing_style, terminology=terminology
+        title=doc_title, thesis=doc_thesis, writing_style=doc_style, terminology=doc_term
     )
 
-    sections = {}
-    gen_sections = generated.get("sections", {}) or {}
-    over_sections = overrides.get("sections", {}) or {}
+    sections: dict[str, SectionCard] = {}
+    gen_sections = generated.get("sections", {})
+    over_sections = overrides.get("sections", {})
 
-    all_section_ids = set(gen_sections.keys()) | set(over_sections.keys())
+    all_section_ids = set(gen_sections.keys()).union(set(over_sections.keys()))
 
     for sid in all_section_ids:
         gs = gen_sections.get(sid, {}) or {}
@@ -154,6 +134,7 @@ def merge_cards(
             or gs.get("rhetorical_role", {}).get("value")
         )
 
+        unverified_key_terms: list[str] = []
         if "key_terms" in os_data and os_data["key_terms"] is not None:
             key_terms = os_data["key_terms"]
         else:
@@ -163,7 +144,10 @@ def merge_cards(
                 status = kt.get("status") if isinstance(kt, dict) else "generated"
                 if status != "rejected" and val:
                     key_terms.append(val)
+                    if status not in ("accepted", "verified", "override"):
+                        unverified_key_terms.append(val)
 
+        unverified_dependencies: list[str] = []
         if "depends_on" in os_data and os_data["depends_on"] is not None:
             depends_on = os_data["depends_on"]
         else:
@@ -173,13 +157,24 @@ def merge_cards(
                 status = dep.get("status") if isinstance(dep, dict) else "generated"
                 if status != "rejected" and target:
                     depends_on.append(target)
+                    if status not in ("accepted", "verified", "override"):
+                        unverified_dependencies.append(target)
 
         must_preserve = list(os_data.get("must_preserve") or [])
+        verified_facts: list[dict[str, Any]] = []
+
+        # User-overridden must_preserve are verified by definition
+        for p in must_preserve:
+            verified_facts.append({"value": p, "status": "override", "source": sid})
+
         for fact in gs.get("facts", []):
             val = fact.get("value") if isinstance(fact, dict) else fact
             status = fact.get("status") if isinstance(fact, dict) else "generated"
-            if status in ("accepted", "verified") and val and val not in must_preserve:
-                must_preserve.append(val)
+            if status in ("accepted", "verified") and val:
+                if val not in must_preserve:
+                    must_preserve.append(val)
+                if not any(vf["value"] == val for vf in verified_facts):
+                    verified_facts.append({"value": val, "status": status, "source": sid})
 
         avoid = list(os_data.get("avoid") or [])
         for constraint in gs.get("constraints", []):
@@ -217,9 +212,15 @@ def merge_cards(
             must_preserve=must_preserve,
             avoid=avoid,
             constraints=constraints,
+            verified_facts=verified_facts,
+            unverified_key_terms=unverified_key_terms,
+            unverified_dependencies=unverified_dependencies,
         )
 
     return SectionCards(version=generated.get("version", 2), document=document, sections=sections)
+
+
+merge_cards = _merge_split_cards
 
 
 def load_section_cards(
@@ -248,7 +249,7 @@ def load_section_cards(
                 with open(lock_path, encoding="utf-8") as f:
                     lock_data = json.load(f) or {}
 
-            return merge_cards(gen_data, overrides_data, lock_data)
+            return _merge_split_cards(gen_data, overrides_data, lock_data)
         except Exception:
             pass
 
@@ -284,6 +285,8 @@ def load_section_cards(
 
     sections = {}
     for sec_id, sec_data in data.get("sections", {}).items():
+        mp = list(sec_data.get("must_preserve") or [])
+        vf = [{"value": val, "status": "verified", "source": sec_id} for val in mp]
         sections[sec_id] = SectionCard(
             id=sec_id,
             title=sec_data.get("title"),
@@ -291,9 +294,12 @@ def load_section_cards(
             path=sec_data.get("path"),
             key_terms=sec_data.get("key_terms"),
             depends_on=sec_data.get("depends_on"),
-            must_preserve=sec_data.get("must_preserve"),
+            must_preserve=mp,
             avoid=sec_data.get("avoid"),
             constraints=sec_data.get("constraints"),
+            verified_facts=vf,
+            unverified_key_terms=[],
+            unverified_dependencies=[],
         )
 
     return SectionCards(version=data.get("version", 1), document=document, sections=sections)

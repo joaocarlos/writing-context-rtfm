@@ -153,8 +153,10 @@ class TestContextPackGenerator(unittest.TestCase):
 
         self.assertEqual(
             pack.status, "degraded"
-        )  # Degraded due to missing section cards, NOT budget
-        self.assertEqual(len(pack.source_spans), 2)
+        )  # Degraded due to missing section cards
+        self.assertEqual(len(pack.source_spans), 1)
+        self.assertTrue(pack.quality.get("dropped_for_budget", 0) >= 1)
+
 
 
 if __name__ == "__main__":

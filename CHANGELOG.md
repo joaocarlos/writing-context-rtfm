@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-08-24
+
+### Added
+- Added coverage-first context selection for explicit `must_consider` concepts and citation keys, including per-obligation coverage, provenance, and actionable recovery diagnostics in `quality.atomic_coverage`.
+- Added bounded elastic expansion up to `context.max_token_budget`, allowing required evidence to take priority over token reduction without introducing repeated retrieval loops.
+- Added decomposed retrieval, fusion, and structural scores; card-uncertainty telemetry; verified prior-claim provenance; source-attributed feedback summaries; and structured context-pack output modes.
+
+### Changed
+- Improved query-family ranking, MMR diversity, provider quotas, BibTeX filtering, target-range scoring, and optional RRF behavior. RRF remains disabled by default.
+- Expanded cache identity and invalidation to include retrieval policy, required evidence, provider fingerprints, output mode, and model-specific embedding state.
+- Updated the personal-tool roadmap to reserve `0.11.0` for local hybrid retrieval experiments using `mixedbread-ai/mxbai-embed-large-v1`, `sentence-transformers/all-MiniLM-L6-v2`, and `Alibaba-NLP/gte-reranker-modernbert-base`.
+
+### Fixed
+- Enforced strict token caps for retrieved spans while preserving one-shot elastic behavior for normal writing packs.
+- Prevented informational elastic-budget notices from incorrectly degrading MCP results and made `refresh_index` report a truthful completion marker.
+- Made token estimation fall back deterministically when `tiktoken` encoding data is unavailable offline.
+- Restored strict `mypy` compliance across the modified context-pack, cache, server, CLI, and schema paths.
+
 ## [0.10.0] - 2026-08-23
 
 ### Added

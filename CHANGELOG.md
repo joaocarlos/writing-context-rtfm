@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-24
+
+### Changed
+- Required `rtfm-ai[embeddings]` 0.28.1 or newer for the current local index schema and retrieval behavior.
+
+### Fixed
+- Changed direct SQLite full-text queries from prefix matching to exact-token matching, preventing unrelated longer words from adding retrieval noise.
+- Normalized FTS5 BM25 values relative to the strongest match and exposed stable retrieval-rank and raw-score metadata for downstream context ranking.
+
 ## [0.11.0] - 2026-08-24
 
 ### Added

@@ -260,6 +260,96 @@ class TestResolveRtfmDbPath(unittest.TestCase):
         self.assertEqual(results[0].path, "intro.tex")
         self.assertIn("quantization", results[0].snippet.lower())
 
+    def test_direct_sqlite_search_preserves_relative_bm25_scores(self):
+        import sqlite3
+
+        db_path = self.project_root / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT, title TEXT, corpus TEXT);"
+        )
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, "
+            "line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute(
+            "CREATE VIRTUAL TABLE chunks_fts USING fts5(content, tokenize='porter unicode61');"
+        )
+        rows = [
+            (1, "strong.tex", "Strong", "routing mechanism routing mechanism routing mechanism"),
+            (2, "medium.tex", "Medium", "routing mechanism"),
+            (3, "weak.tex", "Weak", "routing appears once in otherwise unrelated material"),
+        ]
+        for row_id, filename, title, content in rows:
+            conn.execute(
+                "INSERT INTO books VALUES (?, ?, ?, 'manuscript')",
+                (row_id, filename, title),
+            )
+            conn.execute(
+                "INSERT INTO chunks VALUES (?, ?, ?, 1, 2, 'Routing')",
+                (row_id, row_id, content),
+            )
+            conn.execute(
+                "INSERT INTO chunks_fts(rowid, content) VALUES (?, ?)",
+                (row_id, content),
+            )
+        conn.commit()
+        conn.close()
+
+        adapter = RTFMAdapter(
+            project_root=str(self.project_root), allow_cli_fallback=False
+        )
+        results = adapter.search("routing mechanism", corpus="manuscript", limit=3)
+
+        self.assertEqual([item.path for item in results], ["strong.tex", "medium.tex", "weak.tex"])
+        self.assertEqual(results[0].score, 1.0)
+        self.assertGreater(results[0].score, results[1].score)
+        self.assertGreater(results[1].score, results[2].score)
+        self.assertEqual(
+            [item.metadata["retrieval_rank"] for item in results],
+            [1, 2, 3],
+        )
+        self.assertTrue(all(item.metadata["bm25_raw"] < 0 for item in results))
+
+    def test_direct_sqlite_search_uses_exact_tokens_not_prefixes(self):
+        import sqlite3
+
+        db_path = self.project_root / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT, title TEXT, corpus TEXT);"
+        )
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, "
+            "line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content);")
+        for row_id, filename, content in (
+            (1, "exact.tex", "cat"),
+            (2, "prefix.tex", "catalog"),
+        ):
+            conn.execute(
+                "INSERT INTO books VALUES (?, ?, ?, 'manuscript')",
+                (row_id, filename, filename),
+            )
+            conn.execute(
+                "INSERT INTO chunks VALUES (?, ?, ?, 1, 1, 'Terms')",
+                (row_id, row_id, content),
+            )
+            conn.execute(
+                "INSERT INTO chunks_fts(rowid, content) VALUES (?, ?)",
+                (row_id, content),
+            )
+        conn.commit()
+        conn.close()
+
+        adapter = RTFMAdapter(
+            project_root=str(self.project_root), allow_cli_fallback=False
+        )
+        results = adapter.search("cat", corpus="manuscript", limit=5)
+
+        self.assertEqual([item.path for item in results], ["exact.tex"])
+
     def test_direct_sqlite_search_rtfm_028_schema_and_corpus(self):
         import sqlite3
 

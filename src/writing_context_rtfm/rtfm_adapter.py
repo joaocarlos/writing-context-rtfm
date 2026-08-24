@@ -75,7 +75,7 @@ class RTFMAdapter:
         clean_terms = [t for t in re.sub(r"[^\w\s]", " ", query).split() if len(t) > 1]
         if not clean_terms:
             return None
-        fts_query = " OR ".join(f'"{t}"*' for t in clean_terms)
+        fts_query = " OR ".join(f'"{t}"' for t in clean_terms)
 
         conn = None
         try:
@@ -110,10 +110,16 @@ class RTFMAdapter:
             )
             cursor.execute(sql, parameters)
             rows = cursor.fetchall()
+            raw_scores = [
+                float(item["rank_score"]) if item["rank_score"] is not None else 0.0
+                for item in rows
+            ]
+            strongest = max((-raw_score for raw_score in raw_scores), default=0.0)
             results = []
-            for item in rows:
-                raw_score = float(item["rank_score"]) if item["rank_score"] is not None else 0.0
-                score = round(1.0 / (1.0 + max(0.0, raw_score)), 4)
+            for retrieval_rank, (item, raw_score) in enumerate(
+                zip(rows, raw_scores, strict=True), start=1
+            ):
+                score = round((-raw_score) / strongest, 6) if strongest > 0 else 1.0
                 results.append(
                     RTFMResult(
                         path=item["book_file"] or "",
@@ -124,7 +130,9 @@ class RTFMAdapter:
                         metadata={
                             "chapter_title": item["chapter_title"],
                             "book_title": item["book_title"],
-                            "rank": item["id"],
+                            "rank": retrieval_rank,
+                            "retrieval_rank": retrieval_rank,
+                            "bm25_raw": raw_score,
                         },
                     )
                 )

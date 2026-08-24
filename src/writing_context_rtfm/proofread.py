@@ -1,12 +1,17 @@
 import json
 import logging
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.section_cards import SectionCard, SectionCards
+from writing_context_rtfm.section_cards import (
+    SectionCard,
+    SectionCards,
+    normalize_terminology,
+)
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_tokens
 from writing_context_rtfm.utils import extract_keywords, is_allowed_source, scan_latex_commands
@@ -17,6 +22,8 @@ class TerminologyConstraint:
     term: str
     usage_examples: list[str]
     definition: str | None = None
+    variants: list[str] = field(default_factory=list)
+    avoid: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -91,7 +98,13 @@ class ProofreadPackGenerator:
     ):
         self.config = config
         self.section_cards = section_cards
-        self.adapter = adapter
+        # Proofreading already has the exact target text. Prior-usage retrieval is optional and
+        # must never launch an external worker lifecycle when the local SQLite index is absent.
+        self.adapter = (
+            RTFMAdapter(project_root=adapter.project_root, allow_cli_fallback=False)
+            if isinstance(adapter, RTFMAdapter)
+            else adapter
+        )
         self.store = store
 
     def generate(
@@ -136,7 +149,11 @@ class ProofreadPackGenerator:
 
         # 3. Extract key terms and get prior usage
         key_terms = extract_keywords(local_ctx.target_span)
-        terminology = self._get_prior_usage(key_terms, target_file, warnings)
+        card_terminology = self._get_card_terminology(local_ctx.target_span)
+        search_terms = [constraint.term for constraint in card_terminology]
+        search_terms.extend(key_terms)
+        prior_usage = self._get_prior_usage(search_terms, target_file, warnings)
+        terminology = self._combine_terminology(card_terminology, prior_usage)
 
         # LaTeX safety layer scanning
         latex_commands = scan_latex_commands(local_ctx.target_span)
@@ -283,6 +300,74 @@ class ProofreadPackGenerator:
                 seen_terms.add(term.lower())
 
         return constraints
+
+    @staticmethod
+    def _term_occurs(text: str, term: str) -> bool:
+        if not term:
+            return False
+        pattern = rf"(?<!\w){re.escape(term)}(?!\w)"
+        return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
+    def _get_card_terminology(self, target_text: str) -> list[TerminologyConstraint]:
+        if not self.section_cards or not self.section_cards.document.terminology:
+            return []
+
+        constraints: list[TerminologyConstraint] = []
+        glossary = normalize_terminology(self.section_cards.document.terminology)
+        for canonical, details in glossary.items():
+            forms = [canonical, *details["variants"], *details["avoid"]]
+            if not any(self._term_occurs(target_text, form) for form in forms):
+                continue
+            constraints.append(
+                TerminologyConstraint(
+                    term=canonical,
+                    usage_examples=[],
+                    definition=details["definition"] or None,
+                    variants=list(details["variants"]),
+                    avoid=list(details["avoid"]),
+                )
+            )
+            if len(constraints) >= 5:
+                break
+        return constraints
+
+    @staticmethod
+    def _combine_terminology(
+        card_constraints: list[TerminologyConstraint],
+        prior_constraints: list[TerminologyConstraint],
+    ) -> list[TerminologyConstraint]:
+        combined: list[TerminologyConstraint] = []
+        consumed_prior: set[int] = set()
+        for card_constraint in card_constraints:
+            forms = {
+                value.casefold()
+                for value in [
+                    card_constraint.term,
+                    *card_constraint.variants,
+                    *card_constraint.avoid,
+                ]
+            }
+            examples: list[str] = []
+            for index, prior in enumerate(prior_constraints):
+                if prior.term.casefold() in forms:
+                    examples.extend(prior.usage_examples)
+                    consumed_prior.add(index)
+            combined.append(
+                TerminologyConstraint(
+                    term=card_constraint.term,
+                    usage_examples=list(dict.fromkeys(examples))[:2],
+                    definition=card_constraint.definition,
+                    variants=card_constraint.variants,
+                    avoid=card_constraint.avoid,
+                )
+            )
+
+        for index, prior in enumerate(prior_constraints):
+            if index not in consumed_prior:
+                combined.append(prior)
+            if len(combined) >= 5:
+                break
+        return combined[:5]
 
     def _generate_constraints(
         self,

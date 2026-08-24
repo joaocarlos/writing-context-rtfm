@@ -1,6 +1,6 @@
 # Future Optimizations: Semantic Retrieval & Advanced Architecture
 
-This document outlines future iteration plans for introducing transformer-based semantic retrieval to the `writing-context-rtfm` codebase, alongside other high-value architectural optimizations.
+This document tracks experimental transformer-based semantic retrieval in the `writing-context-rtfm` codebase, alongside other high-value architectural optimizations.
 
 ---
 
@@ -10,7 +10,7 @@ The current search mechanism relies entirely on RTFM's lexical query matcher. Wh
 
 To address this, we propose a **Hybrid Retrieval (Sparse + Dense)** architecture using local transformer models.
 
-### Proposed Architecture
+### Experimental Architecture
 
 ```mermaid
 graph TD
@@ -28,13 +28,23 @@ graph TD
 
 #### Evaluation Candidates for v0.11.0
 
-The first local evaluation should compare two embedding tiers and one optional reranker:
+The first local evaluation compared two embedding tiers and one optional reranker:
 
 * **Quality-oriented embedding model**: `mixedbread-ai/mxbai-embed-large-v1`.
 * **Lightweight embedding model**: `sentence-transformers/all-MiniLM-L6-v2`.
 * **Optional deep reranker**: `Alibaba-NLP/gte-reranker-modernbert-base`, applied only to a bounded top candidate set.
 
-These are evaluation candidates, not release defaults. Selection should be based on required-evidence coverage, irrelevant-source rate, warm-query latency, memory use, and the amount of manual context repair needed in personal writing tasks. Exact citation keys, labels, references, equations, and protected numeric values must continue to bypass semantic matching.
+These are experimental 0.11.0 options, not enabled release defaults. Selection should be based on required-evidence coverage, irrelevant-source rate, warm-query latency, memory use, and the amount of manual context repair needed in personal writing tasks. Exact citation keys, labels, references, equations, and protected numeric values must continue to bypass semantic matching.
+
+#### Current experimental status
+
+The opt-in implementation is complete, but local canary work did not justify an always-on default.
+Use MiniLM as the practical CPU candidate. Apply ModernBERT only to a bounded candidate set when the
+extra latency is acceptable, because reranking can improve noise filtering while changing useful
+ordering. Revisit Mixedbread only with MPS/GPU, ONNX, TEI, or another optimized runtime; its CPU
+indexing cost is not suitable for the default interactive workflow. All three options ship disabled
+and explicitly experimental in 0.11.0. Promotion still requires repeatable improvements in required
+evidence coverage and reduced manual context repair.
 
 #### A. Dense Embedding Retrieval (Bi-Encoder)
 *   **Pluggable Drivers**: Supports both local CPU/GPU execution and remote cloud APIs.
@@ -58,23 +68,32 @@ For the `"deep"` packing mode, pass the top-ranked hybrid results to a Cross-Enc
 *   **Filtering**: Rerank only a bounded lexical/dense candidate set. Calibrate any threshold on personal writing tasks; do not treat semantic relevance as proof that a factual, citation, numeric, or protected-content obligation is satisfied.
 
 #### D. Configuration Schema (`.writing-context/config.yaml`)
-To support switching between local lightweight configurations and maximum-accuracy environments, the following schema will be used:
+The implemented opt-in schema is:
 ```yaml
-retrieval:
-  hybrid_search:
-    enabled: true
-    dense_weight: 0.5
-    sparse_weight: 0.5
-    
-  embedding:
-    provider: local  # options: local, gemini, openai
-    model_name: "mixedbread-ai/mxbai-embed-large-v1"
-    
-  reranker:
-    enabled: true
-    provider: local  # options: local, cohere, jina
-    model_name: "Alibaba-NLP/gte-reranker-modernbert-base"
+providers:
+  local_embeddings:
+    enabled: false
+    model: sentence-transformers/all-MiniLM-L6-v2
+    device: cpu
+    batch_size: 16
+    torch_threads: 4
+    min_score: 0.5
+    sync_on_query: true
+
+  local_reranker:
+    enabled: false
+    model: Alibaba-NLP/gte-reranker-modernbert-base
+    device: cpu
+    batch_size: 4
+    torch_threads: 4
+    max_length: 512
+    candidate_limit: 40
+    blend_weight: 0.25
 ```
+
+Proofreading remains outside this hybrid path. Its exact target line range and adjacent paragraphs
+are direct-read inputs; retrieval is used only for terminology examples and must be allowed to fail
+without removing the target.
 
 ---
 

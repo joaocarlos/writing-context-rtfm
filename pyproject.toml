@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "writing-context-rtfm"
-version = "0.10.1"
+version = "0.11.0"
 description = "MCP extension for writing-context retrieval relying on RTFM"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -31,6 +31,10 @@ dependencies = [
 [project.optional-dependencies]
 tiktoken = [
     "tiktoken",
+]
+local-models = [
+    "sentence-transformers>=3.4.1",
+    "transformers>=4.48.0",
 ]
 dev = [
     "pytest>=8.0",

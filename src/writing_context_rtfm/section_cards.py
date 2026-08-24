@@ -40,6 +40,67 @@ class SectionCards:
     sections: dict[str, SectionCard]
 
 
+def normalize_terminology(raw: Any) -> dict[str, dict[str, Any]]:
+    """Normalize legacy and structured glossary entries to one stable shape."""
+    if not isinstance(raw, dict):
+        return {}
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for raw_term, raw_details in raw.items():
+        term = str(raw_term).strip()
+        if not term:
+            continue
+        if isinstance(raw_details, str):
+            definition = raw_details
+            variants: list[str] = []
+            avoid: list[str] = []
+        elif isinstance(raw_details, dict):
+            definition = str(raw_details.get("definition") or "")
+            variants = [
+                str(value).strip()
+                for value in (raw_details.get("variants") or [])
+                if str(value).strip()
+            ]
+            avoid = [
+                str(value).strip()
+                for value in (raw_details.get("avoid") or [])
+                if str(value).strip()
+            ]
+        else:
+            continue
+        normalized[term] = {
+            "definition": definition,
+            "variants": list(dict.fromkeys(variants)),
+            "avoid": list(dict.fromkeys(avoid)),
+        }
+    return normalized
+
+
+def _merge_terminology(generated: Any, overrides: Any) -> dict[str, dict[str, Any]]:
+    """Merge glossary entries while treating author overrides as canonical."""
+    merged = normalize_terminology(generated)
+    canonical_keys = {term.casefold(): term for term in merged}
+
+    for override_term, override_details in normalize_terminology(overrides).items():
+        previous_term = canonical_keys.get(override_term.casefold())
+        previous = merged.pop(previous_term, None) if previous_term else None
+        if previous:
+            definition = override_details["definition"] or previous["definition"]
+            variants = list(
+                dict.fromkeys([*previous["variants"], *override_details["variants"]])
+            )
+            avoid = list(dict.fromkeys([*previous["avoid"], *override_details["avoid"]]))
+            merged[override_term] = {
+                "definition": definition,
+                "variants": variants,
+                "avoid": avoid,
+            }
+        else:
+            merged[override_term] = override_details
+        canonical_keys[override_term.casefold()] = override_term
+    return merged
+
+
 def migrate_legacy_cards(project_root: str) -> bool:
     """Migrates legacy section_cards.yaml to split cards structure."""
     root = Path(project_root).resolve()
@@ -105,7 +166,9 @@ def _merge_split_cards(
     doc_title = over_doc.get("title") or gen_doc.get("title")
     doc_thesis = over_doc.get("thesis") or gen_doc.get("thesis")
     doc_style = over_doc.get("writing_style") or gen_doc.get("writing_style")
-    doc_term = over_doc.get("terminology") or gen_doc.get("terminology")
+    doc_term = _merge_terminology(
+        gen_doc.get("terminology"), over_doc.get("terminology")
+    )
 
     document = DocumentCard(
         title=doc_title, thesis=doc_thesis, writing_style=doc_style, terminology=doc_term
@@ -263,18 +326,7 @@ def load_section_cards(
         data = yaml.safe_load(f) or {}
 
     doc_data = data.get("document", {})
-    terminology_raw = doc_data.get("terminology") or {}
-    terminology = {}
-    if isinstance(terminology_raw, dict):
-        for term, val in terminology_raw.items():
-            if isinstance(val, str):
-                terminology[term] = {"definition": val, "variants": [], "avoid": []}
-            elif isinstance(val, dict):
-                terminology[term] = {
-                    "definition": val.get("definition") or "",
-                    "variants": val.get("variants") or [],
-                    "avoid": val.get("avoid") or [],
-                }
+    terminology = normalize_terminology(doc_data.get("terminology"))
 
     document = DocumentCard(
         title=doc_data.get("title"),

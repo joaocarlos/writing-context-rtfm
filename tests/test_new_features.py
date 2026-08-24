@@ -135,6 +135,18 @@ class TestNewFeatures(unittest.TestCase):
                 "title": "Mock Manuscript",
                 "thesis": "Thesis",
                 "writing_style": {"tone": "academic", "avoid": []},
+                "terminology": {
+                    "Quantization": {
+                        "definition": "Mapping values to a finite representation.",
+                        "variants": ["Model Quantization"],
+                        "avoid": ["Quantizing"],
+                    },
+                    "Edge device": {
+                        "definition": "A device operating near the data source.",
+                        "variants": [],
+                        "avoid": [],
+                    },
+                },
             },
             "sections": {
                 "section_intro": {
@@ -164,12 +176,35 @@ class TestNewFeatures(unittest.TestCase):
             patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter") as MockAdapter,
         ):
             mock_adapter = MockAdapter.return_value
-            mock_adapter.search.return_value = [mock_result]
+            def fake_search(query, **_kwargs):
+                if query.casefold() == "edge device":
+                    return []
+                result = MagicMock()
+                result.path = mock_result.path
+                result.line_start = mock_result.line_start
+                result.line_end = mock_result.line_end
+                snippets = {
+                    "quantization": "We use quantization on the micro-controller.",
+                    "model quantization": "Model Quantization is accepted here.",
+                    "quantizing": "An old draft says Quantizing the model.",
+                    "micro-controller": "The micro-controller performs inference.",
+                }
+                result.snippet = snippets[query.casefold()]
+                return [result]
+
+            mock_adapter.search.side_effect = fake_search
 
             res = audit_manuscript_terminology(str(self.project_dir))
             self.assertEqual(res["status"], "success")
-            self.assertEqual(res["audited_terms_count"], 2)
+            self.assertEqual(res["audited_terms_count"], 3)
             self.assertIn("quantization", res["report"])
+            quantization = res["report"]["quantization"]
+            self.assertEqual(quantization["canonical_term"], "Quantization")
+            self.assertGreaterEqual(quantization["forbidden_occurrence_count"], 1)
+            self.assertTrue(
+                any("forbidden form" in warning.lower() for warning in quantization["warnings"])
+            )
+            self.assertIn("edge device", res["report"])
 
     def test_mcp_new_routes(self):
         # 1. Test prompts/list

@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,8 +10,10 @@ from writing_context_rtfm.config import (
     SectionCardsConfig,
 )
 from writing_context_rtfm.proofread import ProofreadPackGenerator
+from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import RTFMResult
 from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
+from writing_context_rtfm.server import _format_proofread_section_prompt
 
 
 @pytest.fixture
@@ -189,6 +191,58 @@ def test_proofread_adapter_search_exception(
     assert pack.target.file_path == test_file
     assert len(pack.constraints.terminology) == 0
     assert any("RTFM search failed" in w for w in pack.warnings)
+
+
+def test_proofread_preserves_card_terminology_when_prior_usage_fails(
+    mock_config, mock_adapter, mock_store, tmp_path
+):
+    target = tmp_path / "terms.tex"
+    target.write_text(
+        "We apply Model Quantization and avoid Quantizing the controller.\n",
+        encoding="utf-8",
+    )
+    cards = SectionCards(
+        version=2,
+        document=DocumentCard(
+            terminology={
+                "Quantization": {
+                    "definition": "Mapping values to a finite representation.",
+                    "variants": ["Model Quantization"],
+                    "avoid": ["Quantizing"],
+                }
+            }
+        ),
+        sections={
+            "terms": SectionCard(id="terms", path="terms.tex", key_terms=["Quantization"])
+        },
+    )
+    mock_adapter.search.side_effect = RuntimeError("offline index")
+    generator = ProofreadPackGenerator(mock_config, cards, mock_adapter, mock_store)
+
+    pack = generator.generate(str(target), 1, 1, mode="consistency")
+
+    term = next(item for item in pack.constraints.terminology if item.term == "Quantization")
+    assert term.definition == "Mapping values to a finite representation."
+    assert term.variants == ["Model Quantization"]
+    assert term.avoid == ["Quantizing"]
+    assert term.usage_examples == []
+    prompt = _format_proofread_section_prompt(pack)
+    assert "Accepted variants: Model Quantization" in prompt
+    assert "Avoid: Quantizing" in prompt
+
+
+def test_proofread_concrete_adapter_never_falls_back_to_cli(
+    mock_config, mock_section_cards, mock_store, test_file
+):
+    adapter = RTFMAdapter(project_root=mock_config.rtfm.project_root)
+    with patch("writing_context_rtfm.rtfm_adapter.subprocess.run") as run_command:
+        pack = ProofreadPackGenerator(
+            mock_config, mock_section_cards, adapter, mock_store
+        ).generate(test_file, 3, 4)
+
+    run_command.assert_not_called()
+    assert "target paragraph line 1" in pack.local_context.target_span
+    assert any("CLI fallback is disabled" in warning for warning in pack.warnings)
 
 
 def test_server_handle_proofread_latex_safety_status(

@@ -24,6 +24,11 @@ This is a product-improvement plan for a personal writing workflow, not a claim 
 - Put the concrete facts, concepts, and citation keys that must appear in `must_consider`; keep broad stylistic instructions in the task or card constraints.
 - Inspect `quality.atomic_coverage` before drafting. If coverage is incomplete, retrieve or read the missing evidence before generating prose.
 - Preserve target LaTeX commands, labels, references, equations, citations, and protected literals.
+- Keep canonical terms, accepted variants, and forbidden forms in the document glossary. Run the
+  terminology audit before a final consistency pass; proofreading consumes matching glossary rules
+  directly from the exact target text.
+- Keep automatic RTFM sync disabled. Refresh explicitly after edits so retrieval never hides a
+  long-running worker lifecycle inside a pack request.
 
 ## Validation for personal use
 
@@ -44,4 +49,9 @@ Promote a change into the default workflow when it reduces manual repair without
 2. Add a bounded direct-read fallback for known dependency files when retrieval has no candidate for an atom.
 3. Learn from `submit_generation_feedback` which sources repeatedly help or distract for a target.
 4. Revisit RRF only after atomic coverage and source-noise diagnostics are stable.
-5. Evaluate proofreading separately because its evidence and preservation requirements differ from drafting.
+5. Keep proofreading target-first: direct-read the requested line range and adjacent paragraphs.
+   Evaluate any semantic enhancement only for terminology consistency; never use retrieval to
+   rediscover or replace the text being edited.
+6. Keep local MiniLM and ModernBERT retrieval experimental. Current engineering canaries do not
+   justify always-on dense retrieval or reranking. Prefer a future conditional fallback for explicit
+   uncovered `must_consider` atoms.

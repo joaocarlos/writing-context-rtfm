@@ -12,7 +12,7 @@ from writing_context_rtfm.schemas import MCPServerConfig, ProviderConfig
 class RTFMConfig:
     corpus: str = "default"
     project_root: str = "."
-    sync_before_pack: bool = True
+    sync_before_pack: bool = False
 
 
 @dataclass(frozen=True)
@@ -181,7 +181,13 @@ def load_config(project_root: str = ".") -> AppConfig:
             if k not in ("enabled", "mcp_server", "sse_url", "headers", "extra"):
                 extra.setdefault(k, v)
 
-        NON_MCP_PROVIDERS = {"openai_semantic", "huggingface", "local_embeddings", "bibtex"}
+        NON_MCP_PROVIDERS = {
+            "openai_semantic",
+            "huggingface",
+            "local_embeddings",
+            "local_reranker",
+            "bibtex",
+        }
         if enabled and name not in NON_MCP_PROVIDERS and not mcp_server and not sse_url:
             raise ValueError(
                 f"Provider '{name}' must configure either 'mcp_server' or 'sse_url' if enabled."

@@ -359,7 +359,7 @@ version: 1
 rtfm:
   corpus: manuscript
   project_root: .
-  sync_before_pack: true
+  sync_before_pack: false  # Opt in only after verifying the local RTFM lifecycle.
 
 context:
   default_token_budget: 12000

@@ -5,8 +5,8 @@ version: 1
 rtfm:
   # The corpus name registered in RTFM for this manuscript project.
   corpus: manuscript
-  # Enable auto-sync before generating a context pack to ensure the index is up-to-date.
-  # sync_before_pack: true
+  # Auto-sync is opt-in; use refresh_index explicitly for predictable foreground work.
+  # sync_before_pack: false
 
 # Context pack generation settings
 # context:

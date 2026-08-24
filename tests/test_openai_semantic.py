@@ -144,6 +144,7 @@ def test_fetch_context(
         spans = provider.fetch_context(["query text"], None, 1)
 
         assert len(spans) == 1
+        store.get_all_openai_embeddings.assert_called_once_with("test-model-3")
         assert spans[0].path == "a.tex"
         assert spans[0].score > 0.99
         assert spans[0].metadata["snippet"] == "Content C1"

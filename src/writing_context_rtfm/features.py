@@ -201,10 +201,10 @@ def initialize_section_cards(project_root: str | None = None) -> dict[str, Any]:
 
 
 def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, Any]:
-    """Audits key terms from section cards against their actual occurrences in the RTFM index."""
+    """Audit canonical terms, accepted variants, and forbidden forms in the RTFM index."""
     from writing_context_rtfm.config import load_config
     from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-    from writing_context_rtfm.section_cards import load_section_cards
+    from writing_context_rtfm.section_cards import load_section_cards, normalize_terminology
 
     root = Path(project_root or ".").resolve()
     try:
@@ -224,9 +224,23 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
         return {"status": "error", "message": "Failed to load section cards"}
     adapter = RTFMAdapter(str(root))
 
-    # Map each section path to its declared section card
-    path_to_section = {}
-    term_declarations: dict[str, list[str]] = {}  # term_lower -> list of section_ids
+    # Map each section path to its declared section card and build a canonical registry.
+    path_to_section: dict[str, str] = {}
+    glossary = normalize_terminology(section_cards.document.terminology)
+    registry: dict[str, dict[str, Any]] = {}
+    form_to_canonical: dict[str, str] = {}
+    for canonical, details in glossary.items():
+        key = canonical.casefold()
+        registry[key] = {
+            "canonical_term": canonical,
+            "definition": details["definition"],
+            "variants": details["variants"],
+            "avoid": details["avoid"],
+            "declared_in_sections": [],
+        }
+        for form in [canonical, *details["variants"], *details["avoid"]]:
+            form_to_canonical[form.casefold()] = key
+
     for sid, scard in section_cards.sections.items():
         if scard.path:
             p = Path(scard.path)
@@ -235,80 +249,149 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
             path_to_section[str(p)] = sid
 
         for term in scard.key_terms or []:
-            term_lower = term.lower()
-            if term_lower not in term_declarations:
-                term_declarations[term_lower] = []
-            term_declarations[term_lower].append(sid)
+            key = form_to_canonical.get(term.casefold(), term.casefold())
+            if key not in registry:
+                registry[key] = {
+                    "canonical_term": term,
+                    "definition": "",
+                    "variants": [],
+                    "avoid": [],
+                    "declared_in_sections": [],
+                }
+                form_to_canonical[term.casefold()] = key
+            declarations = registry[key]["declared_in_sections"]
+            if sid not in declarations:
+                declarations.append(sid)
 
-    report = {}
-    futures = {}
+    def contains_form(snippet: str, form: str) -> bool:
+        pattern = rf"(?<!\w){re.escape(form)}(?!\w)"
+        return re.search(pattern, snippet, flags=re.IGNORECASE) is not None
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        # Submit all search requests in parallel
-        for term_lower in term_declarations:
-            futures[term_lower] = executor.submit(
-                adapter.search, term_lower, corpus=config.rtfm.corpus, limit=50
+    search_specs: list[tuple[str, str, str]] = []
+    for key, entry in registry.items():
+        search_specs.append((key, "canonical", entry["canonical_term"]))
+        search_specs.extend((key, "variant", form) for form in entry["variants"])
+        search_specs.extend((key, "avoid", form) for form in entry["avoid"])
+
+    report: dict[str, Any] = {}
+    futures: dict[tuple[str, str, str], Any] = {}
+    max_workers = max(1, min(4, len(search_specs)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        for spec in search_specs:
+            futures[spec] = executor.submit(
+                adapter.search, spec[2], corpus=config.rtfm.corpus, limit=50
             )
 
-        # Process results in original declaration order to maintain deterministic report order
-        for term_lower, sids in term_declarations.items():
+        occurrences_by_spec: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for spec in search_specs:
             try:
-                results = futures[term_lower].result()
+                results = futures[spec].result()
             except Exception as e:
                 return {"status": "error", "message": f"RTFM search failed during audit: {e}"}
-
-            occurrences = []
-            warnings = []
-            occurring_paths = set()
-
+            form = spec[2]
+            occurrences: list[dict[str, Any]] = []
             for r in results:
+                snippet = r.snippet or ""
+                if not contains_form(snippet, form):
+                    continue
                 p = Path(r.path)
                 if p.is_absolute():
                     p = p.relative_to(root)
-                p_str = str(p)
-                occurring_paths.add(p_str)
                 occurrences.append(
                     {
                         "path": r.path,
                         "line_start": r.line_start,
                         "line_end": r.line_end,
-                        "snippet": r.snippet,
+                        "snippet": snippet,
                     }
                 )
+            occurrences_by_spec[spec] = occurrences
 
-            if not occurrences:
+    for key, entry in registry.items():
+        canonical = entry["canonical_term"]
+        sids = entry["declared_in_sections"]
+        canonical_occurrences = occurrences_by_spec.get((key, "canonical", canonical), [])
+        variant_occurrences = {
+            form: occurrences_by_spec.get((key, "variant", form), [])
+            for form in entry["variants"]
+        }
+        forbidden_occurrences = {
+            form: occurrences_by_spec.get((key, "avoid", form), [])
+            for form in entry["avoid"]
+        }
+        all_occurrences = list(canonical_occurrences)
+        for occurrences in [*variant_occurrences.values(), *forbidden_occurrences.values()]:
+            all_occurrences.extend(occurrences)
+
+        deduplicated: list[dict[str, Any]] = []
+        seen_occurrences: set[tuple[Any, ...]] = set()
+        for occurrence in all_occurrences:
+            identity = (
+                occurrence["path"],
+                occurrence["line_start"],
+                occurrence["line_end"],
+                occurrence["snippet"],
+            )
+            if identity not in seen_occurrences:
+                seen_occurrences.add(identity)
+                deduplicated.append(occurrence)
+
+        warnings: list[str] = []
+        if not deduplicated:
+            warnings.append(f"Term '{canonical}' is declared but never found in the index.")
+        for form, occurrences in forbidden_occurrences.items():
+            if occurrences:
                 warnings.append(
-                    f"Term '{term_lower}' is declared in {sids} but never found in the index."
+                    f"Forbidden form '{form}' for canonical term '{canonical}' occurs "
+                    f"{len(occurrences)} time(s)."
                 )
 
-            for p_str in occurring_paths:
-                sid_occurrence = path_to_section.get(p_str)
-                if sid_occurrence:
-                    declares = False
-                    for sid in sids:
-                        if sid == sid_occurrence:
-                            declares = True
-                            break
-                        occ_card = section_cards.sections.get(sid_occurrence)
-                        if occ_card and sid in (occ_card.depends_on or []):
-                            declares = True
-                            break
-                    if not declares:
-                        warnings.append(
-                            f"Term '{term_lower}' is used in '{p_str}' (Section '{sid_occurrence}'), "
-                            f"but '{sid_occurrence}' neither declares it nor depends on sections that do ({sids})."
-                        )
-                else:
-                    warnings.append(f"Term '{term_lower}' is used in unmapped file '{p_str}'.")
+        occurring_paths = {
+            str(Path(occurrence["path"]).relative_to(root))
+            if Path(occurrence["path"]).is_absolute()
+            else str(Path(occurrence["path"]))
+            for occurrence in deduplicated
+        }
+        for p_str in occurring_paths:
+            sid_occurrence = path_to_section.get(p_str)
+            if sid_occurrence and sids:
+                declares = sid_occurrence in sids
+                occ_card = section_cards.sections.get(sid_occurrence)
+                if not declares and occ_card:
+                    declares = any(sid in (occ_card.depends_on or []) for sid in sids)
+                if not declares:
+                    warnings.append(
+                        f"Term '{canonical}' is used in '{p_str}' (Section '{sid_occurrence}'), "
+                        f"but '{sid_occurrence}' neither declares it nor depends on sections "
+                        f"that do ({sids})."
+                    )
+            elif not sid_occurrence:
+                warnings.append(f"Term '{canonical}' is used in unmapped file '{p_str}'.")
 
-            report[term_lower] = {
-                "declared_in_sections": sids,
-                "occurrence_count": len(occurrences),
-                "warnings": warnings,
-                "occurrences": occurrences[:5],
-            }
+        report[key] = {
+            "canonical_term": canonical,
+            "definition": entry["definition"],
+            "variants": entry["variants"],
+            "avoid": entry["avoid"],
+            "declared_in_sections": sids,
+            "occurrence_count": len(deduplicated),
+            "canonical_occurrence_count": len(canonical_occurrences),
+            "accepted_variant_occurrence_count": sum(
+                len(occurrences) for occurrences in variant_occurrences.values()
+            ),
+            "forbidden_occurrence_count": sum(
+                len(occurrences) for occurrences in forbidden_occurrences.values()
+            ),
+            "warnings": warnings,
+            "occurrences": deduplicated[:5],
+        }
 
-    return {"status": "success", "audited_terms_count": len(term_declarations), "report": report}
+    return {
+        "status": "success",
+        "audited_terms_count": len(registry),
+        "consistency_issues_count": sum(len(entry["warnings"]) for entry in report.values()),
+        "report": report,
+    }
 
 
 def get_term_context(term: str, project_root: str | None = None) -> dict[str, Any]:
@@ -357,22 +440,34 @@ def get_term_context(term: str, project_root: str | None = None) -> dict[str, An
     # Resolve match
     if term_lower in direct_lookup:
         canonical_term, details = direct_lookup[term_lower]
+        match_type = "canonical"
     elif term_lower in variant_lookup:
         canonical_term, details = variant_lookup[term_lower]
+        match_type = "variant"
     elif term_lower in avoid_lookup:
         canonical_term, details = avoid_lookup[term_lower]
+        match_type = "avoid"
     else:
         return {
             "status": "not_found",
             "message": f"Term '{term}' not found in terminology dictionary.",
         }
 
+    variants = details.get("variants", [])
+    avoid = details.get("avoid", [])
+    guidance_parts = [f"Prefer the canonical term '{canonical_term}'."]
+    if variants:
+        guidance_parts.append(f"Accepted variants: {', '.join(variants)}.")
+    if avoid:
+        guidance_parts.append(f"Avoid: {', '.join(avoid)}.")
     return {
         "status": "found",
         "term": canonical_term,
+        "match_type": match_type,
         "definition": details.get("definition", ""),
-        "variants": details.get("variants", []),
-        "avoid": details.get("avoid", []),
+        "variants": variants,
+        "avoid": avoid,
+        "consistency_guidance": " ".join(guidance_parts),
     }
 
 

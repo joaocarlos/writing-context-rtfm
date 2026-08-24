@@ -3,6 +3,7 @@ import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
+from writing_context_rtfm.config import RTFMConfig
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter, RTFMAdapterError
 from writing_context_rtfm.schemas import RTFMResult
 
@@ -11,6 +12,9 @@ class TestRTFMAdapter(unittest.TestCase):
     def setUp(self):
         self.adapter = RTFMAdapter()
         self.adapter.resolved_rtfm = "rtfm"
+
+    def test_auto_sync_is_disabled_by_default(self):
+        self.assertFalse(RTFMConfig().sync_before_pack)
 
     @patch("writing_context_rtfm.rtfm_adapter.subprocess.run")
     def test_search_success(self, mock_run):

@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+
 from writing_context_rtfm.section_cards import (
     DocumentCard,
     SectionCard,
@@ -97,6 +98,7 @@ class TestSectionCardsDeep(unittest.TestCase):
         self.assertEqual(cards.document.title, "Overridden Title")
         self.assertEqual(cards.document.thesis, "Generated Thesis")
         self.assertIn("ML", cards.document.terminology)
+        self.assertIn("NLP", cards.document.terminology)
         self.assertEqual(
             cards.document.terminology["ML"]["definition"], "Overridden Machine Learning"
         )
@@ -113,6 +115,30 @@ class TestSectionCardsDeep(unittest.TestCase):
         self.assertIn("Limit to 500 words", sec.constraints)
         self.assertIn("Exclude future work", sec.constraints)
         self.assertIn("Prefer DL over DNN", sec.constraints)
+
+    def test_merge_normalizes_scalar_terminology_entries(self):
+        cards = merge_cards(
+            {
+                "version": 2,
+                "document": {
+                    "terminology": {
+                        "Latency": "Time between request and response.",
+                    }
+                },
+                "sections": {},
+            },
+            {},
+            {},
+        )
+
+        self.assertEqual(
+            cards.document.terminology["Latency"],
+            {
+                "definition": "Time between request and response.",
+                "variants": [],
+                "avoid": [],
+            },
+        )
 
     def test_validate_section_cards(self):
         # Create valid cards

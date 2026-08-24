@@ -162,6 +162,7 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         from writing_context_rtfm.utils import resolve_rtfm_db_path
 
         extra = self._get_provider_extra()
+        model = extra.get("model", "text-embedding-3-small")
         rtfm_db_path = str(resolve_rtfm_db_path(Path(self.config.rtfm.project_root)))
 
         with ExtensionStore(self.config.cache.path) as store:
@@ -169,7 +170,7 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
             if not extra.get("auto_sync", False):
                 self.sync_chunks(store, rtfm_db_path)
 
-            all_embs = store.get_all_openai_embeddings()
+            all_embs = store.get_all_openai_embeddings(model)
             if not all_embs:
                 return []
 
@@ -180,7 +181,6 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         chunk_ids = [e["chunk_id"] for e in all_embs]
         matrix = np.vstack([np.frombuffer(e["embedding"], dtype=np.float32) for e in all_embs])
 
-        model = extra.get("model", "text-embedding-3-small")
         try:
             query_embs = get_openai_embeddings(queries, model, api_key)
         except Exception:

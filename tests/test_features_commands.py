@@ -1,10 +1,10 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import yaml
+
 from writing_context_rtfm.features import (
     audit_manuscript_terminology,
     cards_build_command,
@@ -119,11 +119,18 @@ section_cards:
 
         res = get_term_context("Quantization", str(self.root))
         self.assertEqual(res["term"], "Quantization")
+        self.assertEqual(res["match_type"], "canonical")
         self.assertIn("Mapping continuous values", res["definition"])
 
         # Test variant lookup
         res_var = get_term_context("Model Quantization", str(self.root))
         self.assertEqual(res_var["term"], "Quantization")
+        self.assertEqual(res_var["match_type"], "variant")
+
+        res_avoid = get_term_context("Quantizing", str(self.root))
+        self.assertEqual(res_avoid["term"], "Quantization")
+        self.assertEqual(res_avoid["match_type"], "avoid")
+        self.assertIn("Quantization", res_avoid["consistency_guidance"])
 
         # Test unknown term
         res_unknown = get_term_context("NonExistentTerm", str(self.root))
@@ -172,7 +179,6 @@ section_cards:
 
     @patch("writing_context_rtfm.semantic_extractor.extract_semantic_metadata")
     def test_cards_infer_command(self, mock_extract):
-        from writing_context_rtfm.features import cards_infer_command
 
         mock_extract.return_value = {
             "rhetorical_role": "introductory",

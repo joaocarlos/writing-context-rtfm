@@ -214,7 +214,7 @@ version: 1
 rtfm:
   corpus: manuscript
   project_root: .
-  sync_before_pack: true
+  sync_before_pack: false  # Prefer explicit refresh_index calls.
 
 context:
   default_token_budget: 12000
@@ -252,7 +252,7 @@ from dataclasses import dataclass
 class RTFMConfig:
     corpus: str = "manuscript"
     project_root: str = "."
-    sync_before_pack: bool = True
+    sync_before_pack: bool = False
 
 
 @dataclass(frozen=True)

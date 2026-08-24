@@ -370,8 +370,8 @@ def init_command(args: argparse.Namespace) -> None:
             "rtfm:\n"
             "  # The corpus name registered in RTFM for this manuscript project.\n"
             "  corpus: default\n"
-            "  # Enable auto-sync before generating a context pack to ensure the index is up-to-date.\n"
-            "  # sync_before_pack: true\n\n"
+            "  # Auto-sync is opt-in; use refresh_index explicitly for predictable foreground work.\n"
+            "  # sync_before_pack: false\n\n"
             "# Context pack generation settings\n"
             "# context:\n"
             "  # The default input token budget for generating writing context packs.\n"
@@ -592,10 +592,13 @@ def pack_command(args: argparse.Namespace) -> None:
     adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
     with ExtensionStore(config.cache.path) as store:
         store.init_db()
-        from writing_context_rtfm.providers import get_active_providers
+        from writing_context_rtfm.providers import get_active_providers, get_active_reranker
 
         providers = get_active_providers(config)
-        generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
+        reranker = get_active_reranker(config)
+        generator = ContextPackGenerator(
+            config, cards, adapter, store, providers=providers, reranker=reranker
+        )
 
         role_budgets = None
         if getattr(args, "role_budgets", None):

@@ -7,6 +7,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.hashing import (
@@ -14,6 +15,7 @@ from writing_context_rtfm.hashing import (
     compute_task_hash,
     stable_hash,
 )
+from writing_context_rtfm.local_models import SpanReranker
 from writing_context_rtfm.providers.base import BaseContextProvider
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import (
@@ -24,7 +26,11 @@ from writing_context_rtfm.schemas import (
     RTFMResult,
     SourceSpan,
 )
-from writing_context_rtfm.section_cards import SectionCard, SectionCards
+from writing_context_rtfm.section_cards import (
+    SectionCard,
+    SectionCards,
+    normalize_terminology,
+)
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.token_budget import estimate_span_tokens, estimate_tokens
 from writing_context_rtfm.utils import (
@@ -392,12 +398,14 @@ class ContextPackGenerator:
         adapter: RTFMAdapter,
         store: ExtensionStore,
         providers: list[BaseContextProvider] | None = None,
+        reranker: SpanReranker | None = None,
     ):
         self.config = config
         self.section_cards = section_cards
         self.adapter = adapter
         self.store = store
         self.providers = providers or []
+        self.reranker = reranker
         self._hash_cache: dict[Path, tuple[float, int, str]] = {}
 
     def _get_file_hash(self, path: Path, fallback_val: str) -> str:
@@ -926,6 +934,9 @@ class ContextPackGenerator:
                 fp = p.get_fingerprint(self.config)
                 if fp:
                     provider_fps.append(f"{p.provider_id}:{fp}")
+        if self.reranker is not None:
+            with contextlib.suppress(Exception):
+                provider_fps.append(f"reranker:{self.reranker.get_fingerprint()}")
         retrieval_fingerprint = compute_retrieval_fingerprint(rtfm_db, provider_fps)
 
         if self.config.cache.enabled:
@@ -1432,6 +1443,14 @@ class ContextPackGenerator:
         # --- Deduplication ---
         deduped = self._deduplicate_spans(snapped_candidates)
 
+        # --- Optional bounded local cross-encoder reranking ---
+        if self.reranker is not None:
+            try:
+                deduped = self.reranker.rerank(task, deduped)
+            except Exception as e:
+                warnings.append(f"Local reranker failed: {e}")
+                status = "degraded"
+
         # --- Score filtering ---
         filtered, discarded_count = self._filter_by_score(deduped, target_card, dep_cards)
         quality.discarded_low_score = discarded_count
@@ -1709,7 +1728,7 @@ class ContextPackGenerator:
             and self.section_cards.document
             and self.section_cards.document.terminology
         ):
-            glossary = self.section_cards.document.terminology
+            glossary = normalize_terminology(self.section_cards.document.terminology)
             key_terms = []
             if target_card and target_card.key_terms:
                 key_terms.extend(target_card.key_terms)
@@ -1717,26 +1736,36 @@ class ContextPackGenerator:
                 if dc.key_terms:
                     key_terms.extend(dc.key_terms)
 
-            canonical_lookup = {}
-            variant_lookup = {}
+            canonical_lookup: dict[str, tuple[str, dict[str, Any]]] = {}
+            variant_lookup: dict[str, tuple[str, dict[str, Any]]] = {}
             for canonical_term, details in glossary.items():
-                defn = details.get("definition") or ""
-                canonical_lookup[canonical_term.lower()] = (canonical_term, defn)
+                canonical_lookup[canonical_term.casefold()] = (canonical_term, details)
                 for variant in details.get("variants", []):
-                    variant_lookup[variant.lower()] = (canonical_term, defn)
+                    variant_lookup[variant.casefold()] = (canonical_term, details)
 
+            selected_terminology: dict[str, dict[str, Any]] = {}
             for kt in key_terms:
-                kt_lower = kt.lower()
-                if kt_lower in canonical_lookup:
-                    canonical_term, defn = canonical_lookup[kt_lower]
-                    terminology_pack[canonical_term] = defn
-                elif kt_lower in variant_lookup:
-                    canonical_term, defn = variant_lookup[kt_lower]
-                    terminology_pack[canonical_term] = defn
+                kt_folded = kt.casefold()
+                match = canonical_lookup.get(kt_folded) or variant_lookup.get(kt_folded)
+                if match:
+                    canonical_term, details = match
+                    terminology_pack[canonical_term] = details["definition"]
+                    selected_terminology[canonical_term] = details
+
+            terminology_rules: list[str] = []
+            for canonical_term, details in selected_terminology.items():
+                parts = [f"Terminology: prefer the canonical term '{canonical_term}'"]
+                if details["variants"]:
+                    parts.append(f"accepted variants: {', '.join(details['variants'])}")
+                if details["avoid"]:
+                    parts.append(f"avoid: {', '.join(details['avoid'])}")
+                terminology_rules.append("; ".join(parts) + ".")
+            constraints.extend(rule for rule in terminology_rules if rule not in constraints)
 
         if terminology_pack:
             term_str = "\n".join(f"{k}: {v}" for k, v in terminology_pack.items())
             constraint_tokens += estimate_tokens(term_str)
+            constraint_tokens += estimate_tokens("\n".join(terminology_rules))
 
         total_tokens = current_tokens + constraint_tokens
         quality.estimated_tokens = total_tokens

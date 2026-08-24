@@ -172,6 +172,11 @@ class TestMilestone3(unittest.TestCase):
         self.assertEqual(pack.terminology["Quantization"], "Reducing precision of weights")
         self.assertIn("Latency", pack.terminology)
         self.assertEqual(pack.terminology["Latency"], "Time taken to process")
+        self.assertIn(
+            "Terminology: prefer the canonical term 'Quantization'; "
+            "accepted variants: quantize, quantized; avoid: discretization, binning.",
+            pack.constraints,
+        )
 
     def test_role_budgets_allocation(self):
         mock_results = [

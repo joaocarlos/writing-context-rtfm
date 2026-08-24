@@ -132,13 +132,17 @@ Logs downstream agent evaluation metrics (e.g. helpfulness, constraint satisfact
 ## 2. Terminology & Glossary Tools
 
 ### 5. `audit_manuscript_terminology`
-Scans the entire manuscript index to detect terminology inconsistencies, undeclared acronym usage, and semantic drift.
+Scans the manuscript index against the project glossary and section key terms. Canonical terms,
+accepted variants, and forbidden forms are counted separately, with warnings for forbidden wording,
+unused declarations, and section-scope mismatches.
 
 #### Parameters
 * **`project_root`** (*string*, optional): Root workspace path.
 
 #### Output
-Returns an audit report mapping each term to its declared sections, total occurrence count, line snippets, and warnings for undeclared section usage.
+Returns an audit report keyed by canonical term with the definition, variants, words to avoid,
+canonical/variant/forbidden occurrence counts, representative snippets, declared sections, and
+consistency warnings.
 
 ---
 
@@ -150,7 +154,8 @@ Looks up an individual technical term across `cards.overrides.yaml` and `cards.g
 * **`project_root`** (*string*, optional): Root workspace path.
 
 #### Output
-Returns official definitions, permitted synonyms/variants, and words to avoid.
+Returns the canonical term, definition, permitted variants, words to avoid, the input's match type
+(`canonical`, `variant`, or `avoid`), and ready-to-use consistency guidance.
 
 ---
 

@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-24
+
+### Added
+- Added opt-in, in-process local semantic retrieval with content-hash/model-scoped SQLite caching and retrieval-correct query prompting for `mixedbread-ai/mxbai-embed-large-v1`.
+- Added an opt-in bounded local cross-encoder reranker and a `local-models` dependency extra. Both local-model features remain disabled by default.
+- Added canonical terminology guidance to writing and proofreading packs, including definitions, accepted variants, and forbidden forms that remain available when indexed prior usage cannot be retrieved.
+- Expanded terminology audits to combine document glossaries with section key terms and report canonical, accepted-variant, and forbidden-form occurrences separately.
+
+### Changed
+- Selected conservative experimental defaults from local engineering canaries: cosine threshold `0.5`, reranker candidate limit `40`, and reranker blend weight `0.25`.
+- Disabled automatic RTFM sync before every context pack by default. Explicit `sync` and `refresh_index` remain available, and existing configurations can opt in.
+
+### Fixed
+- Scoped OpenAI semantic cache reads to the configured embedding model instead of mixing cached vectors from different models.
+- Normalized legacy scalar and structured glossary entries consistently in split cards and merged author terminology overrides without dropping unrelated generated terms.
+- Prevented proofreading from falling back to external RTFM processes when optional prior-usage lookup cannot use the local SQLite index.
+
 ## [0.10.1] - 2026-08-24
 
 ### Added

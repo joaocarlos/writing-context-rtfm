@@ -89,14 +89,31 @@ def _format_proofread_section_prompt(pack: Any) -> str:
         if isinstance(t, dict):
             term = t.get("term", "")
             examples = t.get("usage_examples", [])
+            definition = t.get("definition")
+            variants = t.get("variants", [])
+            avoid = t.get("avoid", [])
         elif hasattr(t, "term"):
             term = getattr(t, "term", "")
             examples = getattr(t, "usage_examples", [])
+            definition = getattr(t, "definition", None)
+            variants = getattr(t, "variants", [])
+            avoid = getattr(t, "avoid", [])
         else:
             term = str(t)
             examples = []
+            definition = None
+            variants = []
+            avoid = []
         examples_str = "; ".join(f"'{ex}'" for ex in examples) if examples else "None"
-        terminology_txt.append(f"- '{term}': used in: {examples_str}")
+        parts = [f"Canonical term: {term}"]
+        if definition:
+            parts.append(f"Definition: {definition}")
+        if variants:
+            parts.append(f"Accepted variants: {', '.join(variants)}")
+        if avoid:
+            parts.append(f"Avoid: {', '.join(avoid)}")
+        parts.append(f"Prior usage: {examples_str}")
+        terminology_txt.append(f"- {' | '.join(parts)}")
     terminology_joined = "\n".join(terminology_txt) if terminology_txt else "None"
 
     constraints_joined = (
@@ -910,10 +927,13 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             ERROR_CONFIG, "Failed to load configuration or section cards.", str(e)
         )
 
-    from writing_context_rtfm.providers import get_active_providers
+    from writing_context_rtfm.providers import get_active_providers, get_active_reranker
 
     providers = get_active_providers(config)
-    generator = ContextPackGenerator(config, cards, adapter, store, providers=providers)
+    reranker = get_active_reranker(config)
+    generator = ContextPackGenerator(
+        config, cards, adapter, store, providers=providers, reranker=reranker
+    )
     task = args.get("task", "")
     target = args.get("target")
     budget = args.get("token_budget", config.context.default_token_budget)
@@ -2103,11 +2123,20 @@ def process_message(line: str) -> str | None:
                         )
                         line_start = int(line_start_val) if line_start_val is not None else None
                         line_end = int(line_end_val) if line_end_val is not None else None
-                        from writing_context_rtfm.providers import get_active_providers
+                        from writing_context_rtfm.providers import (
+                            get_active_providers,
+                            get_active_reranker,
+                        )
 
                         providers = get_active_providers(config)
+                        reranker = get_active_reranker(config)
                         generator = ContextPackGenerator(
-                            config, cards, adapter, store, providers=providers
+                            config,
+                            cards,
+                            adapter,
+                            store,
+                            providers=providers,
+                            reranker=reranker,
                         )
                         pack = generator.generate(
                             task=task,

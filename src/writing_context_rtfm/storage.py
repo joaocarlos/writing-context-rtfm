@@ -1,6 +1,7 @@
 """SQLite storage for extension data."""
 
 import contextlib
+import hashlib
 import json
 import os
 import sqlite3
@@ -187,6 +188,17 @@ class ExtensionStore:
                 embedding BLOB NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (chunk_id, model)
+            );
+            """)
+
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS local_embeddings (
+                chunk_id TEXT NOT NULL,
+                model_key TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (chunk_id, model_key)
             );
             """)
             conn.commit()
@@ -602,4 +614,88 @@ class ExtensionStore:
                     rtfm_conn.execute("DETACH DATABASE cache_db")
                 rtfm_conn.close()
 
+        return missing
+
+    def get_local_embeddings(self, model_key: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT chunk_id, model_key, content_hash, embedding, updated_at
+                FROM local_embeddings
+                WHERE model_key = ?
+                """,
+                (model_key,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_local_embeddings_stats(self, model_key: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS count, MAX(updated_at) AS latest_updated
+                FROM local_embeddings
+                WHERE model_key = ?
+                """,
+                (model_key,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return {"count": row["count"], "latest_updated": row["latest_updated"]}
+            return {"count": 0, "latest_updated": None}
+
+    def store_local_embeddings(self, embeddings_data: list[dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO local_embeddings (
+                    chunk_id, model_key, content_hash, embedding, updated_at
+                )
+                VALUES (:chunk_id, :model_key, :content_hash, :embedding, CURRENT_TIMESTAMP)
+                ON CONFLICT(chunk_id, model_key) DO UPDATE SET
+                    content_hash=excluded.content_hash,
+                    embedding=excluded.embedding,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                embeddings_data,
+            )
+            conn.commit()
+
+    def get_missing_local_chunks(
+        self,
+        rtfm_db_path: str,
+        model_key: str,
+    ) -> list[dict[str, Any]]:
+        """Return new or content-changed RTFM chunks for one local model identity."""
+        cached = {
+            row["chunk_id"]: row["content_hash"]
+            for row in self.get_local_embeddings(model_key)
+        }
+        missing: list[dict[str, Any]] = []
+        with sqlite3.connect(rtfm_db_path, check_same_thread=False) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT c.chunk_id, c.content, b.filename AS file_path,
+                       c.line_start, c.line_end
+                FROM chunks c
+                JOIN books b ON c.book_id = b.id
+                """
+            ).fetchall()
+        for row in rows:
+            content = str(row["content"])
+            content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            if cached.get(row["chunk_id"]) == content_hash:
+                continue
+            missing.append(
+                {
+                    "chunk_id": row["chunk_id"],
+                    "content": content,
+                    "content_hash": content_hash,
+                    "file_path": row["file_path"],
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"],
+                }
+            )
         return missing

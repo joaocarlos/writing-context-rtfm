@@ -114,9 +114,12 @@ Ensures consistent technical terms are used across sections and detects semantic
 
 ### Tool: `audit_manuscript_terminology`
 
-- **Behavior**: Collects all key terms defined in the document's section cards. For each term, executes queries against the RTFM index. Analyzes occurrences to detect:
+- **Behavior**: Combines the document glossary with section key terms, resolves every declared form
+  to its canonical term, and executes bounded queries against the RTFM index. It distinguishes:
     1. **Undeclared usage**: Occurrences in files whose sections do not define the term and do not declare dependencies on sections that do.
     2. **Unused terms**: Terms defined in cards but never found in the manuscript index.
+    3. **Variant usage**: Accepted alternatives that remain valid but may merit canonicalization.
+    4. **Forbidden usage**: Forms listed under `avoid` that should be replaced.
 - **Arguments**:
     - `project_root`: (Optional) Custom workspace path.
 - **Output JSON**:
@@ -126,8 +129,12 @@ Ensures consistent technical terms are used across sections and detects semantic
         "audited_terms_count": 12,
         "report": {
             "quantization": {
+                "canonical_term": "Quantization",
                 "declared_in_sections": ["section_intro"],
                 "occurrence_count": 3,
+                "canonical_occurrence_count": 2,
+                "accepted_variant_occurrence_count": 1,
+                "forbidden_occurrence_count": 0,
                 "warnings": [
                     "Term 'quantization' is used in 'sections/results.md' (Section 'section_results'), but 'section_results' neither declares it nor depends on sections that do (['section_intro'])."
                 ],
@@ -201,4 +208,3 @@ Directly resolves cross-reference labels (`\ref{fig:pipeline}`, `\ref{tab:microc
 ### Behavior
 - Parses all `\label{...}` declarations across the manuscript AST.
 - Resolves cross-references in the target section and queries the AST to extract the full definition block for each referenced figure, table, or equation.
-

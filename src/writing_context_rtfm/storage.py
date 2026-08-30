@@ -28,10 +28,12 @@ class ExtensionStore:
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
-            os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+            if self.db_path != ":memory:":
+                os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
             self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.execute("PRAGMA foreign_keys = ON;")
             self._conn.row_factory = sqlite3.Row
+            self._ensure_schema(self._conn)
         return self._conn
 
     def close(self) -> None:
@@ -42,166 +44,169 @@ class ExtensionStore:
 
     def init_db(self) -> None:
         with self._connect() as conn:
-            cursor = conn.cursor()
+            self._ensure_schema(conn)
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS schema_version (
-                version INTEGER NOT NULL,
-                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            """)
+    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+        cursor = conn.cursor()
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS context_pack_runs (
-                run_id TEXT PRIMARY KEY,
-                task_hash TEXT NOT NULL,
-                task TEXT NOT NULL,
-                target TEXT,
-                corpus TEXT,
-                token_budget INTEGER NOT NULL,
-                config_hash TEXT,
-                section_cards_hash TEXT,
-                rtfm_index_fingerprint TEXT,
-                retrieval_fingerprint TEXT,
-                provider_fingerprint TEXT,
-                context_fingerprint TEXT,
-                extension_version TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
 
-            # Migration for older databases: add fingerprint columns if missing
-            for col in ("retrieval_fingerprint", "provider_fingerprint", "context_fingerprint"):
-                with contextlib.suppress(sqlite3.OperationalError):
-                    cursor.execute(f"ALTER TABLE context_pack_runs ADD COLUMN {col} TEXT;")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS context_pack_runs (
+            run_id TEXT PRIMARY KEY,
+            task_hash TEXT NOT NULL,
+            task TEXT NOT NULL,
+            target TEXT,
+            corpus TEXT,
+            token_budget INTEGER NOT NULL,
+            config_hash TEXT,
+            section_cards_hash TEXT,
+            rtfm_index_fingerprint TEXT,
+            retrieval_fingerprint TEXT,
+            provider_fingerprint TEXT,
+            context_fingerprint TEXT,
+            extension_version TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
 
-            cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_context_pack_runs_task_hash
-            ON context_pack_runs(task_hash);
-            """)
-
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS context_pack_sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL,
-                path TEXT NOT NULL,
-                line_start INTEGER,
-                line_end INTEGER,
-                score REAL,
-                reason TEXT,
-                rank INTEGER,
-                query TEXT,
-                metadata_json TEXT,
-                selected INTEGER DEFAULT 1,
-                FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
-            );
-            """)
-
-            # Ensure selected column exists for migration from older versions
+        # Migration for older databases: add fingerprint columns if missing
+        for col in ("retrieval_fingerprint", "provider_fingerprint", "context_fingerprint"):
             with contextlib.suppress(sqlite3.OperationalError):
-                cursor.execute(
-                    "ALTER TABLE context_pack_sources ADD COLUMN selected INTEGER DEFAULT 1;"
-                )
+                cursor.execute(f"ALTER TABLE context_pack_runs ADD COLUMN {col} TEXT;")
 
-            cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_context_pack_sources_run_id
-            ON context_pack_sources(run_id);
-            """)
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_context_pack_runs_task_hash
+        ON context_pack_runs(task_hash);
+        """)
 
-            cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_context_pack_sources_path
-            ON context_pack_sources(path);
-            """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS context_pack_sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            path TEXT NOT NULL,
+            line_start INTEGER,
+            line_end INTEGER,
+            score REAL,
+            reason TEXT,
+            rank INTEGER,
+            query TEXT,
+            metadata_json TEXT,
+            selected INTEGER DEFAULT 1,
+            FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
+        );
+        """)
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS context_pack_payloads (
-                run_id TEXT PRIMARY KEY,
-                payload_json BLOB NOT NULL,
-                estimated_tokens INTEGER,
-                source_count INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
-            );
-            """)
+        # Ensure selected column exists for migration from older versions
+        with contextlib.suppress(sqlite3.OperationalError):
+            cursor.execute(
+                "ALTER TABLE context_pack_sources ADD COLUMN selected INTEGER DEFAULT 1;"
+            )
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS retrieval_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL,
-                query TEXT NOT NULL,
-                result_count INTEGER,
-                elapsed_ms INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
-            );
-            """)
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_context_pack_sources_run_id
+        ON context_pack_sources(run_id);
+        """)
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS evaluation_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id TEXT NOT NULL,
-                metric_name TEXT NOT NULL,
-                metric_value REAL,
-                metric_text TEXT,
-                source_id TEXT,
-                source_path TEXT,
-                line_start INTEGER,
-                line_end INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
-            );
-            """)
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_context_pack_sources_path
+        ON context_pack_sources(path);
+        """)
 
-            # Migration for evaluation_records columns
-            for col, col_type in (
-                ("source_id", "TEXT"),
-                ("source_path", "TEXT"),
-                ("line_start", "INTEGER"),
-                ("line_end", "INTEGER"),
-            ):
-                with contextlib.suppress(sqlite3.OperationalError):
-                    cursor.execute(f"ALTER TABLE evaluation_records ADD COLUMN {col} {col_type};")
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS context_pack_payloads (
+            run_id TEXT PRIMARY KEY,
+            payload_json BLOB NOT NULL,
+            estimated_tokens INTEGER,
+            source_count INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
+        );
+        """)
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS provider_tokens (
-                provider_id TEXT PRIMARY KEY,
-                token TEXT NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS retrieval_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            query TEXT NOT NULL,
+            result_count INTEGER,
+            elapsed_ms INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
+        );
+        """)
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS provider_oauth (
-                provider_id TEXT PRIMARY KEY,
-                client_id TEXT NOT NULL,
-                access_token TEXT,
-                refresh_token TEXT,
-                expires_at REAL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS evaluation_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            metric_value REAL,
+            metric_text TEXT,
+            source_id TEXT,
+            source_path TEXT,
+            line_start INTEGER,
+            line_end INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (run_id) REFERENCES context_pack_runs(run_id) ON DELETE CASCADE
+        );
+        """)
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS openai_embeddings (
-                chunk_id TEXT NOT NULL,
-                model TEXT NOT NULL,
-                embedding BLOB NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (chunk_id, model)
-            );
-            """)
+        # Migration for evaluation_records columns
+        for col, col_type in (
+            ("source_id", "TEXT"),
+            ("source_path", "TEXT"),
+            ("line_start", "INTEGER"),
+            ("line_end", "INTEGER"),
+        ):
+            with contextlib.suppress(sqlite3.OperationalError):
+                cursor.execute(f"ALTER TABLE evaluation_records ADD COLUMN {col} {col_type};")
 
-            cursor.execute("""
-            CREATE TABLE IF NOT EXISTS local_embeddings (
-                chunk_id TEXT NOT NULL,
-                model_key TEXT NOT NULL,
-                content_hash TEXT NOT NULL,
-                embedding BLOB NOT NULL,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (chunk_id, model_key)
-            );
-            """)
-            conn.commit()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS provider_tokens (
+            provider_id TEXT PRIMARY KEY,
+            token TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS provider_oauth (
+            provider_id TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            access_token TEXT,
+            refresh_token TEXT,
+            expires_at REAL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS openai_embeddings (
+            chunk_id TEXT NOT NULL,
+            model TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chunk_id, model)
+        );
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS local_embeddings (
+            chunk_id TEXT NOT NULL,
+            model_key TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            embedding BLOB NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (chunk_id, model_key)
+        );
+        """)
+        conn.commit()
 
     def _compress(self, data: str) -> bytes:
         return zlib.compress(data.encode("utf-8"))
@@ -444,14 +449,17 @@ class ExtensionStore:
             return {"target": target, "metrics": metrics_summary}
 
     def get_provider_token(self, provider_id: str) -> str | None:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT token FROM provider_tokens WHERE provider_id = ?", (provider_id,)
-            )
-            row = cursor.fetchone()
-            if row:
-                return str(row["token"])
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT token FROM provider_tokens WHERE provider_id = ?", (provider_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    return str(row["token"])
+        except sqlite3.OperationalError:
+            return None
         return None
 
     def set_provider_token(self, provider_id: str, token: str) -> None:
@@ -468,24 +476,27 @@ class ExtensionStore:
             conn.commit()
 
     def get_provider_oauth(self, provider_id: str) -> dict[str, Any] | None:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT client_id, access_token, refresh_token, expires_at
-                FROM provider_oauth
-                WHERE provider_id = ?
-            """,
-                (provider_id,),
-            )
-            row = cursor.fetchone()
-            if row:
-                return {
-                    "client_id": row["client_id"],
-                    "access_token": row["access_token"],
-                    "refresh_token": row["refresh_token"],
-                    "expires_at": row["expires_at"],
-                }
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT client_id, access_token, refresh_token, expires_at
+                    FROM provider_oauth
+                    WHERE provider_id = ?
+                """,
+                    (provider_id,),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "client_id": row["client_id"],
+                        "access_token": row["access_token"],
+                        "refresh_token": row["refresh_token"],
+                        "expires_at": row["expires_at"],
+                    }
+        except sqlite3.OperationalError:
+            return None
         return None
 
     def set_provider_oauth(

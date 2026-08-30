@@ -247,6 +247,18 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(oauth["refresh_token"], "refresh_tok")  # preserved
         self.assertEqual(oauth["expires_at"], 999999.0)
 
+    def test_fresh_uninitialized_store_never_raises_operational_error(self):
+        # Create a fresh store with temp file without calling init_db
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".sqlite") as tmp:
+            fresh_store = ExtensionStore(tmp.name)
+            # Must return None safely without raising sqlite3.OperationalError
+            self.assertIsNone(fresh_store.get_provider_token("openai_semantic"))
+            self.assertIsNone(fresh_store.get_provider_oauth("openai_semantic"))
+            stats = fresh_store.get_openai_embeddings_stats("text-embedding-3-small")
+            self.assertEqual(stats.get("count", 0), 0)
+            fresh_store.close()
+
 
 if __name__ == "__main__":
     unittest.main()

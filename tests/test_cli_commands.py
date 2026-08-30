@@ -263,6 +263,7 @@ def test_cleanup_command(mock_kill, capsys, tmp_path):
 
 
 @patch("writing_context_rtfm.cli.ContextPackGenerator")
+@patch("writing_context_rtfm.providers.get_active_providers")
 @patch("writing_context_rtfm.cli.ExtensionStore")
 @patch("writing_context_rtfm.cli.RTFMAdapter")
 @patch("writing_context_rtfm.cli.load_section_cards")
@@ -272,9 +273,11 @@ def test_explain_pack_command(
     mock_load_cards,
     mock_adapter,
     mock_store,
+    mock_get_providers,
     mock_generator_class,
     capsys,
 ):
+    mock_get_providers.return_value = []
     from writing_context_rtfm.cli import explain_pack_command
     from writing_context_rtfm.schemas import CandidateFunnel, ContextPack, ContextPackDiagnostics
 

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Blinded benchmark judgment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidate_id", "ratings", "pass", "evidence_span_ids"],
+  "properties": {
+    "candidate_id": {"type": "string"},
+    "ratings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_support", "completeness", "constraint_adherence", "citation_correctness", "writing_fitness"],
+      "properties": {
+        "evidence_support": {"type": "integer", "minimum": 0, "maximum": 4},
+        "completeness": {"type": "integer", "minimum": 0, "maximum": 4},
+        "constraint_adherence": {"type": "integer", "minimum": 0, "maximum": 4},
+        "citation_correctness": {"type": "integer", "minimum": 0, "maximum": 4},
+        "writing_fitness": {"type": "integer", "minimum": 0, "maximum": 4}
+      }
+    },
+    "pass": {"type": "boolean"},
+    "evidence_span_ids": {"type": "array", "items": {"type": "string"}},
+    "notes": {"type": "string"}
+  }
+}

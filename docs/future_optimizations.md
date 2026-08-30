@@ -2,11 +2,27 @@
 
 This document tracks experimental transformer-based semantic retrieval in the `writing-context-rtfm` codebase, alongside other high-value architectural optimizations.
 
+## Evidence gate after Pilot v1
+
+The current architecture remains unchanged after the frozen Pilot v1 retrieval, candidate exposure,
+and BibTeX handoff benchmarks. Raw retrieval covered 16/16 annotated sources; the observed 15/16
+effective exposure was localized to structured BibTeX ownership, and broad repair policies restored
+exposure without improving final selection. See
+[`../benchmark/PILOT_V1_DECISION.md`](../benchmark/PILOT_V1_DECISION.md).
+
+Treat the proposals below as evidence-gated experiments, not the next implementation sequence. Do
+not add retrieval depth, fallback/reconstruction, composer optimization, or reference-quota changes
+until a larger frozen benchmark demonstrates a repeated failure at the corresponding boundary.
+The opening lexical-only description below records the original motivation; the project now also
+contains opt-in semantic providers, RRF, reranking, and benchmark diagnostics.
+
 ---
 
 ## 1. BERT-Based Semantic Retrieval & Hybrid Search
 
-The current search mechanism relies entirely on RTFM's lexical query matcher. While fast and precise for exact keyword lookups, it misses semantic synonyms and paraphrase alignments (e.g., matching "performance bottleneck" with "database slowdown").
+The original proposal assumed a search path relying entirely on RTFM's lexical query matcher. The
+project now also contains opt-in dense retrieval and reranking, but they remain experimental and
+disabled by default because the local evaluations have not shown a universal improvement.
 
 To address this, we propose a **Hybrid Retrieval (Sparse + Dense)** architecture using local transformer models.
 

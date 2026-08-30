@@ -41,12 +41,17 @@ Allows users to manage manuscript metadata without manual file maintenance. The 
 
 Allows writing agents to fetch related literature context directly from your local Zotero library, while preventing out-of-domain search results from polluting the context token budget.
 
-### Configuration: `similarity_threshold`
+### Configuration
 
-- **Behavior**: When Zotero semantic search is queried, the provider filters out paper snippets that do not match the target query's context. It parses the returned similarity score and drops any results below the threshold.
+- **Behavior**: The provider resolves a visible Zotero library name, switches an isolated MCP session to it, resolves collection names or paths, and treats multiple configured collections as a union. Semantic search uses bounded overfetch because Zotero's semantic metadata does not contain collection membership; results are then strictly filtered against enumerated collection item keys. Metadata search is collection-native. Duplicate papers are removed by item key.
 - **Tuning**: Configurable under `providers.zotero.extra` in `.writing-context/config.yaml`:
+  * **`library_name` (Default: `"My Library"`)**: The visible personal or group-library name. Numeric Zotero IDs are resolved internally.
+  * **`collections` (Default: `[]`)**: A list of collection names or `Parent / Child` paths. A bare name must be unique; paths remove ambiguity. An empty list searches the whole selected library.
+  * **`include_subcollections` (Default: `true`)**: Includes descendants when enumerating and querying each configured collection.
   * **`similarity_threshold` (Default: `-0.4`)**: Swept and optimized to preserve relevant priority scheduling and queueing papers (scores `-0.19` to `-0.3`) while successfully discarding unrelated topics.
   * **`include_abstract` (Default: `false`)**: Configures whether full document abstracts are packed into retrieved citation spans.
+
+If an existing configuration omits both `library_name` and `collections`, the provider preserves the Zotero MCP server's active-library behavior for backward compatibility. If collections are configured without a library name, `My Library` is assumed. Citation-key resolution is scoped to the selected library but not restricted to collections.
 
 ---
 

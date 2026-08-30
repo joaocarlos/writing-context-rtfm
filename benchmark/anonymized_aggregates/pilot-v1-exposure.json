@@ -1,0 +1,434 @@
+{
+  "benchmark_version": "candidate-exposure-pilot-v1",
+  "case_count": 8,
+  "cost_repetitions": 5,
+  "fixed_downstream_composition": true,
+  "freeze_sha256": "746685924ca181cb35cc5d2ad2eb9a4bcfd30cb466f0a791e8dc46e1b3b90e93",
+  "limitations": [
+    "Expected-source coverage is an offline benchmark label, not a production trigger.",
+    "Pilot v1 alone cannot promote a policy because gains must replicate across cases.",
+    "Latency is repeated local wall-clock telemetry, not a cross-machine estimate."
+  ],
+  "policies": {
+    "current": {
+      "candidate_processing_increase_ratio": 0.0,
+      "cases_with_exposure_gain": 0,
+      "costs": {
+        "candidate_spans": {
+          "median": 63.5,
+          "p95": 84.0,
+          "total": 2625.0
+        },
+        "candidate_tokens_processed": {
+          "median": 26846.5,
+          "p95": 38090.0,
+          "total": 1050770.0
+        },
+        "composer": {
+          "median": 26.7645,
+          "p95": 30.4465,
+          "total": 945.79
+        },
+        "fusion": {
+          "median": 38.266,
+          "p95": 58.4354,
+          "total": 1856.968
+        },
+        "retrieval_latency_ms": {
+          "median": 10.2015,
+          "p95": 12.6459,
+          "total": 396.928
+        },
+        "retrieved_candidates": {
+          "median": 63.5,
+          "p95": 84.0,
+          "total": 2625.0
+        },
+        "total_latency_ms": {
+          "median": 91.0825,
+          "p95": 115.7889,
+          "total": 3814.874
+        },
+        "unique_candidates": {
+          "median": 34.0,
+          "p95": 49.0,
+          "total": 1380.0
+        }
+      },
+      "expansion_rate": 0.0,
+      "expected_sources": 16,
+      "exposed_recall": 0.9375,
+      "exposed_sources": 15,
+      "final_selection_recall": 0.9375,
+      "hard_constraint_violations": 0,
+      "offline_only": false,
+      "post_exclusion_query_exposed_sources": 15,
+      "post_exclusion_query_recall": 0.9375,
+      "post_exclusion_to_effective_delta": 0,
+      "promotion": {
+        "eligible": false,
+        "reasons": [
+          "insufficient_case_replication"
+        ]
+      },
+      "raw_query_exposed_sources": 16,
+      "raw_query_recall": 1.0,
+      "raw_to_post_exclusion_loss": 1,
+      "selected_sources": 15,
+      "selection_regret": 0,
+      "total_latency_p95_increase_ratio": 0.0
+    },
+    "deep_task": {
+      "candidate_processing_increase_ratio": 0.4571,
+      "cases_with_exposure_gain": 0,
+      "costs": {
+        "candidate_spans": {
+          "median": 93.5,
+          "p95": 114.0,
+          "total": 3825.0
+        },
+        "candidate_tokens_processed": {
+          "median": 40882.5,
+          "p95": 51551.0,
+          "total": 1510295.0
+        },
+        "composer": {
+          "median": 31.8125,
+          "p95": 39.0694,
+          "total": 1210.971
+        },
+        "fusion": {
+          "median": 50.4755,
+          "p95": 73.5179,
+          "total": 2271.488
+        },
+        "retrieval_latency_ms": {
+          "median": 10.6795,
+          "p95": 12.6356,
+          "total": 422.61
+        },
+        "retrieved_candidates": {
+          "median": 93.5,
+          "p95": 114.0,
+          "total": 3825.0
+        },
+        "total_latency_ms": {
+          "median": 110.7295,
+          "p95": 146.6478,
+          "total": 4537.286
+        },
+        "unique_candidates": {
+          "median": 41.5,
+          "p95": 57.0,
+          "total": 1815.0
+        }
+      },
+      "expansion_rate": 1.0,
+      "expected_sources": 16,
+      "exposed_recall": 0.9375,
+      "exposed_sources": 15,
+      "final_selection_recall": 0.9375,
+      "hard_constraint_violations": 0,
+      "offline_only": false,
+      "post_exclusion_query_exposed_sources": 15,
+      "post_exclusion_query_recall": 0.9375,
+      "post_exclusion_to_effective_delta": 0,
+      "promotion": {
+        "eligible": false,
+        "reasons": [
+          "insufficient_case_replication"
+        ]
+      },
+      "raw_query_exposed_sources": 16,
+      "raw_query_recall": 1.0,
+      "raw_to_post_exclusion_loss": 1,
+      "selected_sources": 15,
+      "selection_regret": 0,
+      "total_latency_p95_increase_ratio": 0.2665
+    },
+    "global_cap": {
+      "candidate_processing_increase_ratio": -0.1562,
+      "cases_with_exposure_gain": 0,
+      "costs": {
+        "candidate_spans": {
+          "median": 45.5,
+          "p95": 80.0,
+          "total": 2215.0
+        },
+        "candidate_tokens_processed": {
+          "median": 20422.0,
+          "p95": 27838.0,
+          "total": 762620.0
+        },
+        "composer": {
+          "median": 25.7515,
+          "p95": 31.8194,
+          "total": 993.082
+        },
+        "fusion": {
+          "median": 43.102,
+          "p95": 70.7606,
+          "total": 1909.868
+        },
+        "retrieval_latency_ms": {
+          "median": 11.2875,
+          "p95": 12.997,
+          "total": 441.178
+        },
+        "retrieved_candidates": {
+          "median": 150.0,
+          "p95": 282.0,
+          "total": 6505.0
+        },
+        "total_latency_ms": {
+          "median": 96.492,
+          "p95": 132.896,
+          "total": 3962.684
+        },
+        "unique_candidates": {
+          "median": 45.5,
+          "p95": 80.0,
+          "total": 2215.0
+        }
+      },
+      "expansion_rate": 1.0,
+      "expected_sources": 16,
+      "exposed_recall": 0.9375,
+      "exposed_sources": 15,
+      "final_selection_recall": 0.9375,
+      "hard_constraint_violations": 0,
+      "offline_only": false,
+      "post_exclusion_query_exposed_sources": 15,
+      "post_exclusion_query_recall": 0.9375,
+      "post_exclusion_to_effective_delta": 0,
+      "promotion": {
+        "eligible": false,
+        "reasons": [
+          "insufficient_case_replication"
+        ]
+      },
+      "raw_query_exposed_sources": 16,
+      "raw_query_recall": 1.0,
+      "raw_to_post_exclusion_loss": 1,
+      "selected_sources": 15,
+      "selection_regret": 0,
+      "total_latency_p95_increase_ratio": 0.1477
+    },
+    "oracle_trigger": {
+      "candidate_processing_increase_ratio": 0.0571,
+      "cases_with_exposure_gain": 0,
+      "costs": {
+        "candidate_spans": {
+          "median": 70.0,
+          "p95": 89.0,
+          "total": 2775.0
+        },
+        "candidate_tokens_processed": {
+          "median": 26846.5,
+          "p95": 38090.0,
+          "total": 1084200.0
+        },
+        "composer": {
+          "median": 25.4365,
+          "p95": 30.1706,
+          "total": 969.158
+        },
+        "fusion": {
+          "median": 37.9225,
+          "p95": 49.1606,
+          "total": 1509.464
+        },
+        "retrieval_latency_ms": {
+          "median": 10.722,
+          "p95": 11.5102,
+          "total": 410.399
+        },
+        "retrieved_candidates": {
+          "median": 70.0,
+          "p95": 119.0,
+          "total": 2925.0
+        },
+        "total_latency_ms": {
+          "median": 92.456,
+          "p95": 107.5213,
+          "total": 3510.333
+        },
+        "unique_candidates": {
+          "median": 36.0,
+          "p95": 49.0,
+          "total": 1440.0
+        }
+      },
+      "expansion_rate": 0.125,
+      "expected_sources": 16,
+      "exposed_recall": 0.9375,
+      "exposed_sources": 15,
+      "final_selection_recall": 0.9375,
+      "hard_constraint_violations": 0,
+      "offline_only": true,
+      "post_exclusion_query_exposed_sources": 15,
+      "post_exclusion_query_recall": 0.9375,
+      "post_exclusion_to_effective_delta": 0,
+      "promotion": {
+        "eligible": false,
+        "reasons": [
+          "offline_only",
+          "insufficient_case_replication"
+        ]
+      },
+      "raw_query_exposed_sources": 16,
+      "raw_query_recall": 1.0,
+      "raw_to_post_exclusion_loss": 1,
+      "selected_sources": 15,
+      "selection_regret": 0,
+      "total_latency_p95_increase_ratio": -0.0714
+    },
+    "progressive_coverage": {
+      "candidate_processing_increase_ratio": 0.1714,
+      "cases_with_exposure_gain": 0,
+      "costs": {
+        "candidate_spans": {
+          "median": 79.0,
+          "p95": 102.0,
+          "total": 3075.0
+        },
+        "candidate_tokens_processed": {
+          "median": 26846.5,
+          "p95": 51166.0,
+          "total": 1186735.0
+        },
+        "composer": {
+          "median": 26.7005,
+          "p95": 34.1576,
+          "total": 1047.906
+        },
+        "fusion": {
+          "median": 37.9595,
+          "p95": 61.0973,
+          "total": 1629.943
+        },
+        "retrieval_latency_ms": {
+          "median": 10.884,
+          "p95": 14.1,
+          "total": 444.131
+        },
+        "retrieved_candidates": {
+          "median": 83.5,
+          "p95": 132.0,
+          "total": 3525.0
+        },
+        "total_latency_ms": {
+          "median": 93.28,
+          "p95": 122.3456,
+          "total": 3750.904
+        },
+        "unique_candidates": {
+          "median": 40.0,
+          "p95": 49.0,
+          "total": 1600.0
+        }
+      },
+      "expansion_rate": 0.375,
+      "expected_sources": 16,
+      "exposed_recall": 0.9375,
+      "exposed_sources": 15,
+      "final_selection_recall": 0.9375,
+      "hard_constraint_violations": 0,
+      "offline_only": false,
+      "post_exclusion_query_exposed_sources": 15,
+      "post_exclusion_query_recall": 0.9375,
+      "post_exclusion_to_effective_delta": 0,
+      "promotion": {
+        "eligible": false,
+        "reasons": [
+          "insufficient_case_replication"
+        ]
+      },
+      "raw_query_exposed_sources": 16,
+      "raw_query_recall": 1.0,
+      "raw_to_post_exclusion_loss": 1,
+      "selected_sources": 15,
+      "selection_regret": 0,
+      "total_latency_p95_increase_ratio": 0.0566
+    },
+    "score_tail_adaptive": {
+      "candidate_processing_increase_ratio": 1.3657,
+      "cases_with_exposure_gain": 0,
+      "costs": {
+        "candidate_spans": {
+          "median": 135.0,
+          "p95": 282.0,
+          "total": 6210.0
+        },
+        "candidate_tokens_processed": {
+          "median": 58571.0,
+          "p95": 128655.0,
+          "total": 2561725.0
+        },
+        "composer": {
+          "median": 40.0645,
+          "p95": 64.3146,
+          "total": 1602.071
+        },
+        "fusion": {
+          "median": 74.514,
+          "p95": 158.7741,
+          "total": 3443.435
+        },
+        "retrieval_latency_ms": {
+          "median": 19.145,
+          "p95": 27.7567,
+          "total": 754.042
+        },
+        "retrieved_candidates": {
+          "median": 234.5,
+          "p95": 522.0,
+          "total": 10810.0
+        },
+        "total_latency_ms": {
+          "median": 148.968,
+          "p95": 270.4671,
+          "total": 6441.718
+        },
+        "unique_candidates": {
+          "median": 45.5,
+          "p95": 89.0,
+          "total": 2200.0
+        }
+      },
+      "expansion_rate": 1.0,
+      "expected_sources": 16,
+      "exposed_recall": 0.9375,
+      "exposed_sources": 15,
+      "final_selection_recall": 0.875,
+      "hard_constraint_violations": 0,
+      "offline_only": false,
+      "post_exclusion_query_exposed_sources": 15,
+      "post_exclusion_query_recall": 0.9375,
+      "post_exclusion_to_effective_delta": 0,
+      "promotion": {
+        "eligible": false,
+        "reasons": [
+          "insufficient_case_replication",
+          "final_selection_regression",
+          "candidate_cost_threshold_exceeded",
+          "latency_threshold_exceeded"
+        ]
+      },
+      "raw_query_exposed_sources": 16,
+      "raw_query_recall": 1.0,
+      "raw_to_post_exclusion_loss": 1,
+      "selected_sources": 14,
+      "selection_regret": 1,
+      "total_latency_p95_increase_ratio": 1.3359
+    }
+  },
+  "promotion_rule": {
+    "maximum_candidate_processing_increase_ratio": 1.0,
+    "maximum_hard_constraint_violations": 0,
+    "maximum_total_latency_p95_increase_ratio": 1.0,
+    "minimum_cases_with_exposure_gain": 2,
+    "minimum_final_selection_recall_delta": 0.0
+  },
+  "report_version": 1
+}

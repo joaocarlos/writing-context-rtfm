@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private benchmark model configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "temperature", "repetitions", "generators", "judges"],
+  "properties": {
+    "version": {"const": 1},
+    "temperature": {"const": 0.2},
+    "repetitions": {"const": 3},
+    "generators": {
+      "type": "object",
+      "required": ["pilot", "confirmation"],
+      "properties": {
+        "pilot": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/model"}},
+        "confirmation": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/model"}}
+      }
+    },
+    "judges": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/model"}}
+  },
+  "$defs": {
+    "model": {
+      "oneOf": [
+        {"$ref": "#/$defs/httpModel"},
+        {"$ref": "#/$defs/cliModel"}
+      ]
+    },
+    "httpModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "api_key_env"],
+      "properties": {
+        "provider": {"enum": ["gemini", "openai"]},
+        "model": {"type": "string", "minLength": 1},
+        "api_key_env": {"type": "string", "minLength": 1}
+      }
+    },
+    "cliModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model", "cli_version"],
+      "properties": {
+        "provider": {"enum": ["agy_cli", "gemini_cli", "claude_cli", "codex_cli"]},
+        "model": {"type": "string", "minLength": 1},
+        "command": {"type": "string", "minLength": 1},
+        "cli_version": {"type": "string", "minLength": 1},
+        "timeout_seconds": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

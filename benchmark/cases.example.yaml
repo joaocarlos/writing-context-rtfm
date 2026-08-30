@@ -1,0 +1,42 @@
+version: 1
+defaults:
+  context_budget: 6000
+  output_tokens: 1500
+cases:
+  - id: P0-synthetic-method
+    project_id: P0
+    stages: [pilot, confirmation]
+    archive: benchmark/synthetic.local.zip
+    archive_sha256: "replace-with-local-archive-sha256"
+    archive_root: ""
+    entry_point: main.tex
+    bibliography_files: [references.bib]
+    target:
+      selector: section_method
+      heading: Method
+      content_hash: "replace-with-VirtualDocumentParser-content-hash"
+    task: Write the masked method section from the supplied evidence.
+    task_type: write_new_section
+    expected_output_range: [120, 300]
+    gold_sha256: "replace-with-target-section-sha256"
+    required_ideas:
+      - id: idea_sampling
+        anchors: [stratified sampling, balanced strata]
+    anchor_aliases:
+      stratified sampling: [balanced strata]
+    required_terminology: [calibration set]
+    prohibited_claims: [state-of-the-art]
+    protected_literals: ["64", "0.2"]
+    required_citation_keys: [doe2024]
+    valid_citation_keys: [doe2024]
+    expected_source_spans:
+      - path: evidence.tex
+        line_start: 1
+        line_end: 20
+        grade: 3
+        obligations: [idea_sampling]
+    annotations:
+      curator: pending
+      card_author: pending
+      auditor: pending
+      disagreements: []

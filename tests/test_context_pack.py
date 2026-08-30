@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 from writing_context_rtfm.config import (
@@ -9,6 +10,7 @@ from writing_context_rtfm.config import (
     SectionCardsConfig,
 )
 from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.schemas import SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 
 
@@ -31,6 +33,134 @@ class TestContextPackGenerator(unittest.TestCase):
         self.assertEqual(pack.task, "test task")
         self.assertEqual(len(pack.source_spans), 0)
         self.adapter.search.assert_called()
+
+    def test_generate_emits_private_candidate_diagnostic_stages(self):
+        result = MagicMock()
+        result.path = "evidence.tex"
+        result.line_start = 1
+        result.line_end = 3
+        result.score = 0.9
+        result.snippet = "Relevant evidence for the requested section."
+        result.metadata = {"rank": 1}
+        self.adapter.search.return_value = [result]
+        snapshots = {}
+
+        generator = ContextPackGenerator(
+            self.config,
+            None,
+            self.adapter,
+            self.store,
+            diagnostic_recorder=lambda stage, spans: snapshots.__setitem__(stage, list(spans)),
+        )
+        pack = generator.generate(task="write section", target=None, token_budget=1000)
+
+        self.assertEqual(
+            [
+                stage
+                for stage in (
+                    "retrieved",
+                    "deduplicated",
+                    "score_filtered",
+                    "diversified",
+                    "budget_candidates",
+                    "selected",
+                )
+                if stage in snapshots
+            ],
+            [
+                "retrieved",
+                "deduplicated",
+                "score_filtered",
+                "diversified",
+                "budget_candidates",
+                "selected",
+            ],
+        )
+        self.assertEqual(snapshots["selected"], pack.source_spans)
+        self.assertGreaterEqual(len(snapshots["retrieved"]), len(pack.source_spans))
+
+    def test_generate_accepts_benchmark_query_stream_retriever(self):
+        result = MagicMock()
+        result.path = "injected.tex"
+        result.line_start = 1
+        result.line_end = 2
+        result.score = 0.9
+        result.snippet = "Evidence injected by the benchmark exposure policy."
+        result.metadata = {}
+        observed = {}
+
+        def retrieve(specs, corpus, default_limit, obligations):
+            observed["specs"] = specs
+            observed["corpus"] = corpus
+            observed["default_limit"] = default_limit
+            observed["obligations"] = obligations
+            return {0: [result]}
+
+        generator = ContextPackGenerator(
+            self.config,
+            None,
+            self.adapter,
+            self.store,
+            query_stream_retriever=retrieve,
+        )
+        pack = generator.generate(task="write section", target=None, token_budget=1000)
+
+        self.adapter.search.assert_not_called()
+        self.assertEqual(observed["specs"][0].query_type, "task")
+        self.assertEqual(observed["corpus"], "default")
+        self.assertEqual(observed["default_limit"], 10)
+        self.assertEqual(observed["obligations"], ())
+        self.assertEqual(pack.source_spans[0].path, "injected.tex")
+
+    def test_generate_accepts_bibliography_handoff_callback(self):
+        result = MagicMock()
+        result.path = "references.bib"
+        result.line_start = 4
+        result.line_end = 8
+        result.score = 0.8
+        result.snippet = "@article{missingKey, title={Missing Evidence}}"
+        result.metadata = {}
+        self.adapter.search.return_value = [result]
+
+        provider = MagicMock()
+        provider.provider_id = "bibtex"
+        provider.is_available.return_value = True
+        provider.fetch_context.return_value = [
+            SourceSpan(
+                path="bibtex:otherKey",
+                line_start=None,
+                line_end=None,
+                reason="Existing provider evidence",
+                score=0.7,
+                metadata={"snippet": "Other", "citekey": "otherKey"},
+            )
+        ]
+        observed = {}
+
+        def handoff(excluded, provider_spans):
+            observed["excluded"] = excluded
+            observed["provider_spans"] = provider_spans
+            return [
+                replace(
+                    excluded[0],
+                    reason="Fallback bibliography evidence",
+                    metadata={**excluded[0].metadata, "citekey": "missingKey"},
+                )
+            ]
+
+        generator = ContextPackGenerator(
+            self.config,
+            None,
+            self.adapter,
+            self.store,
+            providers=[provider],
+            bibliography_handoff=handoff,
+        )
+        pack = generator.generate(task="write section", target=None, token_budget=1000)
+
+        self.assertEqual(observed["excluded"][0].path, "references.bib")
+        self.assertEqual(observed["provider_spans"][0].path, "bibtex:otherKey")
+        self.assertIn("references.bib", [span.path for span in pack.source_spans])
 
     def test_resilient_target_resolution(self):
         from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards

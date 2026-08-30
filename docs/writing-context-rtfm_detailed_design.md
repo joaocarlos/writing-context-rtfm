@@ -236,11 +236,17 @@ providers:
   zotero:
     enabled: true
     mcp_server:
-      command: node
-      args: ["/path/to/zotero-mcp/dist/index.js"]
+      command: zotero-mcp
+      args: ["serve"]
     extra:
+      library_name: "My Library"
+      collections: ["Projects / Urban", "Methods"]
+      include_subcollections: true
+      include_abstract: false
       similarity_threshold: -0.4  # Swept threshold to retain related network papers while pruning noise
 ```
+
+Library and collection names are resolved through Zotero MCP in a library-isolated subprocess session. Collection lists use union semantics. Ambiguous bare collection names fail closed and require a full `Parent / Child` path. Keyword search is issued per collection. Semantic search is library-wide upstream, so the provider uses bounded overfetch and post-filters results against item keys enumerated from the selected collections before deduplication.
 
 ## 5.3 Python Schema
 

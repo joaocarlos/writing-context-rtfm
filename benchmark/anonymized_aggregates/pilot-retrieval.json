@@ -1,0 +1,350 @@
+{
+  "analysis_code_revision": "f85d2be935cf488b83e09cd9b8249f2e2c70b095+package.eb02f2093a643a43",
+  "annotation_disagreement_cases_excluded_from_relevance": [],
+  "candidate_diagnostics": {
+    "full_visible": {
+      "cases_with_diagnostics": 8,
+      "expected_sources_evaluated": 16,
+      "first_candidate_rank": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 2.0
+      },
+      "loss_stage_counts": {},
+      "never_retrieved": 0,
+      "retrieved_not_selected": 0,
+      "selected": 16,
+      "selection_loss_reason_counts": {}
+    },
+    "pack_baseline": {
+      "cases_with_diagnostics": 8,
+      "expected_sources_evaluated": 16,
+      "first_candidate_rank": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 3.5
+      },
+      "loss_stage_counts": {
+        "retrieved": 1
+      },
+      "never_retrieved": 1,
+      "retrieved_not_selected": 0,
+      "selected": 15,
+      "selection_loss_reason_counts": {}
+    },
+    "pack_rrf": {
+      "cases_with_diagnostics": 8,
+      "expected_sources_evaluated": 16,
+      "first_candidate_rank": {
+        "median": 2.0,
+        "q1": 1.0,
+        "q3": 3.5
+      },
+      "loss_stage_counts": {
+        "retrieved": 1
+      },
+      "never_retrieved": 1,
+      "retrieved_not_selected": 0,
+      "selected": 15,
+      "selection_loss_reason_counts": {}
+    },
+    "rtfm_topk": {
+      "cases_with_diagnostics": 8,
+      "expected_sources_evaluated": 16,
+      "first_candidate_rank": {
+        "median": 2.0,
+        "q1": 1.0,
+        "q3": 4.25
+      },
+      "loss_stage_counts": {
+        "selected": 2
+      },
+      "never_retrieved": 0,
+      "retrieved_not_selected": 2,
+      "selected": 14,
+      "selection_loss_reason_counts": {
+        "token_budget": 2
+      }
+    }
+  },
+  "case_count": 8,
+  "limitations": [
+    "Candidate diagnostics measure annotated source-span retrieval, not writing quality.",
+    "Conclusions apply only to the configured corpus and retrieval policy."
+  ],
+  "report_type": "candidate_diagnostics",
+  "report_version": 1,
+  "retrieval_policy_version": "four-strategy-candidate-diagnostics-v3",
+  "source_code_revision": "f85d2be935cf488b83e09cd9b8249f2e2c70b095+package.eb02f2093a643a43",
+  "stage": "pilot",
+  "strategies": {
+    "full_visible": {
+      "candidate_recall_at_1": {
+        "median": 1.0,
+        "q1": 0.375,
+        "q3": 1.0
+      },
+      "candidate_recall_at_10": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_100": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_25": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_3": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_5": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_50": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_to_selected_recall_delta": {
+        "median": 0.0,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "graded_source_recall": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_retrieved": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_selected": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      }
+    },
+    "pack_baseline": {
+      "candidate_recall_at_1": {
+        "median": 0.5,
+        "q1": 0.5,
+        "q3": 0.75
+      },
+      "candidate_recall_at_10": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_100": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_25": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_3": {
+        "median": 0.8334,
+        "q1": 0.5,
+        "q3": 1.0
+      },
+      "candidate_recall_at_5": {
+        "median": 1.0,
+        "q1": 0.875,
+        "q3": 1.0
+      },
+      "candidate_recall_at_50": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_to_selected_recall_delta": {
+        "median": 0.0,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "graded_source_recall": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_budget_candidates": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_deduplicated": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_diversified": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_retrieved": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_score_filtered": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_selected": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      }
+    },
+    "pack_rrf": {
+      "candidate_recall_at_1": {
+        "median": 0.25,
+        "q1": 0.0,
+        "q3": 0.625
+      },
+      "candidate_recall_at_10": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_100": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_25": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_3": {
+        "median": 0.5834,
+        "q1": 0.5,
+        "q3": 1.0
+      },
+      "candidate_recall_at_5": {
+        "median": 1.0,
+        "q1": 0.9167,
+        "q3": 1.0
+      },
+      "candidate_recall_at_50": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_to_selected_recall_delta": {
+        "median": 0.0,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "graded_source_recall": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_budget_candidates": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_deduplicated": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_diversified": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_retrieved": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_score_filtered": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_selected": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      }
+    },
+    "rtfm_topk": {
+      "candidate_recall_at_1": {
+        "median": 0.5,
+        "q1": 0.375,
+        "q3": 0.5417
+      },
+      "candidate_recall_at_10": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_100": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_25": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_recall_at_3": {
+        "median": 0.5834,
+        "q1": 0.5,
+        "q3": 1.0
+      },
+      "candidate_recall_at_5": {
+        "median": 1.0,
+        "q1": 0.5,
+        "q3": 1.0
+      },
+      "candidate_recall_at_50": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "candidate_to_selected_recall_delta": {
+        "median": 0.0,
+        "q1": -0.125,
+        "q3": 0.0
+      },
+      "graded_source_recall": {
+        "median": 1.0,
+        "q1": 0.875,
+        "q3": 1.0
+      },
+      "stage_recall_retrieved": {
+        "median": 1.0,
+        "q1": 1.0,
+        "q3": 1.0
+      },
+      "stage_recall_selected": {
+        "median": 1.0,
+        "q1": 0.875,
+        "q3": 1.0
+      }
+    }
+  }
+}

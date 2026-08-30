@@ -35,6 +35,25 @@ def test_autodiscover_path_only():
         assert discovered["zotero"]["mcp_server"]["command"] == "zotero-mcp"
 
 
+def test_manager_session_key_isolates_scope_and_environment():
+    base = LocalMCPClientManager._make_session_key(
+        "zotero-mcp", ["serve"], {"A": "1", "B": "2"}, "zotero:my library"
+    )
+    reordered = LocalMCPClientManager._make_session_key(
+        "zotero-mcp", ["serve"], {"B": "2", "A": "1"}, "zotero:my library"
+    )
+    other_library = LocalMCPClientManager._make_session_key(
+        "zotero-mcp", ["serve"], {"A": "1", "B": "2"}, "zotero:research group"
+    )
+    other_environment = LocalMCPClientManager._make_session_key(
+        "zotero-mcp", ["serve"], {"A": "different", "B": "2"}, "zotero:my library"
+    )
+
+    assert base == reordered
+    assert base != other_library
+    assert base != other_environment
+
+
 @pytest.mark.anyio
 async def test_manager_pid_tracking(tmp_path):
     manager = LocalMCPClientManager(workspace_root=str(tmp_path))

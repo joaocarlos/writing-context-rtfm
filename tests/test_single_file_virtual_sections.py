@@ -3,7 +3,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from writing_context_rtfm.config import AppConfig, RTFMConfig, ContextConfig, CacheConfig, SectionCardsConfig
+from writing_context_rtfm.config import (
+    AppConfig,
+    CacheConfig,
+    ContextConfig,
+    RTFMConfig,
+    SectionCardsConfig,
+)
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.storage import ExtensionStore
 

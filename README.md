@@ -71,10 +71,33 @@ pipx install "rtfm-ai[embeddings]"
 * **Native Offline BibTeX Provider (Built-in)**: Automatically discovers and parses local `.bib` files (extracting titles, authors, years, abstracts, DOIs, and venues). Works 100% offline out-of-the-box with zero configuration or external dependencies.
 * **Zotero MCP (Optional Semantic Expansion)**: If you use Zotero Desktop, `writing-context-rtfm` connects via `zotero-mcp` to run dynamic semantic searches across your PDF library and notes:
   ```bash
-  # Install zotero-mcp globally using uv
-  uv tool install zotero-mcp
+  # Install or upgrade the current server with semantic dependencies
+  uv tool install --upgrade "zotero-mcp-server[semantic]"
+
+  # Configure local embeddings, then build the semantic index
+  zotero-mcp setup --semantic-config-only
+  zotero-mcp update-db --fulltext
   ```
   *(Ensure Zotero Desktop is running during writing sessions to allow local SQLite connections).*
+
+  Scope searches by the names shown in Zotero, without looking up numeric IDs:
+
+  ```yaml
+  providers:
+    zotero:
+      enabled: true
+      mcp_server:
+        command: zotero-mcp
+        args: ["serve"]
+      extra:
+        library_name: "My Library"  # Or the visible name of a shared group
+        collections:
+          - "Projects / Urban"      # Full path is safest for nested collections
+          - "Methods"
+        include_subcollections: true
+  ```
+
+  Collection entries form a union. A bare collection name is accepted only when it is unique in the selected library; otherwise use its full `Parent / Child` path. Citation-key lookups remain library-wide. Because Zotero's semantic result metadata does not expose collection membership, the provider performs a bounded semantic overfetch and strictly retains only item keys enumerated from the configured collections. Metadata searches are sent to each collection directly, and duplicate papers are removed by Zotero item key.
 
 ---
 
@@ -272,7 +295,7 @@ The extension automatically parses `\ref{...}` and label declarations in the tar
 
 ### 4. Native Offline BibTeX & Semantic Zotero Grounding
 * **Built-in BibTeX Engine**: Directly parses and indexes local `.bib` files, extracting titles, authors, years, abstracts, DOIs, and citation keys offline.
-* **Dynamic Zotero Search**: Connects to `zotero-mcp` for semantic literature search when enabled. Multi-stream search results are merged using **Reciprocal Rank Fusion (RRF)** and deduplicated via **Maximal Marginal Relevance (MMR)**.
+* **Dynamic Zotero Search**: Connects to `zotero-mcp` for semantic literature search when enabled. Searches can be isolated to a named personal or group library and a union of named collections. Scoped semantic results are verified against collection item keys before they enter a context pack.
 * **Proofread Protection**: In `proofread-pack` mode, open-ended search is disabled to avoid "context contamination", resolving only existing `\cite{}` keys.
 
 ### 5. Two-Tier Agent Protocol (Soft Gatekeeping)

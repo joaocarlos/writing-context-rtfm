@@ -45,11 +45,40 @@ def test_parse_bibtex_file(tmp_path):
     assert entry.year == "2017"
     assert "sequence transduction" in entry.abstract
     assert entry.fields.get("doi") == "10.5555/3295222.3295349"
+    assert entry.line_start == 2
+    assert entry.line_end >= entry.line_start
 
     snippet = entry.format_snippet()
     assert "## Attention Is All You Need" in snippet
     assert "**Citation Key:** `vaswani2017attention`" in snippet
     assert "**DOI:** 10.5555/3295222.3295349" in snippet
+
+
+def test_bibtex_provider_resolves_and_reconstructs_source_range(tmp_path):
+    bib_file = tmp_path / "references.bib"
+    bib_file.write_text(SAMPLE_BIB, encoding="utf-8")
+    config = AppConfig(
+        version=1,
+        rtfm=RTFMConfig(project_root=str(tmp_path)),
+        context=ContextConfig(),
+        cache=CacheConfig(enabled=False),
+        section_cards=SectionCardsConfig(path="dummy.yaml"),
+        providers={"bibtex": ProviderConfig(enabled=True)},
+    )
+    provider = BibTeXProvider(config)
+
+    entries = provider.entries_for_source_span("references.bib", 2, 9)
+    span = provider.reconstruct_entry(entries[0], score=0.73)
+
+    assert [entry.citekey for entry in entries] == ["vaswani2017attention"]
+    assert span.path == "references.bib"
+    assert span.line_start == entries[0].line_start
+    assert span.line_end == entries[0].line_end
+    assert span.score == 0.73
+    assert span.metadata["citekey"] == "vaswani2017attention"
+    assert span.metadata["doi"] == "10.5555/3295222.3295349"
+    assert span.metadata["title"] == "Attention Is All You Need"
+    assert "Attention Is All You Need" in span.metadata["snippet"]
 
 
 def test_parse_bibtex_file_accepts_same_line_entry_closure(tmp_path):

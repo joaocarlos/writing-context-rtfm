@@ -11,6 +11,13 @@ from mcp import ClientSession
 
 logger = logging.getLogger("mcp-server")
 
+SessionKey = tuple[
+    str,
+    tuple[str, ...],
+    tuple[tuple[str, str], ...],
+    str | None,
+]
+
 
 def register_pid(pid: int, workspace_root: Path) -> None:
     wc_dir = workspace_root / ".writing-context"
@@ -63,8 +70,8 @@ class LocalMCPClientManager:
 
         atexit.register(self.shutdown)
 
-        self.sessions: dict[tuple[str, tuple[str, ...]], ClientSession] = {}
-        self.exit_stacks: dict[tuple[str, tuple[str, ...]], AsyncExitStack] = {}
+        self.sessions: dict[SessionKey, ClientSession] = {}
+        self.exit_stacks: dict[SessionKey, AsyncExitStack] = {}
         self.registered_pids: list[int] = []
         self._lock = threading.Lock()
         self._apply_patch()
@@ -104,10 +111,23 @@ class LocalMCPClientManager:
         custom_create_process.__patched__ = True  # type: ignore[attr-defined]
         mcp.client.stdio._create_platform_compatible_process = custom_create_process
 
+    @staticmethod
+    def _make_session_key(
+        command: str,
+        args: list[str],
+        env: dict[str, str] | None,
+        session_scope: str | None,
+    ) -> SessionKey:
+        return command, tuple(args), tuple(sorted((env or {}).items())), session_scope
+
     async def _get_or_create_session(
-        self, command: str, args: list[str], env: dict[str, str] | None = None
+        self,
+        command: str,
+        args: list[str],
+        env: dict[str, str] | None = None,
+        session_scope: str | None = None,
     ) -> ClientSession:
-        key = (command, tuple(args))
+        key = self._make_session_key(command, args, env, session_scope)
         with self._lock:
             if key in self.sessions:
                 return self.sessions[key]
@@ -138,11 +158,12 @@ class LocalMCPClientManager:
         arguments: dict[str, Any],
         env: dict[str, str] | None = None,
         timeout: float = 30.0,
+        session_scope: str | None = None,
     ) -> Any:
         """Call an MCP tool on the given subprocess server thread-safely."""
 
         async def _call() -> Any:
-            session = await self._get_or_create_session(command, args, env)
+            session = await self._get_or_create_session(command, args, env, session_scope)
             return await session.call_tool(tool_name, arguments)
 
         future = asyncio.run_coroutine_threadsafe(_call(), self.loop)

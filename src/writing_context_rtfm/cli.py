@@ -342,15 +342,27 @@ def init_command(args: argparse.Namespace) -> None:
             zotero_block = (
                 "  zotero:\n"
                 "    enabled: true\n"
-                f"{_format_mcp_server_config(zotero_cfg['mcp_server'])}"
+                f"{_format_mcp_server_config(zotero_cfg['mcp_server'])}\n"
+                "    extra:\n"
+                '      library_name: "My Library"\n'
+                "      collections: []\n"
+                "      include_subcollections: true\n"
+                "      include_abstract: false\n"
+                "      similarity_threshold: -0.4"
             )
         else:
             zotero_block = (
                 "  zotero:\n"
                 "    enabled: false\n"
                 "    mcp_server:\n"
-                "      command: npx\n"
-                '      args: ["-y", "zotero-mcp"]'
+                "      command: zotero-mcp\n"
+                '      args: ["serve"]\n'
+                "    extra:\n"
+                '      library_name: "My Library"\n'
+                "      collections: []\n"
+                "      include_subcollections: true\n"
+                "      include_abstract: false\n"
+                "      similarity_threshold: -0.4"
             )
 
         openai_block = (

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Anonymized context-quality benchmark aggregate",
+  "type": "object",
+  "required": [
+    "report_version", "stage", "corpus_hashes", "code_revision", "generator_model_ids",
+    "judge_model_ids", "prompt_version", "condition_definitions", "strategies",
+    "paired_case_run_differences", "validity_gates", "rrf_promotion_decision",
+    "unresolved_judge_rate", "judge_disagreement_by_generator_family", "limitations"
+  ],
+  "properties": {
+    "report_version": {"const": 1},
+    "stage": {"enum": ["pilot", "confirmation"]},
+    "corpus_hashes": {"type": "array", "items": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+    "generator_model_ids": {"type": "array", "items": {"type": "string"}},
+    "judge_model_ids": {"type": "array", "items": {"type": "string"}},
+    "unresolved_judge_rate": {"type": "number", "minimum": 0, "maximum": 1},
+    "limitations": {"type": "array", "minItems": 3, "items": {"type": "string"}}
+  }
+}

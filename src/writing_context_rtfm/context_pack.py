@@ -5,6 +5,7 @@ import hashlib
 import re
 import uuid
 from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,15 @@ from writing_context_rtfm.utils import (
     scan_latex_commands,
 )
 from writing_context_rtfm.virtual_doc import VirtualDocumentParser
+
+QueryStreamRetriever = Callable[
+    [Sequence[QuerySpec], str, int, Sequence[str]],
+    dict[int, Sequence[RTFMResult]],
+]
+BibliographyHandoff = Callable[
+    [Sequence[SourceSpan], Sequence[SourceSpan]],
+    Sequence[SourceSpan],
+]
 
 
 def _path_matches(path: str, card_path: str | None) -> bool:
@@ -399,6 +409,9 @@ class ContextPackGenerator:
         store: ExtensionStore,
         providers: list[BaseContextProvider] | None = None,
         reranker: SpanReranker | None = None,
+        diagnostic_recorder: Callable[[str, Sequence[SourceSpan]], None] | None = None,
+        query_stream_retriever: QueryStreamRetriever | None = None,
+        bibliography_handoff: BibliographyHandoff | None = None,
     ):
         self.config = config
         self.section_cards = section_cards
@@ -406,7 +419,14 @@ class ContextPackGenerator:
         self.store = store
         self.providers = providers or []
         self.reranker = reranker
+        self.diagnostic_recorder = diagnostic_recorder
+        self.query_stream_retriever = query_stream_retriever
+        self.bibliography_handoff = bibliography_handoff
         self._hash_cache: dict[Path, tuple[float, int, str]] = {}
+
+    def _record_diagnostic(self, stage: str, spans: Sequence[SourceSpan]) -> None:
+        if self.diagnostic_recorder is not None:
+            self.diagnostic_recorder(stage, tuple(spans))
 
     def _get_file_hash(self, path: Path, fallback_val: str) -> str:
         if not path.exists():
@@ -1241,20 +1261,35 @@ class ContextPackGenerator:
         structured_bibtex_active = any(
             provider.provider_id == "bibtex" for provider in active_providers
         )
+        excluded_bibtex_candidates: list[SourceSpan] = []
+
+        prefetched_results: dict[int, Sequence[RTFMResult]] | None = None
+        if self.query_stream_retriever is not None:
+            prefetched_results = self.query_stream_retriever(
+                tuple(query_specs),
+                self.config.rtfm.corpus,
+                self.config.context.max_search_results_per_query,
+                tuple(obligation.label for obligation in obligations),
+            )
+            invalid_indexes = sorted(set(prefetched_results) - set(range(len(query_specs))))
+            if invalid_indexes:
+                raise ValueError(
+                    f"Query stream retriever returned invalid indexes: {invalid_indexes}"
+                )
 
         for i, qs in enumerate(query_specs):
             q = qs.text
             stream_key = f"query_{qs.family}_{i}"
             try:
-                results = self.adapter.search(
-                    q,
-                    corpus=self.config.rtfm.corpus,
-                    limit=self.config.context.max_search_results_per_query,
-                )
+                if prefetched_results is None:
+                    results = self.adapter.search(
+                        q,
+                        corpus=self.config.rtfm.corpus,
+                        limit=self.config.context.max_search_results_per_query,
+                    )
+                else:
+                    results = prefetched_results.get(i, ())
                 for retrieval_rank, r in enumerate(results, start=1):
-                    if structured_bibtex_active and Path(r.path).suffix.lower() == ".bib":
-                        quality.discarded_excluded_path += 1
-                        continue
                     if not is_allowed_source(r.path):
                         quality.discarded_excluded_path += 1
                         continue
@@ -1286,6 +1321,10 @@ class ContextPackGenerator:
                             "retrieval_rank": retrieval_rank,
                         },
                     )
+                    if structured_bibtex_active and Path(r.path).suffix.lower() == ".bib":
+                        quality.discarded_excluded_path += 1
+                        excluded_bibtex_candidates.append(span)
+                        continue
                     stream_candidates[stream_key].append(span)
                     if not enable_rrf:
                         all_candidates.append(span)
@@ -1303,6 +1342,7 @@ class ContextPackGenerator:
                 int(max_spans * provider_role_budgets.get("reference", 0.0)),
             ),
         )
+        bibtex_provider_candidates: list[SourceSpan] = []
         for provider in active_providers:
             if provider_limit:
                 try:
@@ -1324,11 +1364,38 @@ class ContextPackGenerator:
                             },
                         )
                         stream_candidates[stream_key].append(span_with_scores)
+                        if provider.provider_id == "bibtex":
+                            bibtex_provider_candidates.append(span_with_scores)
                         if not enable_rrf:
                             all_candidates.append(span_with_scores)
                 except Exception as e:
                     warnings.append(f"Provider '{provider.provider_id}' failed: {e}")
                     status = "degraded"
+
+        if excluded_bibtex_candidates:
+            self._record_diagnostic("stream:excluded_bibtex", excluded_bibtex_candidates)
+        if self.bibliography_handoff is not None:
+            handoff_spans = self.bibliography_handoff(
+                tuple(excluded_bibtex_candidates),
+                tuple(bibtex_provider_candidates),
+            )
+            stream_key = "provider_bibtex_handoff"
+            for handoff_span in handoff_spans:
+                span_with_provider = replace(
+                    handoff_span,
+                    metadata={
+                        **(handoff_span.metadata or {}),
+                        "provider_id": (handoff_span.metadata or {}).get(
+                            "provider_id", "bibtex"
+                        ),
+                    },
+                )
+                stream_candidates[stream_key].append(span_with_provider)
+                if not enable_rrf:
+                    all_candidates.append(span_with_provider)
+
+        for stream_key, spans in stream_candidates.items():
+            self._record_diagnostic(f"stream:{stream_key}", spans)
 
         # Apply multi-stream RRF when enabled
         if enable_rrf and stream_candidates:
@@ -1389,6 +1456,8 @@ class ContextPackGenerator:
             except Exception as e:
                 warnings.append(f"1-Hop reference traversal notice: {e}")
 
+        self._record_diagnostic("retrieved", all_candidates)
+
         # --- AST Environment Snapping ---
         doc_parser_snap = VirtualDocumentParser(pr)
         snapped_candidates: list[SourceSpan] = []
@@ -1442,6 +1511,7 @@ class ContextPackGenerator:
 
         # --- Deduplication ---
         deduped = self._deduplicate_spans(snapped_candidates)
+        self._record_diagnostic("deduplicated", deduped)
 
         # --- Optional bounded local cross-encoder reranking ---
         if self.reranker is not None:
@@ -1458,6 +1528,7 @@ class ContextPackGenerator:
         # --- Avoid filter ---
         filtered, avoid_count = self._filter_avoid(filtered, target_card)
         quality.discarded_avoid_match = avoid_count
+        self._record_diagnostic("score_filtered", filtered)
 
         # Resolve role budgets (runtime override > config)
         resolved_budgets = dict(self.config.context.role_budgets)
@@ -1485,6 +1556,7 @@ class ContextPackGenerator:
                 -s.score,
             ),
         )
+        self._record_diagnostic("diversified", filtered)
 
         # --- Atomic evidence coverage (single pass; no retrieval retry loop) ---
         fixed_packet_parts = [
@@ -1522,6 +1594,7 @@ class ContextPackGenerator:
                 original_order[id(span)],
             ),
         )
+        self._record_diagnostic("budget_candidates", filtered)
 
         expanded_for_coverage = False
         required_atomic_spans = [
@@ -1563,6 +1636,7 @@ class ContextPackGenerator:
 
         # Pass 1: Strict allocation based on role fractions (soft guidance)
         pass2_candidates: list[SourceSpan] = []
+        selection_rejections: dict[str, list[SourceSpan]] = defaultdict(list)
         for span in filtered:
             role = span.source_role
             est = self._estimate_tokens(span)
@@ -1584,6 +1658,7 @@ class ContextPackGenerator:
             if len(selected) >= max_spans:
                 cap_truncated = True
                 budget_dropped += 1
+                selection_rejections["max_source_spans"].append(span)
                 continue
 
             est = self._estimate_tokens(span)
@@ -1594,6 +1669,7 @@ class ContextPackGenerator:
                 and provider_reference_tokens + est > provider_reference_limit
             ):
                 budget_dropped += 1
+                selection_rejections["provider_reference_quota"].append(span)
                 continue
             fits_budget = current_tokens + est <= token_budget
             if not fits_budget and not is_strict and not selected:
@@ -1615,11 +1691,15 @@ class ContextPackGenerator:
                     provider_reference_tokens += est
             else:
                 budget_dropped += 1
+                selection_rejections["token_budget"].append(span)
 
         quality.dropped_for_budget = budget_dropped
         quality.truncated = cap_truncated or (budget_dropped > 0)
         quality.selected_count = len(selected)
         selected.sort(key=lambda span: filtered_order[id(span)])
+        for reason, rejected_spans in selection_rejections.items():
+            self._record_diagnostic(f"rejected:{reason}", rejected_spans)
+        self._record_diagnostic("selected", selected)
 
         selected_paths_by_obligation: dict[str, list[str]] = {
             obligation.id: [] for obligation in obligations

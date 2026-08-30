@@ -4,6 +4,8 @@ import unittest
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from writing_context_rtfm.cli import init_command
 
 
@@ -29,6 +31,13 @@ class TestCliInit(unittest.TestCase):
         self.assertTrue(
             (self.project_root / ".writing-context" / "cards.overrides.yaml.example").exists()
         )
+        config_data = yaml.safe_load(
+            (self.project_root / ".writing-context" / "config.yaml").read_text()
+        )
+        zotero_extra = config_data["providers"]["zotero"]["extra"]
+        self.assertEqual(zotero_extra["library_name"], "My Library")
+        self.assertEqual(zotero_extra["collections"], [])
+        self.assertTrue(zotero_extra["include_subcollections"])
 
         # Check .gitignore
         gitignore = self.project_root / ".gitignore"

@@ -80,3 +80,4 @@ benchmark/reports.local/
 benchmark/**/*prompt*.json
 benchmark/**/*generation*.json
 benchmark/**/*judgment*.json
+!benchmark/schemas/judgment.schema.json

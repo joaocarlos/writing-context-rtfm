@@ -1,0 +1,29 @@
+version: 1
+temperature: 0.2
+repetitions: 3
+
+# Subscription-backed CLI sessions: no API keys are read by the harness. Pin the
+# model identifier; installed CLI versions are intentionally not part of the contract.
+generators:
+  pilot:
+    - provider: agy_cli
+      command: agy
+      model: replace-with-exact-antigravity-gemini-model-id
+  confirmation:
+    - provider: agy_cli
+      command: agy
+      model: replace-with-exact-antigravity-gemini-model-id
+    - provider: codex_cli
+      command: codex
+      model: replace-with-exact-codex-model-id
+judges:
+  - provider: agy_cli
+    command: agy
+    model: replace-with-exact-antigravity-gemini-judge-model-id
+  - provider: codex_cli
+    command: codex
+    model: replace-with-codex-judge-model-id
+
+# Claude CLI is supported as provider: claude_cli for non-primary sensitivity
+# runs. It is not a drop-in primary judge because that changes the declared
+# Gemini/OpenAI-family design.

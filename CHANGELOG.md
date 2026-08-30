@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-08-30
+
+### Added
+- Added Zotero library selection by visible name, defaulting new configurations to `My Library`, and collection scoping through a list of unique names or full `Parent / Child` paths.
+- Added frozen context-quality, candidate-exposure, and BibTeX-provider-handoff benchmarks with deterministic evaluation proxies, structured bibliography provenance, ownership audit telemetry, repeated cost measurements, and anonymized aggregate reports.
+- Added optional private candidate-stage diagnostics and benchmark-only query/handoff hooks without changing production retrieval or composition defaults.
+
+### Changed
+- Scoped Zotero metadata searches to the union of configured collections and applied bounded semantic overfetch with strict item-key post-filtering, prioritizing context quality without allowing out-of-collection results into packs.
+- Updated Zotero setup guidance to install the current `zotero-mcp-server[semantic]` package and initialize its semantic index explicitly.
+- Retired the fixed two-condition generation script in favor of the case-driven, resumable context-quality benchmark.
+- Formally closed the Pilot v1 retrieval diagnosis without promoting broad candidate expansion, BibTeX fallback/reconstruction, reference-quota changes, or a budget-aware composer.
+
+### Fixed
+- Isolated local MCP subprocess sessions by library scope and server environment, preventing one provider configuration from inheriting another library's mutable Zotero session.
+- Parsed current Zotero semantic `Relevance` fields and deduplicated multi-collection results by Zotero item key.
+- Replaced the masked-section identity check with deterministic anchor-group coverage, constraint, and citation-preservation proxies.
+- Excluded private benchmark runners and analysis modules from distribution artifacts while retaining their source and regression fixtures in the repository.
+
 ## [0.11.1] - 2026-08-24
 
 ### Changed

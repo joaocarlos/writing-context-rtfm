@@ -22,6 +22,9 @@ class BibEntry:
     citekey: str
     fields: dict[str, str] = field(default_factory=dict)
     raw: str = ""
+    source_path: str = ""
+    line_start: int | None = None
+    line_end: int | None = None
 
     @property
     def title(self) -> str:
@@ -143,6 +146,9 @@ def parse_bibtex_file(file_path: Path) -> dict[str, BibEntry]:
             citekey=citekey,
             fields=fields,
             raw=content[match.start() : entry_end + 1],
+            source_path=str(file_path),
+            line_start=content.count("\n", 0, match.start()) + 1,
+            line_end=content.count("\n", 0, entry_end) + 1,
         )
 
     return entries
@@ -215,6 +221,61 @@ class BibTeXProvider(BaseContextProvider):
             entries = parse_bibtex_file(bib_file)
             all_entries.update(entries)
         return all_entries
+
+    @staticmethod
+    def _entry_metadata(entry: BibEntry) -> dict[str, str]:
+        return {
+            "snippet": entry.format_snippet(),
+            "citekey": entry.citekey,
+            "doi": entry.fields.get("doi", ""),
+            "title": entry.title,
+        }
+
+    def entries_for_source_span(
+        self,
+        path: str,
+        line_start: int | None,
+        line_end: int | None,
+    ) -> list[BibEntry]:
+        """Resolve BibTeX entries overlapping one repository-local source span."""
+        if line_start is None or line_end is None:
+            return []
+        root = Path(self.config.rtfm.project_root).resolve()
+        candidate = Path(path)
+        source = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+        try:
+            source.relative_to(root)
+        except ValueError:
+            return []
+        if source.suffix.casefold() != ".bib" or not source.is_file():
+            return []
+        return [
+            entry
+            for entry in parse_bibtex_file(source).values()
+            if entry.line_start is not None
+            and entry.line_end is not None
+            and entry.line_start <= line_end
+            and entry.line_end >= line_start
+        ]
+
+    def reconstruct_entry(self, entry: BibEntry, *, score: float) -> SourceSpan:
+        """Represent a parsed entry as provider-owned evidence with source provenance."""
+        root = Path(self.config.rtfm.project_root).resolve()
+        source = Path(entry.source_path).resolve()
+        try:
+            path = source.relative_to(root).as_posix()
+        except ValueError:
+            path = f"bibtex:{entry.citekey}"
+        return SourceSpan(
+            path=path,
+            line_start=entry.line_start,
+            line_end=entry.line_end,
+            reason=f"BibTeX reconstruction for citation key '{entry.citekey}'",
+            score=score,
+            priority="supporting",
+            source_role="reference",
+            metadata=self._entry_metadata(entry),
+        )
 
     def _section_text(self, root: Path, section_id: str, path: str) -> str:
         """Read one card section, falling back to whole-file text only for section fragments."""
@@ -312,7 +373,7 @@ class BibTeXProvider(BaseContextProvider):
                         score=0.9,
                         priority="supporting",
                         source_role="reference",
-                        metadata={"snippet": entry.format_snippet(), "citekey": key},
+                        metadata=self._entry_metadata(entry),
                     )
                 )
 
@@ -356,7 +417,7 @@ class BibTeXProvider(BaseContextProvider):
                         score=score,
                         priority="supporting",
                         source_role="reference",
-                        metadata={"snippet": entry.format_snippet(), "citekey": key},
+                        metadata=self._entry_metadata(entry),
                     )
                 )
 

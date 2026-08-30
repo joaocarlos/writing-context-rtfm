@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Private context-quality benchmark cases",
+  "type": "object",
+  "required": ["version", "cases"],
+  "properties": {
+    "version": {"const": 1},
+    "defaults": {"type": "object"},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id", "project_id", "stages", "archive", "archive_sha256", "entry_point",
+          "bibliography_files", "target", "task", "task_type", "expected_output_range",
+          "gold_sha256", "required_ideas", "anchor_aliases", "required_terminology",
+          "prohibited_claims", "protected_literals", "required_citation_keys",
+          "valid_citation_keys", "expected_source_spans", "annotations"
+        ],
+        "properties": {
+          "id": {"type": "string", "pattern": "^P[0-9]+-[A-Za-z0-9_-]+$"},
+          "project_id": {"type": "string", "pattern": "^P[0-9]+$"},
+          "stages": {"type": "array", "items": {"enum": ["pilot", "confirmation"]}},
+          "archive_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "gold_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "target": {
+            "type": "object",
+            "required": ["selector", "heading", "content_hash"]
+          },
+          "annotations": {
+            "type": "object",
+            "required": ["curator", "card_author", "auditor", "disagreements"],
+            "properties": {
+              "disagreements": {"type": "array", "items": {"type": "string"}},
+              "corpus_warnings": {"type": "array", "items": {"type": "string"}}
+            }
+          },
+          "expected_output_range": {
+            "type": "array", "prefixItems": [{"type": "integer"}, {"type": "integer"}],
+            "minItems": 2, "maxItems": 2
+          }
+        }
+      }
+    }
+  }
+}

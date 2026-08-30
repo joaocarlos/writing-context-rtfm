@@ -21,7 +21,7 @@ exclude = [
 
 [project]
 name = "writing-context-rtfm"
-version = "0.11.2"
+version = "0.11.3"
 description = "MCP extension for writing-context retrieval relying on RTFM"
 readme = "README.md"
 requires-python = ">=3.13"

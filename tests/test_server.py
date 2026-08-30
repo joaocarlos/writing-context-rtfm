@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from writing_context_rtfm.server import (
     handle_audit_manuscript_terminology,
+    handle_explain_context_pack,
     handle_get_manuscript_reference_graph,
     handle_get_proofreading_context_pack,
     handle_get_term_context,
@@ -109,6 +110,46 @@ def test_handle_get_writing_context_pack(
 
     # Missing task
     res_err = handle_get_writing_context_pack({})
+    assert "error_code" in json.loads(res_err["content"][0]["text"])
+
+
+@patch("writing_context_rtfm.providers.get_active_providers")
+@patch("writing_context_rtfm.server._load_runtime")
+@patch("writing_context_rtfm.server.ContextPackGenerator")
+def test_handle_explain_context_pack(
+    mock_generator_class, mock_load_runtime, mock_get_providers
+):
+    mock_get_providers.return_value = []
+    mock_load_runtime.return_value = (MagicMock(), MagicMock(), [], MagicMock(), MagicMock())
+
+    from writing_context_rtfm.schemas import CandidateFunnel, ContextPack, ContextPackDiagnostics
+
+    mock_pack = ContextPack(
+        task="write it",
+        target="sec1",
+        document_thesis="",
+        prior_claims=[],
+        terminology={},
+        constraints=[],
+        source_spans=[],
+        estimated_tokens=0,
+        diagnostics=ContextPackDiagnostics(
+            funnel=CandidateFunnel(retrieved=10, selected=3),
+            candidates=[],
+            ownership_audit=[],
+            rejections_by_reason={},
+        ),
+    )
+    mock_generator_class.return_value.generate.return_value = mock_pack
+
+    res = handle_explain_context_pack({"task": "write it"})
+    data = json.loads(res["content"][0]["text"])
+    assert "diagnostics" in data
+    assert data["diagnostics"]["funnel"]["retrieved"] == 10
+    assert mock_generator_class.return_value.generate.call_args[1]["include_diagnostics"] is True
+
+    # Missing task
+    res_err = handle_explain_context_pack({})
     assert "error_code" in json.loads(res_err["content"][0]["text"])
 
 

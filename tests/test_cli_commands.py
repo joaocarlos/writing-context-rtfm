@@ -260,3 +260,65 @@ def test_cleanup_command(mock_kill, capsys, tmp_path):
     captured = capsys.readouterr()
     assert "Cleaning up" in captured.out
     assert mock_kill.call_count >= 1
+
+
+@patch("writing_context_rtfm.cli.ContextPackGenerator")
+@patch("writing_context_rtfm.cli.ExtensionStore")
+@patch("writing_context_rtfm.cli.RTFMAdapter")
+@patch("writing_context_rtfm.cli.load_section_cards")
+@patch("writing_context_rtfm.cli.load_config")
+def test_explain_pack_command(
+    mock_load_config,
+    mock_load_cards,
+    mock_adapter,
+    mock_store,
+    mock_generator_class,
+    capsys,
+):
+    from writing_context_rtfm.cli import explain_pack_command
+    from writing_context_rtfm.schemas import CandidateFunnel, ContextPack, ContextPackDiagnostics
+
+    mock_pack = ContextPack(
+        task="Test task",
+        target="intro",
+        document_thesis=None,
+        prior_claims=[],
+        terminology={},
+        constraints=[],
+        source_spans=[],
+        estimated_tokens=150,
+        status="complete",
+        diagnostics=ContextPackDiagnostics(
+            funnel=CandidateFunnel(retrieved=5, selected=2),
+            candidates=[],
+            ownership_audit=[],
+            rejections_by_reason={"REJECT_TOKEN_BUDGET": 3},
+        ),
+    )
+    mock_generator_class.return_value.generate.return_value = mock_pack
+
+    args = MockArgs(
+        command="explain-pack",
+        task="Explain something",
+        target="intro",
+        budget=4000,
+        must_consider=None,
+        project_root=".",
+        task_type=None,
+        line_start=None,
+        line_end=None,
+        pack_mode=None,
+        role_budgets=None,
+        explain=False,
+        json=False,
+    )
+
+    explain_pack_command(args)
+
+    call_kwargs = mock_generator_class.return_value.generate.call_args[1]
+    assert call_kwargs["include_diagnostics"] is True
+
+    captured = capsys.readouterr()
+    assert "=== Candidate Funnel ===" in captured.out
+    assert "Retrieved:     5" in captured.out
+    assert "REJECT_TOKEN_BUDGET: 3" in captured.out

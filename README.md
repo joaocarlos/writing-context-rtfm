@@ -393,6 +393,12 @@ writing-context-rtfm pack \
   --target sections/introduction.tex \
   --budget 4000
 
+# Explain candidate lifecycle, funnel, and provider ownership exclusions
+writing-context-rtfm explain-pack \
+  --task "Update the introduction" \
+  --target sections/introduction.tex \
+  --budget 4000
+
 # Generate a proofreading context pack
 writing-context-rtfm proofread-pack sections/abstract.tex --line-start 1 --line-end 10 --max-tokens 3000
 

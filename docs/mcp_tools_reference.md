@@ -1,6 +1,6 @@
 # Model Context Protocol (MCP) Tools & Prompts Reference
 
-`writing-context-rtfm` exposes a rich, 17-tool MCP interface designed to provide AI coding and writing agents (Claude Desktop, Cursor, Claude Code, Roo Code, Antigravity) with surgical context, section constraints, terminology auditing, and reference graph intelligence.
+`writing-context-rtfm` exposes an 18-tool MCP interface designed to provide AI coding and writing agents (Claude Desktop, Cursor, Claude Code, Roo Code, Antigravity) with surgical context, section constraints, candidate lifecycle diagnostics, terminology auditing, and reference graph intelligence.
 
 ---
 
@@ -9,28 +9,29 @@
 | Tool Name | Primary Purpose | Category |
 | :--- | :--- | :--- |
 | [`get_writing_context_pack`](#1-get_writing_context_pack) | Retrieve surgical context pack for drafting/rewriting sections. | Core Writing |
-| [`get_proofreading_context_pack`](#2-get_proofreading_context_pack) | Retrieve context and immutability rules for proofreading/polishing text. | Proofreading |
-| [`request_more_context`](#3-request_more_context) | Paginate and fetch additional background spans for a previous run. | Pagination |
-| [`submit_generation_feedback`](#4-submit_generation_feedback) | Submit evaluation feedback on retrieved context to optimize cache. | Evaluation |
-| [`audit_manuscript_terminology`](#5-audit_manuscript_terminology) | Detect undeclared term usage, drift, and glossary mismatches across drafts. | Terminology |
-| [`get_term_context`](#6-get_term_context) | Look up term definitions, variants, and words to avoid. | Terminology |
-| [`get_manuscript_reference_graph`](#7-get_manuscript_reference_graph) | Inspect `\label`, `\ref`, and `\cite` cross-reference dependency graph. | Graph & AST |
-| [`inspect_target_section`](#8-inspect_target_section) | Inspect metadata, purpose, constraints, and dependencies for a section. | Cards & Structure |
-| [`initialize_section_cards`](#9-initialize_section_cards) | Scan workspace and scaffold `cards.generated.yaml`. | Card Management |
-| [`review_card_candidates`](#10-review_card_candidates) | List pending generated candidates for human/agent review. | Card Management |
-| [`accept_card_candidate`](#11-accept_card_candidate) | Accept a candidate value into `cards.overrides.yaml`. | Card Management |
-| [`reject_card_candidate`](#12-reject_card_candidate) | Reject a candidate value and record reason in `cards.lock.json`. | Card Management |
-| [`edit_card_field`](#13-edit_card_field) | Manually edit or override a specific field in section cards. | Card Management |
-| [`explain_card_candidate`](#14-explain_card_candidate) | Retrieve model rationale, confidence, and provenance for a candidate. | Card Management |
-| [`get_card_field_diff`](#15-get_card_field_diff) | Inspect changes between generated and overridden section cards. | Card Management |
-| [`get_section_card_history`](#16-get_section_card_history) | View modification history and candidate decisions for a section. | Card Management |
-| [`get_target_feedback_summary`](#17-get_target_feedback_summary) | Retrieve aggregated feedback metrics for a target section for offline inspection. | Evaluation |
-| [`refresh_index`](#18-refresh_index) | Re-sync RTFM retrieval index and invalidate stale cache entries. | Maintenance |
+| [`explain_context_pack`](#2-explain_context_pack) | Retrieve writing context pack with complete candidate lifecycle diagnostics and funnel. | Observability & Diagnostics |
+| [`get_proofreading_context_pack`](#3-get_proofreading_context_pack) | Retrieve context and immutability rules for proofreading/polishing text. | Proofreading |
+| [`request_more_context`](#4-request_more_context) | Paginate and fetch additional background spans for a previous run. | Pagination |
+| [`submit_generation_feedback`](#5-submit_generation_feedback) | Submit evaluation feedback on retrieved context to optimize cache. | Evaluation |
+| [`audit_manuscript_terminology`](#6-audit_manuscript_terminology) | Detect undeclared term usage, drift, and glossary mismatches across drafts. | Terminology |
+| [`get_term_context`](#7-get_term_context) | Look up term definitions, variants, and words to avoid. | Terminology |
+| [`get_manuscript_reference_graph`](#8-get_manuscript_reference_graph) | Inspect `\label`, `\ref`, and `\cite` cross-reference dependency graph. | Graph & AST |
+| [`inspect_target_section`](#9-inspect_target_section) | Inspect metadata, purpose, constraints, and dependencies for a section. | Cards & Structure |
+| [`initialize_section_cards`](#10-initialize_section_cards) | Scan workspace and scaffold `cards.generated.yaml`. | Card Management |
+| [`review_card_candidates`](#11-review_card_candidates) | List pending generated candidates for human/agent review. | Card Management |
+| [`accept_card_candidate`](#12-accept_card_candidate) | Accept a candidate value into `cards.overrides.yaml`. | Card Management |
+| [`reject_card_candidate`](#13-reject_card_candidate) | Reject a candidate value and record reason in `cards.lock.json`. | Card Management |
+| [`edit_card_field`](#14-edit_card_field) | Manually edit or override a specific field in section cards. | Card Management |
+| [`explain_card_candidate`](#15-explain_card_candidate) | Retrieve model rationale, confidence, and provenance for a candidate. | Card Management |
+| [`get_card_field_diff`](#16-get_card_field_diff) | Inspect changes between generated and overridden section cards. | Card Management |
+| [`get_section_card_history`](#17-get_section_card_history) | View modification history and candidate decisions for a section. | Card Management |
+| [`get_target_feedback_summary`](#18-get_target_feedback_summary) | Retrieve aggregated feedback metrics for a target section for offline inspection. | Evaluation |
+| [`refresh_index`](#19-refresh_index) | Re-sync RTFM retrieval index and invalidate stale cache entries. | Maintenance |
 
 
 ---
 
-## 1. Core Context Retrieval Tools
+## 1. Core Context Retrieval & Observability Tools
 
 ### 1. `get_writing_context_pack`
 Retrieves a compact, prioritized writing context pack containing unbroken target text, 1-hop reference graph definitions, local bibliography citations, and structural constraints.
@@ -44,6 +45,23 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
 * **`pack_mode`** (*string*, optional, default `"standard"`): Depth mode (`"minimal"`, `"standard"`, `"deep"`).
 * **`role_budgets`** (*object*, optional): Source-role fractions for `target_text`, `local_context`, `dependency`, and `reference`; values must sum to `1.0`.
 * **`strict_budget`** (*boolean*, optional, default `false`): When true, strictly caps tokens at the requested budget.
+
+---
+
+### 2. `explain_context_pack`
+Generates a writing context pack identical to `get_writing_context_pack`, but attaches a complete candidate trace lifecycle and funnel breakdown under `diagnostics`.
+
+> **Note on Diagnostics**: Diagnostics expose internal pipeline filtering and composition decisions for debugging and transparency. They do not constitute a semantic quality score or guarantee that omitted evidence is irrelevant.
+
+#### Parameters
+Accepts the exact same parameters as `get_writing_context_pack`.
+
+#### Diagnostic Funnel & Trace Schema
+Returns `diagnostics`:
+* **`funnel`**: Exact candidate stage counts (`retrieved`, `normalized`, `deduplicated`, `excluded`, `exposed`, `filtered`, `eligible`, `selected`).
+* **`candidates`**: List of immutable candidate traces showing per-stage events, actions (`snap_ast`, `dedup_keep`, `exclude_ownership`, `filter_score`, `select_quota`), and canonical rejection reasons.
+* **`ownership_audit`**: Passive bibliographic ownership records tracking replaced `.bib` spans, replacement candidate IDs, and resolved citation keys.
+* **`rejections_by_reason`**: Cardinality map of rejections grouped by canonical taxonomy (`REJECT_TOKEN_BUDGET`, `REJECT_MAX_SOURCE_SPANS`, `REJECT_PROVIDER_REFERENCE_QUOTA`).
 
 With the default elastic budget, the selector expands at most once—never through an open-ended retrieval loop—and never beyond `context.max_token_budget`. It first reserves evidence for required atoms and then fills remaining space by relevance. If the ceiling prevents full coverage, the result is degraded and names the uncovered atom IDs.
 

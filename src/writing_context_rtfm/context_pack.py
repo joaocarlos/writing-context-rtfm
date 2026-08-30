@@ -10,6 +10,11 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from writing_context_rtfm.bibtex_handoff import audit_passive_bibtex_ownership
+from writing_context_rtfm.candidate_trace import (
+    CandidateTraceTracker,
+    compute_span_candidate_id,
+)
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.hashing import (
     compute_retrieval_fingerprint,
@@ -18,8 +23,15 @@ from writing_context_rtfm.hashing import (
 )
 from writing_context_rtfm.local_models import SpanReranker
 from writing_context_rtfm.providers.base import BaseContextProvider
+from writing_context_rtfm.providers.bibtex import BibTeXProvider
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import (
+    FILTER_AVOID_PATTERN,
+    FILTER_LOW_SCORE,
+    FILTER_UNALLOWED_PATH,
+    REJECT_MAX_SOURCE_SPANS,
+    REJECT_PROVIDER_REFERENCE_QUOTA,
+    REJECT_TOKEN_BUDGET,
     CacheDiagnostics,
     ContextPack,
     PackQuality,
@@ -631,7 +643,11 @@ class ContextPackGenerator:
     # -----------------------------------------------------------------------
     # Deduplication
     # -----------------------------------------------------------------------
-    def _deduplicate_spans(self, candidates: list[SourceSpan]) -> list[SourceSpan]:
+    def _deduplicate_spans(
+        self,
+        candidates: list[SourceSpan],
+        tracker: CandidateTraceTracker | None = None,
+    ) -> list[SourceSpan]:
         if not candidates:
             return []
 
@@ -650,6 +666,8 @@ class ContextPackGenerator:
             for span in spans:
                 if not current_merged:
                     current_merged.append(span)
+                    if tracker is not None:
+                        tracker.record_deduplicated(span, kept=True)
                     continue
 
                 prev = current_merged[-1]
@@ -766,7 +784,7 @@ class ContextPackGenerator:
                         else None
                     )
 
-                    current_merged[-1] = SourceSpan(
+                    merged_span = SourceSpan(
                         path=path,
                         line_start=prev_start,
                         line_end=new_end,
@@ -780,9 +798,16 @@ class ContextPackGenerator:
                         fusion_score=merged_fusion,
                         structural_score=merged_structural,
                     )
+                    current_merged[-1] = merged_span
+                    if tracker is not None:
+                        canonical_cid = compute_span_candidate_id(merged_span)
+                        tracker.record_deduplicated(span, kept=False, canonical_cid=canonical_cid)
+                        tracker.record_deduplicated(merged_span, kept=True)
 
                 else:
                     current_merged.append(span)
+                    if tracker is not None:
+                        tracker.record_deduplicated(span, kept=True)
 
             merged_candidates.extend(current_merged)
 
@@ -798,6 +823,7 @@ class ContextPackGenerator:
         candidates: list[SourceSpan],
         target_card: SectionCard | None,
         dep_cards: list[SectionCard],
+        tracker: CandidateTraceTracker | None = None,
     ) -> tuple[list[SourceSpan], int]:
         if not candidates:
             return [], 0
@@ -824,6 +850,8 @@ class ContextPackGenerator:
                 kept.append(c)
             else:
                 discarded += 1
+                if tracker is not None:
+                    tracker.record_filtered(c, reason=FILTER_LOW_SCORE, action="filter_score")
 
         return kept, discarded
 
@@ -831,7 +859,10 @@ class ContextPackGenerator:
     # Avoid filter (from section_card.avoid list)
     # -----------------------------------------------------------------------
     def _filter_avoid(
-        self, candidates: list[SourceSpan], target_card: SectionCard | None
+        self,
+        candidates: list[SourceSpan],
+        target_card: SectionCard | None,
+        tracker: CandidateTraceTracker | None = None,
     ) -> tuple[list[SourceSpan], int]:
         """Remove spans whose snippet matches any phrase in the section's avoid list."""
         avoid_phrases = (target_card.avoid or []) if target_card else []
@@ -842,7 +873,6 @@ class ContextPackGenerator:
         discarded = 0
         for span in candidates:
             snippet = ((span.metadata or {}).get("snippet") or "").lower()
-            span.path.lower()
             # Only apply avoid filter to spans NOT from the target file
             # (target file content stays regardless — we need it to write)
             if target_card and _path_matches(span.path, target_card.path):
@@ -850,6 +880,8 @@ class ContextPackGenerator:
                 continue
             if any(phrase.lower() in snippet for phrase in avoid_phrases):
                 discarded += 1
+                if tracker is not None:
+                    tracker.record_filtered(span, reason=FILTER_AVOID_PATTERN, action="filter_avoid")
             else:
                 kept.append(span)
         return kept, discarded
@@ -883,6 +915,7 @@ class ContextPackGenerator:
         role_budgets: dict[str, float] | None = None,
         strict_budget: bool | None = None,
         output_mode: str | None = None,
+        include_diagnostics: bool = False,
     ) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
@@ -959,7 +992,7 @@ class ContextPackGenerator:
                 provider_fps.append(f"reranker:{self.reranker.get_fingerprint()}")
         retrieval_fingerprint = compute_retrieval_fingerprint(rtfm_db, provider_fps)
 
-        if self.config.cache.enabled:
+        if self.config.cache.enabled and not include_diagnostics:
             cached = self.store.get_cached_pack(task_hash, config_hash, sc_hash, retrieval_fingerprint)
             if cached:
                 spans = [SourceSpan(**s) for s in cached.get("source_spans", [])]
@@ -995,6 +1028,8 @@ class ContextPackGenerator:
                     task_type=cached.get("task_type"),
                     pack_mode=cached.get("pack_mode"),
                 )
+
+        tracker = CandidateTraceTracker() if include_diagnostics else None
 
         # --- Target Line Range Resolution (Phase 2 & Phase 5) ---
         resolved_key, target_card, target_path = self._resolve_target(target, pr)
@@ -1037,44 +1072,48 @@ class ContextPackGenerator:
                             metadata={"snippet": target_snippet},
                         )
                         all_candidates.append(target_span)
+                        if tracker is not None:
+                            tracker.record_retrieved(target_span, query="target_range", stream_key="target_range")
 
                         # Local context before
                         if start > 1:
                             ctx_start = max(1, start - 15)
                             ctx_end = start - 1
                             before_snippet = "\n".join(lines[ctx_start - 1 : ctx_end])
-                            all_candidates.append(
-                                SourceSpan(
-                                    path=target_path,
-                                    line_start=ctx_start,
-                                    line_end=ctx_end,
-                                    reason="Surrounding target context (before)",
-                                    score=0.9,
-                                    structural_score=0.9,
-                                    priority="supporting",
-                                    source_role="local_context",
-                                    metadata={"snippet": before_snippet},
-                                )
+                            before_span = SourceSpan(
+                                path=target_path,
+                                line_start=ctx_start,
+                                line_end=ctx_end,
+                                reason="Surrounding target context (before)",
+                                score=0.9,
+                                structural_score=0.9,
+                                priority="supporting",
+                                source_role="local_context",
+                                metadata={"snippet": before_snippet},
                             )
+                            all_candidates.append(before_span)
+                            if tracker is not None:
+                                tracker.record_retrieved(before_span, query="target_context_before", stream_key="target_range")
 
                         # Local context after
                         if end < num_lines:
                             ctx_start = end + 1
                             ctx_end = min(num_lines, end + 15)
                             after_snippet = "\n".join(lines[ctx_start - 1 : ctx_end])
-                            all_candidates.append(
-                                SourceSpan(
-                                    path=target_path,
-                                    line_start=ctx_start,
-                                    line_end=ctx_end,
-                                    reason="Surrounding target context (after)",
-                                    score=0.9,
-                                    structural_score=0.9,
-                                    priority="supporting",
-                                    source_role="local_context",
-                                    metadata={"snippet": after_snippet},
-                                )
+                            after_span = SourceSpan(
+                                path=target_path,
+                                line_start=ctx_start,
+                                line_end=ctx_end,
+                                reason="Surrounding target context (after)",
+                                score=0.9,
+                                structural_score=0.9,
+                                priority="supporting",
+                                source_role="local_context",
+                                metadata={"snippet": after_snippet},
                             )
+                            all_candidates.append(after_span)
+                            if tracker is not None:
+                                tracker.record_retrieved(after_span, query="target_context_after", stream_key="target_range")
 
                     # Case B: Target section specified without line numbers -> Atomically extract target section
                     elif target is not None:
@@ -1104,6 +1143,8 @@ class ContextPackGenerator:
                                 metadata={"snippet": target_snippet},
                             )
                             all_candidates.append(target_span)
+                            if tracker is not None:
+                                tracker.record_retrieved(target_span, query="target_section", stream_key="target_range")
                 else:
                     if has_explicit_line_range:
                         warnings.append(
@@ -1156,6 +1197,7 @@ class ContextPackGenerator:
             )
             warnings.append(overflow_msg)
             run_id = str(uuid.uuid4())
+            diagnostics = tracker.build_diagnostics() if tracker is not None else None
             return ContextPack(
                 task=task,
                 target=target,
@@ -1180,6 +1222,7 @@ class ContextPackGenerator:
                 ),
                 task_type=task_type,
                 pack_mode=pack_mode,
+                diagnostics=diagnostics,
             )
 
         if not is_strict:
@@ -1203,6 +1246,7 @@ class ContextPackGenerator:
                 )
                 warnings.append(overflow_msg)
                 run_id = str(uuid.uuid4())
+                diagnostics = tracker.build_diagnostics() if tracker is not None else None
                 return ContextPack(
                     task=task,
                     target=target,
@@ -1227,6 +1271,7 @@ class ContextPackGenerator:
                     ),
                     task_type=task_type,
                     pack_mode=pack_mode,
+                    diagnostics=diagnostics,
                 )
             elif token_budget < baseline_tokens:
                 auto_budget = min(max_budget, int(baseline_tokens * 1.2) + 500)
@@ -1288,10 +1333,23 @@ class ContextPackGenerator:
                         limit=self.config.context.max_search_results_per_query,
                     )
                 else:
-                    results = prefetched_results.get(i, ())
+                    results = list(prefetched_results.get(i, ()))
                 for retrieval_rank, r in enumerate(results, start=1):
                     if not is_allowed_source(r.path):
                         quality.discarded_excluded_path += 1
+                        if tracker is not None:
+                            raw_score_val = r.score if r.score is not None else 0.5
+                            tracker.record_filtered(
+                                SourceSpan(
+                                    path=r.path,
+                                    line_start=r.line_start,
+                                    line_end=r.line_end,
+                                    reason="Excluded path",
+                                    score=raw_score_val,
+                                ),
+                                reason=FILTER_UNALLOWED_PATH,
+                                action="filter_unallowed",
+                            )
                         continue
                     query_type = qs.query_type
                     raw_score = r.score if r.score is not None else 0.5
@@ -1321,6 +1379,13 @@ class ContextPackGenerator:
                             "retrieval_rank": retrieval_rank,
                         },
                     )
+                    if tracker is not None:
+                        tracker.record_retrieved(
+                            span,
+                            query=q,
+                            stream_key=stream_key,
+                            retrieval_rank=retrieval_rank,
+                        )
                     if structured_bibtex_active and Path(r.path).suffix.lower() == ".bib":
                         quality.discarded_excluded_path += 1
                         excluded_bibtex_candidates.append(span)
@@ -1363,6 +1428,12 @@ class ContextPackGenerator:
                                 "provider_id": provider.provider_id,
                             },
                         )
+                        if tracker is not None:
+                            tracker.record_retrieved(
+                                span_with_scores,
+                                query="provider",
+                                stream_key=stream_key,
+                            )
                         stream_candidates[stream_key].append(span_with_scores)
                         if provider.provider_id == "bibtex":
                             bibtex_provider_candidates.append(span_with_scores)
@@ -1371,6 +1442,19 @@ class ContextPackGenerator:
                 except Exception as e:
                     warnings.append(f"Provider '{provider.provider_id}' failed: {e}")
                     status = "degraded"
+
+        # --- Passive BibTeX Ownership Audit ---
+        bibtex_provider_instance = next(
+            (p for p in active_providers if isinstance(p, BibTeXProvider)), None
+        )
+        ownership_records = audit_passive_bibtex_ownership(
+            excluded_bibtex_candidates,
+            bibtex_provider_candidates,
+            provider=bibtex_provider_instance,
+        )
+        if tracker is not None:
+            for span, rec in zip(excluded_bibtex_candidates, ownership_records, strict=False):
+                tracker.record_excluded_ownership(span, rec)
 
         if excluded_bibtex_candidates:
             self._record_diagnostic("stream:excluded_bibtex", excluded_bibtex_candidates)
@@ -1453,6 +1537,12 @@ class ContextPackGenerator:
                                             },
                                         )
                                         all_candidates.append(env_span)
+                                        if tracker is not None:
+                                            tracker.record_retrieved(
+                                                env_span,
+                                                query=f"\\ref{{{ref_label}}}",
+                                                stream_key="ref_graph",
+                                            )
             except Exception as e:
                 warnings.append(f"1-Hop reference traversal notice: {e}")
 
@@ -1462,6 +1552,7 @@ class ContextPackGenerator:
         doc_parser_snap = VirtualDocumentParser(pr)
         snapped_candidates: list[SourceSpan] = []
         for span in all_candidates:
+            orig_cid = compute_span_candidate_id(span)
             if (
                 (span.path.endswith(".tex") or span.path.endswith(".md"))
                 and span.line_start is not None
@@ -1488,29 +1579,34 @@ class ContextPackGenerator:
                     if new_snippet is not None:
                         updated_meta["snippet"] = new_snippet
 
-                    snapped_candidates.append(
-                        SourceSpan(
-                            path=span.path,
-                            line_start=snapped_start,
-                            line_end=snapped_end,
-                            reason=span.reason + " [AST snapped]",
-                            score=span.score,
-                            priority=span.priority,
-                            query=span.query,
-                            metadata=updated_meta,
-                            source_role=span.source_role,
-                            retrieval_score=span.retrieval_score,
-                            fusion_score=span.fusion_score,
-                            structural_score=span.structural_score,
-                        )
+                    snapped_span = SourceSpan(
+                        path=span.path,
+                        line_start=snapped_start,
+                        line_end=snapped_end,
+                        reason=span.reason + " [AST snapped]",
+                        score=span.score,
+                        priority=span.priority,
+                        query=span.query,
+                        metadata=updated_meta,
+                        source_role=span.source_role,
+                        retrieval_score=span.retrieval_score,
+                        fusion_score=span.fusion_score,
+                        structural_score=span.structural_score,
                     )
+                    snapped_candidates.append(snapped_span)
+                    if tracker is not None:
+                        tracker.record_normalized(orig_cid, snapped_span, snapped=True)
                 else:
                     snapped_candidates.append(span)
+                    if tracker is not None:
+                        tracker.record_normalized(orig_cid, span, snapped=False)
             else:
                 snapped_candidates.append(span)
+                if tracker is not None:
+                    tracker.record_normalized(orig_cid, span, snapped=False)
 
         # --- Deduplication ---
-        deduped = self._deduplicate_spans(snapped_candidates)
+        deduped = self._deduplicate_spans(snapped_candidates, tracker=tracker)
         self._record_diagnostic("deduplicated", deduped)
 
         # --- Optional bounded local cross-encoder reranking ---
@@ -1522,13 +1618,19 @@ class ContextPackGenerator:
                 status = "degraded"
 
         # --- Score filtering ---
-        filtered, discarded_count = self._filter_by_score(deduped, target_card, dep_cards)
+        filtered, discarded_count = self._filter_by_score(
+            deduped, target_card, dep_cards, tracker=tracker
+        )
         quality.discarded_low_score = discarded_count
 
         # --- Avoid filter ---
-        filtered, avoid_count = self._filter_avoid(filtered, target_card)
+        filtered, avoid_count = self._filter_avoid(filtered, target_card, tracker=tracker)
         quality.discarded_avoid_match = avoid_count
         self._record_diagnostic("score_filtered", filtered)
+
+        if tracker is not None:
+            for s in filtered:
+                tracker.record_exposed(s)
 
         # Resolve role budgets (runtime override > config)
         resolved_budgets = dict(self.config.context.role_budgets)
@@ -1596,6 +1698,10 @@ class ContextPackGenerator:
         )
         self._record_diagnostic("budget_candidates", filtered)
 
+        if tracker is not None:
+            for s in filtered:
+                tracker.record_eligible(s)
+
         expanded_for_coverage = False
         required_atomic_spans = [
             span
@@ -1648,6 +1754,8 @@ class ContextPackGenerator:
                 if is_provider_reference(span):
                     provider_reference_tokens += est
                 current_tokens += est
+                if tracker is not None:
+                    tracker.record_selected(span)
             else:
                 pass2_candidates.append(span)
 
@@ -1659,6 +1767,8 @@ class ContextPackGenerator:
                 cap_truncated = True
                 budget_dropped += 1
                 selection_rejections["max_source_spans"].append(span)
+                if tracker is not None:
+                    tracker.record_rejected(span, reason=REJECT_MAX_SOURCE_SPANS)
                 continue
 
             est = self._estimate_tokens(span)
@@ -1670,6 +1780,8 @@ class ContextPackGenerator:
             ):
                 budget_dropped += 1
                 selection_rejections["provider_reference_quota"].append(span)
+                if tracker is not None:
+                    tracker.record_rejected(span, reason=REJECT_PROVIDER_REFERENCE_QUOTA)
                 continue
             fits_budget = current_tokens + est <= token_budget
             if not fits_budget and not is_strict and not selected:
@@ -1689,9 +1801,13 @@ class ContextPackGenerator:
                 tokens_by_role[span.source_role] = tokens_by_role.get(span.source_role, 0) + est
                 if is_provider_reference(span):
                     provider_reference_tokens += est
+                if tracker is not None:
+                    tracker.record_selected(span)
             else:
                 budget_dropped += 1
                 selection_rejections["token_budget"].append(span)
+                if tracker is not None:
+                    tracker.record_rejected(span, reason=REJECT_TOKEN_BUDGET)
 
         quality.dropped_for_budget = budget_dropped
         quality.truncated = cap_truncated or (budget_dropped > 0)
@@ -1859,6 +1975,12 @@ class ContextPackGenerator:
         )
         status_str = "degraded" if (has_degrading or status == "degraded") else "complete"
 
+        diagnostics = (
+            tracker.build_diagnostics(ownership_audit=ownership_records)
+            if tracker is not None
+            else None
+        )
+
         pack = ContextPack(
             task=task,
             target=target,
@@ -1883,6 +2005,7 @@ class ContextPackGenerator:
             ),
             task_type=task_type,
             pack_mode=pack_mode,
+            diagnostics=diagnostics,
         )
 
         # --- Cache write ---

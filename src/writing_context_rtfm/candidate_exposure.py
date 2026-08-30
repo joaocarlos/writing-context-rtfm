@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -86,7 +86,7 @@ def _score_ratio(results: Sequence[RTFMResult]) -> float:
 
 
 def _expected_hit(
-    streams: dict[int, Sequence[RTFMResult]],
+    streams: Mapping[int, Sequence[RTFMResult]],
     expected: dict[str, Any],
     *,
     excluded_suffixes: Sequence[str] = (),
@@ -108,7 +108,7 @@ def _expected_hit(
     return False
 
 
-def _label_covered(label: str, streams: dict[int, Sequence[RTFMResult]]) -> bool:
+def _label_covered(label: str, streams: Mapping[int, Sequence[RTFMResult]]) -> bool:
     terms = {
         value
         for value in re.findall(r"[\w-]+", label.casefold())
@@ -140,7 +140,7 @@ class CandidateExposurePolicy:
         self.expected_sources = tuple(dict(value) for value in expected_sources)
         self.excluded_suffixes = tuple(excluded_suffixes)
         self.telemetry: dict[str, Any] = {}
-        self._last_streams: dict[int, Sequence[RTFMResult]] = {}
+        self._last_streams: Mapping[int, Sequence[RTFMResult]] = {}
         self._calls: list[dict[str, Any]] = []
         self._retrieved_candidates = 0
         self._retrieved_tokens = 0
@@ -150,30 +150,20 @@ class CandidateExposurePolicy:
     def _search(
         self, index: int, query: QuerySpec, corpus: str, depth: int
     ) -> list[RTFMResult]:
-        started = time.perf_counter()
-        results = list(self.adapter.search(query.text, corpus=corpus, limit=depth))
-        latency = (time.perf_counter() - started) * 1000
-        self._retrieval_latency_ms += latency
-        self._retrieved_candidates += len(results)
-        self._retrieved_tokens += sum(_result_tokens(result) for result in results)
-        self._depths[index] = max(depth, self._depths.get(index, 0))
+        t0 = time.perf_counter()
+        results = self.adapter.search(query.text, corpus=corpus, limit=depth)
+        self._retrieval_latency_ms += (time.perf_counter() - t0) * 1000.0
+        self._depths[index] = max(self._depths.get(index, 0), depth)
         self._calls.append(
             {
-                "query_index": index,
-                "query_type": query.query_type,
+                "index": index,
+                "query": query.text,
+                "type": query.query_type,
                 "depth": depth,
                 "returned": len(results),
-                "latency_ms": round(latency, 3),
             }
         )
         return results
-
-    @staticmethod
-    def _task_index(specs: Sequence[QuerySpec]) -> int:
-        for index, spec in enumerate(specs):
-            if spec.query_type == "task":
-                return index
-        raise BenchmarkError("Candidate exposure benchmark requires a task query stream")
 
     def _search_all(
         self, specs: Sequence[QuerySpec], corpus: str, depth: int
@@ -186,32 +176,38 @@ class CandidateExposurePolicy:
     def _global_cap(
         self, streams: dict[int, list[RTFMResult]]
     ) -> dict[int, list[RTFMResult]]:
-        selected: dict[int, list[RTFMResult]] = {index: [] for index in streams}
         seen: set[tuple[str, int | None, int | None, str]] = set()
-        maximum = max((len(results) for results in streams.values()), default=0)
-        for rank in range(maximum):
-            for index in sorted(streams):
-                if rank >= len(streams[index]):
-                    continue
-                result = streams[index][rank]
-                key = _result_key(result)
-                if key in seen:
-                    continue
-                seen.add(key)
-                selected[index].append(result)
-                if len(seen) >= self.spec.global_unique_cap:
-                    return selected
-        return selected
+        kept: dict[int, list[RTFMResult]] = {index: [] for index in streams}
+        ordered = [
+            (index, result)
+            for index, results in sorted(streams.items())
+            for result in results
+        ]
+        for index, result in ordered:
+            key = _result_key(result)
+            if key in seen:
+                continue
+            if len(seen) >= self.spec.global_unique_cap:
+                break
+            seen.add(key)
+            kept[index].append(result)
+        return kept
+
+    def _task_index(self, specs: Sequence[QuerySpec]) -> int:
+        for index, spec in enumerate(specs):
+            if spec.query_type == "task":
+                return index
+        return 0
 
     def _progressive_reasons(
         self,
         specs: Sequence[QuerySpec],
-        streams: dict[int, list[RTFMResult]],
+        streams: Mapping[int, Sequence[RTFMResult]],
         obligations: Sequence[str],
     ) -> list[str]:
         reasons: list[str] = []
         for index, spec in enumerate(specs):
-            if spec.is_verified and spec.query_type != "task_keyword" and not streams[index]:
+            if spec.is_verified and spec.query_type != "task_keyword" and not streams.get(index):
                 reasons.append(f"empty_verified_stream:{index}")
         for index, label in enumerate(obligations):
             if not _label_covered(label, streams):
@@ -231,7 +227,7 @@ class CandidateExposurePolicy:
         corpus: str,
         default_limit: int,
         obligations: Sequence[str],
-    ) -> dict[int, Sequence[RTFMResult]]:
+    ) -> Mapping[int, Sequence[RTFMResult]]:
         if default_limit != self.spec.shallow_depth:
             raise BenchmarkError(
                 f"Frozen shallow depth is {self.spec.shallow_depth}, got {default_limit}"
@@ -470,6 +466,8 @@ def _load_freeze(path: Path) -> dict[str, Any]:
     import json
 
     freeze = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(freeze, dict):
+        raise BenchmarkError("Invalid freeze file format")
     recorded = str(freeze.pop("freeze_sha256", ""))
     observed = sha256_text(canonical_json(freeze))
     freeze["freeze_sha256"] = recorded

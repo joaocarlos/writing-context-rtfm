@@ -1,7 +1,5 @@
-"""Benchmark-only BibTeX provider handoff policies and experiment runner."""
-
-from __future__ import annotations
-
+import hashlib
+import json
 import math
 import re
 import time
@@ -11,28 +9,27 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from writing_context_rtfm.benchmark import (
-    BenchmarkError,
-    ProductionRetrievalBackend,
-    _atomic_json,
-    canonical_json,
-    cases_for_stage,
-    current_code_revision,
-    load_cases,
-    load_prepared,
-    retrieval_metrics,
-    sha256_text,
-)
-from writing_context_rtfm.candidate_exposure import (
-    POLICY_SPECS,
-    CandidateExposurePolicy,
-    build_pilot_v1_freeze,
+from writing_context_rtfm.candidate_trace import (
+    compute_evidence_id,
+    compute_span_candidate_id,
 )
 from writing_context_rtfm.config import load_config
 from writing_context_rtfm.providers.bibtex import BibEntry, BibTeXProvider
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-from writing_context_rtfm.schemas import SourceSpan
+from writing_context_rtfm.schemas import OwnershipAuditRecord, SourceSpan
 from writing_context_rtfm.token_budget import estimate_tokens
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def canonical_json(data: Any) -> str:
+    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+
+
+class BenchmarkError(RuntimeError):
+    pass
 
 BIBTEX_HANDOFF_BENCHMARK_VERSION = "bibtex-handoff-pilot-v1"
 HANDOFF_COST_REPETITIONS = 5
@@ -131,6 +128,76 @@ def _entry_matches_expected(
         if entry.line_start <= int(end) and entry.line_end >= int(start):
             return True
     return False
+
+
+def audit_passive_bibtex_ownership(
+    excluded_spans: Sequence[SourceSpan],
+    provider_spans: Sequence[SourceSpan],
+    provider: BibTeXProvider | None = None,
+) -> list[OwnershipAuditRecord]:
+    """Perform passive ownership audit comparing excluded .bib spans with existing provider spans.
+
+    In-memory comparison only. Never queries external services or generates additional candidates.
+    """
+    records: list[OwnershipAuditRecord] = []
+    if not excluded_spans:
+        return records
+
+    provider_map: list[tuple[set[str], SourceSpan]] = [
+        (_span_identities(ps), ps) for ps in provider_spans
+    ]
+
+    for span in excluded_spans:
+        cid = compute_span_candidate_id(span)
+        eid = compute_evidence_id(span) or f"source:{span.path}#{span.line_start}-{span.line_end}"
+        identities: set[str] = _span_identities(span)
+        if provider is not None and span.line_start is not None and span.line_end is not None:
+            try:
+                entries = provider.entries_for_source_span(span.path, span.line_start, span.line_end)
+                for entry in entries:
+                    identities.update(_entry_identities(entry))
+            except Exception:
+                pass
+
+        matching_span: SourceSpan | None = None
+        for p_ids, ps in provider_map:
+            if identities & p_ids:
+                matching_span = ps
+                break
+
+        if matching_span is not None:
+            rep_cid = compute_span_candidate_id(matching_span)
+            rep_prov = str((matching_span.metadata or {}).get("provider_id") or "bibtex")
+            records.append(
+                OwnershipAuditRecord(
+                    candidate_id=cid,
+                    evidence_id=eid,
+                    path=span.path,
+                    line_start=span.line_start,
+                    line_end=span.line_end,
+                    identities=sorted(identities),
+                    replacement_found=True,
+                    replacement_candidate_id=rep_cid,
+                    replacement_provider=rep_prov,
+                )
+            )
+        else:
+            records.append(
+                OwnershipAuditRecord(
+                    candidate_id=cid,
+                    evidence_id=eid,
+                    path=span.path,
+                    line_start=span.line_start,
+                    line_end=span.line_end,
+                    identities=sorted(identities),
+                    replacement_found=False,
+                    replacement_candidate_id=None,
+                    replacement_provider=None,
+                )
+            )
+
+    return records
+
 
 
 class BibTeXHandoffPolicy:
@@ -240,9 +307,9 @@ class BibTeXHandoffPolicy:
         replacement_records = []
         for excluded_span, entries in resolved:
             for entry in entries:
-                identity = _entry_identities(entry)
+                entry_idents = _entry_identities(entry)
                 replacement = next(
-                    (span for span in resulting_spans if identity & _span_identities(span)),
+                    (span for span in resulting_spans if entry_idents & _span_identities(span)),
                     None,
                 )
                 replacement_records.append(
@@ -259,7 +326,7 @@ class BibTeXHandoffPolicy:
                             else None
                         ),
                         "equivalence": (
-                            sorted(identity & _span_identities(replacement))
+                            sorted(entry_idents & _span_identities(replacement))
                             if replacement is not None
                             else []
                         ),
@@ -294,6 +361,8 @@ class BibTeXHandoffPolicy:
 def build_bibtex_handoff_freeze(
     cases_path: Path, private_root: Path
 ) -> dict[str, Any]:
+    from writing_context_rtfm.candidate_exposure import build_pilot_v1_freeze
+
     base = build_pilot_v1_freeze(cases_path, private_root)
     payload = {
         "freeze_version": 1,
@@ -320,6 +389,8 @@ def build_bibtex_handoff_freeze(
 def write_bibtex_handoff_freeze(
     cases_path: Path, private_root: Path, output: Path
 ) -> dict[str, Any]:
+    from writing_context_rtfm.benchmark import _atomic_json
+
     freeze = build_bibtex_handoff_freeze(cases_path, private_root)
     _atomic_json(output, freeze, mode=0o600)
     return freeze
@@ -329,6 +400,8 @@ def _load_freeze(path: Path) -> dict[str, Any]:
     import json
 
     freeze = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(freeze, dict):
+        raise BenchmarkError("Invalid BibTeX handoff freeze file")
     recorded = str(freeze.pop("freeze_sha256", ""))
     observed = sha256_text(canonical_json(freeze))
     freeze["freeze_sha256"] = recorded
@@ -343,6 +416,20 @@ def run_bibtex_handoff(
     freeze_path: Path,
     output: Path,
 ) -> dict[str, Any]:
+    from writing_context_rtfm.benchmark import (
+        ProductionRetrievalBackend,
+        _atomic_json,
+        cases_for_stage,
+        current_code_revision,
+        load_cases,
+        load_prepared,
+        retrieval_metrics,
+    )
+    from writing_context_rtfm.candidate_exposure import (
+        POLICY_SPECS,
+        CandidateExposurePolicy,
+    )
+
     freeze = _load_freeze(freeze_path)
     current = build_bibtex_handoff_freeze(cases_path, private_root)
     if current["freeze_sha256"] != freeze["freeze_sha256"]:
@@ -631,6 +718,8 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
 
 def write_bibtex_handoff_report(results_path: Path, output: Path) -> dict[str, Any]:
     import json
+
+    from writing_context_rtfm.benchmark import _atomic_json
 
     results = json.loads(results_path.read_text(encoding="utf-8"))
     report = build_bibtex_handoff_report(results)

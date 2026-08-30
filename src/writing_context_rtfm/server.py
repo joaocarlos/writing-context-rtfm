@@ -361,6 +361,80 @@ def get_tools_list() -> dict[str, Any]:
                 },
             },
             {
+                "name": "explain_context_pack",
+                "description": (
+                    "Generate a writing context pack and return its complete diagnostic candidate trace and funnel. "
+                    "Explains candidate lifecycle (retrieved -> normalized -> deduplicated -> provider_owned -> "
+                    "exposed -> filtered -> eligible -> selected/rejected) along with bibliographic ownership audit "
+                    "records without altering generation behavior."
+                ),
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "Natural-language description of the writing task.",
+                        },
+                        "target": {
+                            "type": "string",
+                            "description": "section_id from .writing-context/section_cards.yaml.",
+                        },
+                        "token_budget": {
+                            "type": "integer",
+                            "description": "Soft cap on tokens spent on source_spans.",
+                        },
+                        "must_consider": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Required evidence atoms: concrete concepts, facts, literals, or citation keys.",
+                        },
+                        "task_type": {
+                            "type": "string",
+                            "enum": [
+                                "write_new_section",
+                                "revise_existing_section",
+                                "proofread",
+                                "expand",
+                                "condense",
+                                "align_with_previous_sections",
+                                "review",
+                            ],
+                            "description": "The specific type of writing task.",
+                        },
+                        "line_start": {
+                            "type": "integer",
+                            "description": "Optional starting line range in the target file.",
+                        },
+                        "line_end": {
+                            "type": "integer",
+                            "description": "Optional ending line range in the target file.",
+                        },
+                        "pack_mode": {
+                            "type": "string",
+                            "enum": ["minimal", "standard", "deep"],
+                            "description": "Override context pack depth level/budget.",
+                        },
+                        "role_budgets": {
+                            "type": "object",
+                            "description": "Optional dictionary overriding default budget allocations.",
+                            "additionalProperties": {"type": "number"},
+                        },
+                        "strict_budget": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "When true, enforce token_budget as a hard cap.",
+                        },
+                        "output_mode": {
+                            "type": "string",
+                            "enum": ["prompt", "structured", "both"],
+                            "default": "prompt",
+                            "description": "Output rendering format.",
+                        },
+                    },
+                    "required": ["task"],
+                },
+            },
+            {
                 "name": "get_proofreading_context_pack",
                 "description": (
                     "Generate a context pack for proofreading or editing a SPECIFIC line range of a "
@@ -974,6 +1048,82 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
         f"Writing Context Pack generated for task: '{task}'. "
         f"Target section: '{target or 'General'}'. "
         f"Use formatted_prompt or source_spans to draft/revise content aligned with section constraints."
+    )
+    all_warnings = list(pack.warnings or [])
+    if card_warnings:
+        all_warnings.extend(card_warnings)
+    if all_warnings:
+        payload["warnings"] = all_warnings
+        has_degrading_warning = any(_is_degrading_pack_warning(w) for w in all_warnings)
+        if has_degrading_warning and payload.get("status") == "complete":
+            payload["status"] = "degraded"
+    return _success_response(_sanitize_pack_for_output(payload, output_mode=output_mode))
+
+
+def handle_explain_context_pack(args: dict[str, Any]) -> dict[str, Any]:
+    if not args or "task" not in args:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: task")
+
+    try:
+        config, cards, card_warnings, adapter, store = _load_runtime()
+    except Exception as e:
+        logger.exception("Failed to load runtime for explain_context_pack")
+        return _error_response(
+            ERROR_CONFIG, "Failed to load configuration or section cards.", str(e)
+        )
+
+    from writing_context_rtfm.providers import get_active_providers, get_active_reranker
+
+    providers = get_active_providers(config)
+    reranker = get_active_reranker(config)
+    generator = ContextPackGenerator(
+        config, cards, adapter, store, providers=providers, reranker=reranker
+    )
+    task = args.get("task", "")
+    target = args.get("target")
+    budget = args.get("token_budget", config.context.default_token_budget)
+    must_consider = args.get("must_consider", []) or []
+    task_type = args.get("task_type")
+    line_start_val = args.get("line_start")
+    line_end_val = args.get("line_end")
+    pack_mode = args.get("pack_mode")
+    role_budgets = args.get("role_budgets")
+    strict_budget = args.get("strict_budget")
+
+    line_start = int(line_start_val) if line_start_val is not None else None
+    line_end = int(line_end_val) if line_end_val is not None else None
+    output_mode = str(args.get("output_mode") or config.context.output_mode or "prompt")
+
+    try:
+        pack = generator.generate(
+            task=task,
+            target=target,
+            token_budget=budget,
+            must_consider=must_consider,
+            task_type=task_type,
+            line_start=line_start,
+            line_end=line_end,
+            pack_mode=pack_mode,
+            role_budgets=role_budgets,
+            strict_budget=strict_budget,
+            output_mode=output_mode,
+            include_diagnostics=True,
+        )
+    except Exception as e:
+        logger.exception("Pack generation failed in explain_context_pack")
+        return _error_response(ERROR_RETRIEVAL, "Context pack generation failed.", type(e).__name__)
+
+    payload = asdict(pack)
+    if output_mode != "structured":
+        payload["formatted_prompt"] = _format_write_section_prompt(pack)
+    funnel_str = ""
+    if pack.diagnostics:
+        f = pack.diagnostics.funnel
+        funnel_str = f"retrieved={f.retrieved}, exposed={f.exposed}, selected={f.selected}"
+    payload["guidance"] = (
+        f"Writing Context Pack explanation generated for task: '{task}'. "
+        f"Target section: '{target or 'General'}'. "
+        f"Funnel summary: [{funnel_str}]."
     )
     all_warnings = list(pack.warnings or [])
     if card_warnings:
@@ -2220,6 +2370,8 @@ def process_message(line: str) -> str | None:
                 call_args = params.get("arguments", {})
                 if name == "get_writing_context_pack":
                     result = handle_get_writing_context_pack(call_args)
+                elif name == "explain_context_pack":
+                    result = handle_explain_context_pack(call_args)
                 elif name == "get_proofreading_context_pack":
                     result = handle_get_proofreading_context_pack(call_args)
                 elif name == "refresh_index":

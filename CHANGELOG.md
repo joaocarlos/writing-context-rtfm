@@ -7,9 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.11.3] - 2026-08-30
 
-## [0.11.2] - 2026-08-30
+### Added
+- Added `explain_context_pack` MCP tool and `writing-context-rtfm explain-pack` CLI command (and `--explain` option to `pack`) providing complete retrieval-to-pack lifecycle observability without altering generation or selection behavior.
+- Added deterministic candidate identity hashing (`candidate_id`, `evidence_id`) and immutable per-candidate event tracing tracking candidate lifecycle: `retrieved` -> `normalized` (AST snapping) -> `deduplicated` -> `provider_owned` (ownership exclusion) -> `exposed` -> `filtered` (score & avoid) -> `eligible` -> `selected` / `rejected`.
+- Added structured candidate funnel aggregation and canonical reason taxonomy (`FILTER_*`, `EXCLUDE_*`, `REJECT_*`) explicitly recording rejection reasons including `REJECT_PROVIDER_REFERENCE_QUOTA`, `REJECT_MAX_SOURCE_SPANS`, and `REJECT_TOKEN_BUDGET`.
+- Added passive bibliographic ownership auditing (`audit_passive_bibtex_ownership`) linking excluded `.bib` candidate spans with structured provider replacements and preserving provenance.
+- Added unified benchmark regression verification script (`scripts/benchmark_regression.py`) dynamically reading and verifying baseline invariants from frozen Pilot v1 manifests.
+- Added Benchmark v2 specification (`benchmark/BENCHMARK_V2_SPEC.md`) detailing adversarial phenomena categories and non-regression gate criteria.
+- Added GitHub Actions continuous integration workflow (`.github/workflows/ci.yml`) verifying linting (ruff), typing (mypy), full unit test suite (pytest), and benchmark regression.
+
+### Changed
+- Preserved production retrieval fusion, provider ownership rules, reference quotas, and composition policies strictly unchanged while surfacing transparent diagnostic explanations.
+- Documented that diagnostics expose internal pipeline filtering decisions for observability and debugging, but do not constitute a semantic quality score or guarantee that omitted evidence is irrelevant.
 
 ### Added
 - Added Zotero library selection by visible name, defaulting new configurations to `My Library`, and collection scoping through a list of unique names or full `Parent / Child` paths.

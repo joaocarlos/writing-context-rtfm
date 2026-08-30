@@ -137,7 +137,7 @@ class TestMCPCards(unittest.TestCase):
         self.assertIn("inspect_target_section", tool_names)
         self.assertIn("get_card_field_diff", tool_names)
         self.assertIn("get_section_card_history", tool_names)
-        self.assertEqual(len(tool_names), 18)
+        self.assertEqual(len(tool_names), 19)
 
 
     def test_initialize_advertises_tools_and_prompts(self):

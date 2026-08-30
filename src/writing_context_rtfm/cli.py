@@ -18,6 +18,7 @@ from writing_context_rtfm.features import get_term_context
 from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 from writing_context_rtfm.proofread import ProofreadPackGenerator
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+from writing_context_rtfm.schemas import ContextPack
 from writing_context_rtfm.section_cards import load_section_cards
 from writing_context_rtfm.server import run_server
 from writing_context_rtfm.storage import ExtensionStore
@@ -590,6 +591,56 @@ def cache_command(args: argparse.Namespace) -> None:
             print(f"File size:      {db_size} bytes")
 
 
+def _print_pack_explanation(pack: ContextPack, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(asdict(pack), indent=2))
+        return
+
+    diag = pack.diagnostics
+    if not diag:
+        print(json.dumps(asdict(pack), indent=2))
+        return
+
+    funnel = diag.funnel
+    print("=== Candidate Funnel ===")
+    print(f"  Retrieved:     {funnel.retrieved}")
+    print(f"  Normalized:    {funnel.normalized}")
+    print(f"  Deduplicated:  {funnel.deduplicated}")
+    print(f"  Excluded:      {funnel.excluded}")
+    print(f"  Exposed:       {funnel.exposed}")
+    print(f"  Filtered:      {funnel.filtered}")
+    print(f"  Eligible:      {funnel.eligible}")
+    print(f"  Selected:      {funnel.selected}\n")
+
+    print(f"=== Selected Spans ({len(pack.source_spans)}) ===")
+    for i, s in enumerate(pack.source_spans, 1):
+        pos = f"{s.path}:{s.line_start or 1}-{s.line_end or '?'}"
+        print(f"  [{i}] {pos} (role={s.source_role}, score={s.score:.2f}) -> {s.reason}")
+    print()
+
+    if diag.rejections_by_reason:
+        print("=== Rejections by Reason ===")
+        for reason, count in sorted(diag.rejections_by_reason.items()):
+            print(f"  {reason}: {count}")
+        print()
+
+    if diag.ownership_audit:
+        print(f"=== Excluded by Provider Ownership ({len(diag.ownership_audit)}) ===")
+        for rec in diag.ownership_audit:
+            pos = f"{rec.path}:{rec.line_start or 1}-{rec.line_end or '?'}"
+            rep = f"replaced by {rec.replacement_provider}" if rec.replacement_found else "no replacement"
+            print(f"  {pos} ({', '.join(rec.identities) if rec.identities else 'no id'}) -> {rep}")
+        print()
+
+    print("=== Summary ===")
+    print(f"  Status:           {pack.status}")
+    print(f"  Estimated Tokens: {pack.estimated_tokens}")
+    if pack.warnings:
+        print(f"  Warnings:         {len(pack.warnings)}")
+        for w in pack.warnings:
+            print(f"    - {w}")
+
+
 def pack_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
@@ -624,6 +675,11 @@ def pack_command(args: argparse.Namespace) -> None:
                 print(f"Error parsing --role-budgets JSON: {e}", file=sys.stderr)
                 sys.exit(1)
 
+        include_diagnostics = (
+            getattr(args, "explain", False)
+            or getattr(args, "command", "") == "explain-pack"
+        )
+
         pack = generator.generate(
             task=args.task,
             target=args.target,
@@ -635,8 +691,16 @@ def pack_command(args: argparse.Namespace) -> None:
             line_end=getattr(args, "line_end", None),
             pack_mode=getattr(args, "pack_mode", None),
             role_budgets=role_budgets,
+            include_diagnostics=include_diagnostics,
         )
-    print(json.dumps(asdict(pack), indent=2))
+    if include_diagnostics:
+        _print_pack_explanation(pack, as_json=getattr(args, "json", False))
+    else:
+        print(json.dumps(asdict(pack), indent=2))
+
+
+def explain_pack_command(args: argparse.Namespace) -> None:
+    pack_command(args)
 
 
 def proofread_pack_command(args: argparse.Namespace) -> None:
@@ -1130,6 +1194,48 @@ def main() -> None:
         "--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode"
     )
     parser_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
+    parser_pack.add_argument(
+        "--explain", action="store_true", help="Print structured diagnostic funnel and candidate explanation"
+    )
+
+    # explain-pack
+    parser_exp_pack = subparsers.add_parser(
+        "explain-pack", help="Generate and explain a context pack candidate trace"
+    )
+    parser_exp_pack.add_argument(
+        "--project-root", default=".", help="Project root (resolves config and section_cards)"
+    )
+    parser_exp_pack.add_argument("--corpus", default=None, help="Override corpus name")
+    parser_exp_pack.add_argument("--task", required=True, help="Writing task description")
+    parser_exp_pack.add_argument("--target", help="Target section ID")
+    parser_exp_pack.add_argument("--budget", type=int, default=6000, help="Token budget")
+    parser_exp_pack.add_argument(
+        "--must-consider",
+        nargs="*",
+        help="Required concepts, facts, literals, or citation keys the context must cover",
+    )
+    parser_exp_pack.add_argument(
+        "--task-type",
+        choices=[
+            "write_new_section",
+            "revise_existing_section",
+            "proofread",
+            "expand",
+            "condense",
+            "align_with_previous_sections",
+            "review",
+        ],
+        help="Writing task type",
+    )
+    parser_exp_pack.add_argument("--line-start", type=int, help="Target start line range")
+    parser_exp_pack.add_argument("--line-end", type=int, help="Target end line range")
+    parser_exp_pack.add_argument(
+        "--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode"
+    )
+    parser_exp_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
+    parser_exp_pack.add_argument(
+        "--json", action="store_true", help="Output full JSON containing diagnostics"
+    )
 
     # proofread-pack
     parser_proof = subparsers.add_parser(
@@ -1261,6 +1367,7 @@ def main() -> None:
         "init-db": init_db_command,
         "sync": sync_command,
         "pack": pack_command,
+        "explain-pack": explain_pack_command,
         "proofread-pack": proofread_pack_command,
         "serve": serve_command,
         "cache": cache_command,

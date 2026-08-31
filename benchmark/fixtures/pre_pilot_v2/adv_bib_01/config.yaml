@@ -1,0 +1,19 @@
+version: 1
+rtfm:
+  corpus: "adv_bib_01"
+  project_root: "."
+section_cards:
+  path: "section_cards.yaml"
+  required: true
+context:
+  context_token_budget: 3000
+  min_score: 0.1
+  max_source_spans: 10
+  role_budgets:
+    target_text: 0.3
+    local_context: 0.1
+    dependency: 0.2
+    reference: 0.4
+cache:
+  enabled: false
+  path: ".writing-context/context_cache.sqlite"

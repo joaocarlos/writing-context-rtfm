@@ -1,0 +1,7 @@
+\section{Convergence Analysis}
+\label{sec:convergence}
+
+\begin{theorem}[Quantized Step Convergence]
+\label{thm:quantized_convergence}
+Under the subgradient bundle condition in Definition~\ref{def:subgradient_bundle}, the sequence of quantized gradient updates $x_{t+1} = x_t - \gamma_t \text{quant}(\nabla f(x_t))$ converges to a ball of radius $R = \mathcal{O}(\gamma \Delta_q)$ at rate $\mathcal{O}(1/\sqrt{T})$.
+\end{theorem}

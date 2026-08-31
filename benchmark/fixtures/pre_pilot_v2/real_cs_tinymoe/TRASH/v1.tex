@@ -1,0 +1,215 @@
+\section{Introduction}
+\label{sec:introduction}
+
+The design and planning of communication networks, from Wireless Sensor Networks (WSNs) in smart cities to future 6G infrastructures, have become progressively more complex. Modern networks must provide high dependability, $i.e.$, reliable and available service delivery even among failures or changing conditions~\cite{surveyDependability1,surveyDependability2}. In safety-critical scenarios, like in industrial control and urban emergency monitoring, a network outage or coverage gap can lead to severe consequences~\cite{surveyCoverage1,Jesus2024}. Hence, ensuring robust network coverage and reliability is paramount, but achieving this goal is challenging due to the myriad factors (topology, device placement, routing, and fault tolerance mechanisms) that planners must consider simultaneously. 
+
+
+Traditional network planning techniques rely heavily on expert-driven heuristics, optimization algorithms, or iterative simulations \cite{surveyHeuristics}. While such approaches can improve specific metrics like latency and packet loss, they suffer from high computational cost and scenario-specific tuning~\cite{surveySwarm}. Usually, each new deployment or change often requires rerunning complex simulations or optimizations, which are time-intensive and do not scale well for large or rapidly changing networks. Moreover, conventional methods struggle with dynamic adaptation: a topology optimized for one scenario may perform poorly once network conditions change \cite{surveyAdaptive}. On the other hand, recent Machine Learning (ML) techniques have offered some relief by learning patterns from data. For example, a Convolutional Neural Network (CNN) or a reinforcement learning model can optimize certain network aspects, such as energy consumption or information aging~\cite{surveyML1}. These data-driven methods yield faster inference once trained, with potential applicability in WSN applications. 
+
+However, despite the mentioned advances, current ML-based solutions remain limited: they often focus on a narrow objective (e.g., energy, latency), while lacking integration with comprehensive dependability metrics~\cite{surveyML2}. Furthermore, traditional ML models require extensive labeled data and retraining for new environments, making them less practical for the highly diverse and evolving conditions of communication networks~\cite{DepML2025}. This gap motivates the exploration of more generalizable solutions, like Large Language Models (LLMs), which have opened new avenues for AI-driven decision support in engineering domains. LLMs possess remarkable capabilities in understanding context, reasoning across domains, and generating human-like explanations. 
+
+Therefore, this work a LLM fine-tuned to support the planning of a dependable  Wireless Visual Sensor Network (WVSN). It is created using a domain-specific knowledge base, taking as input a high-level description of the planning scenario, including the area of interest, expected number of sensor nodes, coverage requirements, and dependability targets. By doing so, our LLM grounds its reasoning in thousands of previously evaluated communication networks, learning associations between deployment geometry, sensing parameters, link reliability, and global dependability outcomes. As a result, our solution can map a compact textual description of a scenario into a plausible, dependability-aware network configuration reflecting the statistical regularities encoded in the dataset, without requiring explicit simulation or iterative optimization during inference.
+
+
+The fine-tuned LLM performance will be assessed against two baselines: (i) linguistic quality, measured using Bilingual Evaluation Understudy (BLEU) and Recall-Oriented Understudy for Gisting Evaluation (ROUGE); and (ii) Field-of-View camera network metrics, capturing spatial coverage, link stability, and connectivity resilience.
+
+
+The structure of this paper is as follows: Section~\ref{sec:related} discusses existing work on improving dependability in WSNs and examines the use of LLMs for network planning. Section~\ref{sec:approach} presents the proposed LLM-based methodology, covering the dataset, training procedure, and inference process. Section~\ref{sec:results} then offers an in-depth examination of the case study findings. Lastly, Section~\ref{sec:conclusion} highlights the main contributions and topics to future research, emphasizing the promise of LLM-driven strategies for enhancing dependability.
+
+
+
+
+
+
+\section{Introduction}
+\label{sec:introduction}
+
+The design and planning of communication networks, from Wireless Sensor Networks (WSNs) in smart cities to future 6G infrastructures, have become progressively more complex. Modern networks must provide high dependability, $i.e.$, reliable and available service delivery even among failures or changing conditions~\cite{surveyDependability1,surveyDependability2}. In safety-critical scenarios, like in industrial control and urban emergency monitoring, a network outage or coverage gap can lead to severe consequences~\cite{surveyCoverage1,Jesus2024}. Hence, ensuring robust network coverage and reliability is paramount, but achieving this goal is challenging due to the myriad factors (topology, device placement, routing, and fault tolerance mechanisms) that planners must consider simultaneously. 
+
+%Limitations of Existing Approaches
+Traditional network planning techniques rely heavily on expert-driven heuristics, optimization algorithms, or iterative simulations \cite{surveyHeuristics}. While such approaches can improve specific metrics like latency and packet loss, they suffer from high computational cost and scenario-specific tuning~\cite{surveySwarm}. Usually, each new deployment or change often requires rerunning complex simulations or optimizations, which are time-intensive and do not scale well for large or rapidly changing networks. Moreover, conventional methods struggle with dynamic adaptation: a topology optimized for one scenario may perform poorly once network conditions change \cite{surveyAdaptive}. On the other hand, recent Machine Learning (ML) techniques have offered some relief by learning patterns from data. For example, a Convolutional Neural Network (CNN) or a reinforcement learning model can optimize certain network aspects, such as energy consumption or information aging~\cite{surveyML1}. These data-driven methods yield faster inference once trained, with potential applicability in WSN applications. 
+
+However, despite the mentioned advances, current ML-based solutions remain limited: they often focus on a narrow objective (e.g., energy, latency), while lacking integration with comprehensive dependability metrics~\cite{surveyML2}. Furthermore, traditional ML models require extensive labeled data and retraining for new environments, making them less practical for the highly diverse and evolving conditions of communication networks~\cite{DepML2025}. This gap motivates the exploration of more generalizable solutions, like Large Language Models (LLMs), which have opened new avenues for AI-driven decision support in engineering domains. LLMs possess remarkable capabilities in understanding context, reasoning across domains, and generating human-like explanations. 
+
+Therefore, this work proposes an LLM agent to support the planning of a dependable  Wireless Visual Sensor Network (WVSN). It is created using a domain-specific knowledge base, taking as input a high-level description of the planning scenario, including the area of interest, expected number of sensor nodes, coverage requirements, and dependability targets. By doing so, our LLM agent grounds its reasoning in thousands of previously evaluated communication networks, learning associations between deployment geometry, sensing parameters, link reliability, and global dependability outcomes. As a result, our solution can map a compact textual description of a scenario into a plausible, dependability-aware network configuration reflecting the statistical regularities encoded in the dataset, without requiring explicit simulation or iterative optimization during inference.
+
+%Validation Strategy
+The LLM agent's performance will be evaluated against two baselines: (i) the original data from the reference dataset, and (ii) a state-of-the-art ML-based planner (a CNN model) that was trained to output sensor placements for dependability optimization~\cite{DepML2025}. Key evaluation metrics will include the achieved dependability index, coverage percentage, and redundancy level. 
+
+The main contributions of this work are summarized as follows:
+\begin{itemize}
+
+    \item LLM-Driven Dependability-Aware Planning Framework: We propose a new formulation of communication network planning in which a Large Language Model acts as the primary decision-making engine. The framework defines how high-level textual descriptions of deployment scenarios are translated into structured planning tasks, establishing the dependability-oriented reasoning workflow; % and specifies how the LLM leverages statistical regularities encoded in the dataset to generate network configurations without simulation or iterative search.
+    
+    \item Dataset-Enhanced Agent Architecture: We develop a concrete agent architecture that operationalizes the mentioned framework by embedding domain knowledge into the LLM's reasoning process. This architecture integrates a curated dataset of thousands of WSN configurations, exposing the model to geometric constraints, sensing characteristics, and dependability metrics; % such as ITE, redundancy levels, and link reliability. Through this design, the agent performs a single-pass inference that yields configurations consistent with real-world dependability behavior encoded in the dataset.
+
+    \item Validation Against Prior ML-Based Planning Models: We systematically evaluate the LLM agent using the same dataset used to train a state-of-the-art CNN-based planner. %Results demonstrate that the LLM achieves dependability and coverage performance on par with the CNN model, including improvements of approximately 10\% in the dependability index, while offering the advantage of zero-shot generalization, that is, planning new scenarios without any retraining.
+    
+    %\item New Insights for LLM Applications in Network Engineering: Through qualitative and quantitative analyses, we provide evidence that LLM-based agents can effectively support dependability-driven communication network planning. We discuss the agent's reasoning behavior, its reliance on dataset-encoded statistical regularities, and considerations such as prompt design, reliability, and interpretability. These insights identify opportunities and challenges for applying LLMs to broader network automation contexts.
+\end{itemize}
+
+The structure of this paper is as follows: Section~\ref{sec:related} discusses existing work on improving dependability in WSNs and examines the use of LLMs for network planning. Section~\ref{sec:approach} presents the proposed LLM-based methodology, covering the dataset, training procedure, and inference process. Section~\ref{sec:results} then offers an in-depth examination of the case study findings. Lastly, Section~\ref{sec:conclusion} highlights the main contributions and topics to future research, emphasizing the promise of LLM-driven strategies for enhancing dependability.
+
+
+
+
+
+
+
+
+
+
+
+
+% ################
+\section{Proposed Approach} \label{sec:approach}
+
+This work introduces an LLM-based approach for generating the positioning, orientation, and interconnection of sensor nodes within a WVSN (cameras) within a wireless network, using a textual description of the monitored environment as input. Instead of relying on a convolutional architecture \cite{DepML2025}, the proposed approach leverages an extensive and detailed dataset as a knowledge foundation from which the LLM agent interprets structural and contextual information, learning statistical regularities linking geometric layout, sensing characteristics, link reliability, and overall network dependability. This enables the agent to map high-level textual descriptions into feasible, dependability-aware configurations during inference, without requiring explicit simulation or iterative optimization. That way, it is possible to generate the corresponding cameras' Field of View (FoV) layout, coverage configuration, and network design. The complete execution workflow is presented in Figure \ref{fig:Workflow_depen}. This section details the proposed pipeline, designed to address the following research questions:
+
+
+\begin{itemize}
+\item \textbf{RQ1:} Can a LLM generate sensor placement that satisfies reliability and coverage constraints directly from a description of the environment?
+
+\item \textbf{RQ2:} In what ways do different LLM architectures preserve key dependability metrics (area coverage, link stability, connectivity robustness, and end-to-end path reliability) when generating WVSN configurations, compared to real data? 
+\end{itemize}
+
+% Precisa alterar com base no novo dataset
+\subsection{Dataset Description}
+%MDPI Data availability statement (https://www.mdpi.com/journal/data/instructions): The raw data supporting the conclusions of this article will be made available by the authors on request.
+
+The proposed LLM-based planning approach relies on a comprehensive and meticulously annotated dataset that encapsulates thousands of WVSN configurations. Each entry consolidates both the structural parameters of a candidate deployment and the corresponding dependability evaluation derived from formal analysis~\cite{DepML2025}. %By exposing the LLM to this rich corpus, the model learns statistical regularities linking geometric layout, sensing characteristics, link reliability, and overall network dependability. This enables the agent to map high-level textual descriptions into feasible, dependability-aware configurations during inference, without requiring explicit simulation or iterative optimization. To support such reasoning, every dataset entry encodes a complete description of a network scenario, including:
+To support the LLM agent reasoning, every dataset entry encodes a complete description of a network scenario, including:
+
+\begin{enumerate}
+    \item the \emph{scenario-level parameters}, such as the number of visual sensors ($nVisualSensors$), the dimensions of the monitored area ($w$, $h$), the coordinates of the reference point ($x_{ref}$, $y_{ref}$), the minimum required coverage ($A_{min}$), and the communication radius $R_c$;  
+    \item the \emph{coverage metrics}, including the number of covered monitoring blocks ($CA_{mb}$), the percentage of covered area ($cov_{\%}$), and redundancy indicators such as 2-coverage and 3-coverage ($cov2$, $cov2_{\%}$, $cov3$, $cov3_{\%}$);  
+    \item the \emph{global dependability indicator}, expressed through the Integral Time Error (ITE) metric, which condenses the full dependability curve into a scalar descriptor;  
+    \item the \emph{sink-node parameters}, including its position ($x_0$, $y_0$) and the hardware failure and repair rates ($\lambda_{hw_0}$, $\mu_{hw_0}$), along with the failure and repair rates of each communication link between the sink and every sensor node ($\lambda_{lk_{0,j}}$, $\mu_{lk_{0,j}}$);  
+    \item the \emph{sensor-node parameters}, consisting of each node's position ($x_i$, $y_i$), sensing radius ($R_i$), viewing angle ($\theta_i$), orientation ($\alpha_i$), and hardware reliability parameters ($\lambda_{hw_i}$, $\mu_{hw_i}$); and  
+    \item the \emph{inter-node communication parameters}, describing the failure and repair rates for all pairwise communication links ($\lambda_{lk_{i,j}}$, $\mu_{lk_{i,j}}$), assumed to be direction-independent.
+\end{enumerate}
+
+% - from 3 to 15 nodes
+% - from 50 to 250 w
+% - from 50 to 250 h
+% - xref 0
+% - yref from 50 to 250 ?
+% - from 03. to 0.7 A\_min
+% - from 25 to 75 Rc
+% - theta from $30^o$ to $105^o$
+% - alpha - any orientation $0^o$ to $360^o$
+
+% The data was synthetically generated based on the methodology described in Section~\ref{sec:background}, which evaluates reliability across various scenarios by calculating specific metrics for each application configuration. Three scenarios were considered, featuring 5, 7, and 9 sensors, with parameters such as the number and positions of nodes, the dimensions of the monitored area, the minimum required coverage, camera angles and distances, communication radius, and the quality of nodes and links (measured by failure and repair rates). Each scenario was simulated over a 30-day period, producing hourly samples and leading to 721 reliability data points within the range $t = [0, 720]$ and a total of 6720 samples, all of which were stored in CSV format for later use during the training phase.
+
+
+
+
+
+The dataset was synthetically generated using the dependability evaluation methodology presented in~\cite{DepML2025}, but with substantially broader variability than earlier versions of the data. Instead of being restricted to a small number of predefined configurations, the updated dataset spans a wide range of deployment conditions, capturing realistic heterogeneity in WVSN planning, and thereby providing the LLM with a richer set of structural–dependability relationships from which to learn more generalizable patterns.
+
+The number of visual sensors varies from $3$ to $15$ nodes, while the monitored area dimensions $w$ and $h$ range from $50$ to $250$ units. Minimum required coverage values $A_{min}$ span from $30\%$ to $70\%$, and the communication radius $R_c$ ranges from $25$ to $75$ meters, introducing significant diversity in connectivity and coverage constraints. Sensor-level parameters also exhibit wide variability: viewing angles $\theta_i$ range from $30^\circ$ to $105^\circ$, and orientations $\alpha_i$ may take any value in $[0^\circ,360^\circ]$, allowing cameras to face arbitrary directions. For each generated configuration, the formal dependability assessment produces the corresponding reliability and performance metrics, resulting in a rich dataset of thousands of fully characterized network instances used to support the LLM agent's reasoning process.
+
+
+The dataset is available in \url{https://huggingface.co/datasets/joaocarlosnb/depml}.
+
+
+% Re-escrito para evitar autoplágio 
+\subsection{Data Preprocessing}
+
+%The process begins by obtaining raw data, which then undergoes thorough cleaning process. During this stage, missing values are identified and managed, usually replaced with mean values, while outliers are adjusted as necessary to maintain data quality and consistency.
+The workflow starts with the acquisition of the raw dataset, which is then subjected to a comprehensive cleaning procedure. At this stage, missing entries are detected and handled, typically through imputation using mean values, whereas anomalous observations are corrected to preserve the overall consistency and integrity of the data.
+
+% Precisa reescrever para evitar autoplágio 
+\subsection{Feature Engineering}
+
+While the dependability evaluation methodology provides valuable insights, using all computed values during the training phase or as user inputs is impractical. A typical dependability evaluation yields hundreds of data points (this paper calculates 721 values for each scenario). To address this issue, the concept of Integral Time Error (ITE) is utilized, condensing multiple data points into a single representative value.
+
+The ITE metric is defined as the integral of the error function over the evaluation time interval~\cite{ITE2024}, as shown in Equation~\ref{eq:ITE_Discrete}. Here, $\hat{E}_r(t_i)$ represents the error value, indicating the deviation of dependability at the $i$-th time step from a reference value at time $t$, and $N$ is the total number of samples.
+
+\begin{equation} \label{eq:ITE_Discrete}
+ITE = \sum_{i=1}^{N} t_i \cdot \hat{E}_r(t_i),
+\end{equation}
+
+By computing the ITE for each scenario, the $N = 721$ dependability values are represented by a single metric that encapsulates the overall behavior of the dependability curve. This transformation simplifies the dataset while preserving the essential characteristics of dependability trends. Additionally, it enhances user input interaction and the ML training phase, as one metric can better represent dependability behavior instead of an extensive series of data points.
+
+
+\subsection{Knowledge Extraction}
+
+The knowledge extraction stage prepares the dataset used to fine-tune the LLM so that it can generate sensor layouts and FoV configurations from textual descriptions. For each row of the dataset, a detailed natural-language instruction is constructed. This instruction describes the monitored region, its geometric properties, sensing constraints, and node parameters.
+
+A representative excerpt of the generated prompt is shown below:
+
+\begin{verbatim}
+Create a visual sensor network deployed in
+a rectangular monitored region with width
+= 50 m and height h=32 m, whose reference
+point is at (x_ref, y_ref).The minimum 
+required covered....
+\end{verbatim}
+
+
+The numerical output associated with each prompt is produced by selecting all required fields in a predefined fixed order, generating a structured output array aligned with the instruction. Each instruction and its corresponding output array are stored as a JSONL record in the format \texttt{{instruction, input, output}}.
+
+
+\subsection{Data Segregation}
+
+The preprocessed and validated dataset was partitioned into three subsets to support robust model development and evaluation. A total of 70\% of the samples was allocated for training, 15\% for validation, and the remaining 15\% for testing. This segregation strategy ensures that model optimization, hyperparameter tuning, and final performance assessment are carried out on mutually exclusive data partitions, thereby minimizing information leakage and enhancing the reliability of the results.
+
+\subsection{Model Evaluation}
+
+To comprehensively assess the performance of the fine-tuned LLMs, this study utilizes a set of metrics covering generation quality, semantic accuracy, and computational efficiency. The specific metrics adopted are defined as follows:
+
+\begin{itemize}
+    \item \textbf{Cross-Entropy}: measures the divergence between the model's predicted probability distribution and the true distribution of the target sequences, where lower values indicate better predictive performance;
+
+    \item \textbf{Bilingual Evaluation Understudy (BLEU)}: A precision-oriented metric that quantifies the $n$-gram overlap between the generated output and the reference text. It is widely used to evaluate the structural and lexical correspondence of the generated sequences;
+
+    \item \textbf{Recall-Oriented Understudy for Gisting Evaluation (ROUGE)}: Focuses on recall to measure how much of the reference content is captured by the model. We report three variants:
+    \begin{itemize}
+        \item \textbf{ROUGE-1:} Measures the overlap of unigrams (individual tokens);
+        \item \textbf{ROUGE-2:} Measures the overlap of bigrams, capturing local coherence;
+        \item \textbf{ROUGE-L:} Based on the Longest Common Subsequence, evaluating sentence-level structure and sequence fluency.
+    \end{itemize}
+
+\end{itemize}
+
+
+
+
+\section{Case Study} \label{sec:case_study}
+
+\subsection{Instrumentation}
+
+The development, training, and simulation processes were conducted in an environment featuring a 12th Gen Intel Core i9-12900K processor (3.19~GHz), 64~GB of RAM, and an NVIDIA GeForce RTX 3080 graphics card running Windows 10 Pro (v. 22H2). Dataset generation and the dependability methodology were executed using Matlab r2024b 64-bit (v. 24.2.0.2806996), integrated with the SHARPE tool (v. 1.3.1).
+
+
+\subsection{Network Metrics Evaluation}
+
+To evaluate the performance and dependability of FoV-based networks, a set of metrics is adopted to capture spatial coverage, link stability, and connectivity resilience. Due to the directional and dynamic characteristics of FoV constraints, these metrics provide a more accurate assessment of network behavior than traditional connectivity measures.
+
+\begin{itemize}
+
+\item \textbf{Area Coverage (AC):} Area Coverage represents the percentage of the monitored region covered by at least one sensor FoV. Let $\mathcal{A}$ denote the total area of interest and $\mathcal{A}_{\text{cov}}$ the union of all FoV-covered regions:
+\[
+\text{AC (\%)} = \frac{\mathcal{A}_{\text{cov}}}{\mathcal{A}} \times 100\%\]
+This metric evaluates the spatial efficiency of sensor deployment and identifies coverage redundancy or blind areas.
+
+\item \textbf{Link Failure Variability (LFV):} Link Failure Variability measures the temporal variability of link failures. Let $f_l(t)$ be a binary variable indicating the failure state of link $l$ at time $t$:
+\[
+\text{LFV} = \mathrm{Var}\left( f_l(t) \right)
+\]
+This metric captures instability in FoV-based links caused by misalignment, obstruction, or mobility.
+
+\item \textbf{Connectivity Robustness (CR):} Connectivity Robustness assesses the network’s ability to remain fully connected under failures. Considering the network graph $G(V,E)$ and the number of connected components $C(t)$ at time $t$, the metric is defined as:
+\[
+\text{CR} = \frac{1}{T} \sum_{t=1}^{T} \mathbb{I}\left( C(t) = 1 \right)
+\]
+This metric reflects the resilience of the network topology to partial link or sensor failures.
+
+\item \textbf{Global Paths Failure (GPF): } Global Paths Failure quantifies the probability that no valid communication path exists between a pair of nodes. Let $\mathcal{P}_{ij}(t)$ denote the set of available paths between nodes $i$ and $j$ at time $t$:
+\[
+\text{GPF} = \mathbb{P}\left( \mathcal{P}_{ij}(t) = \emptyset \right)
+\]
+This metric evaluates end-to-end reliability and the impact of simultaneous failures on global network connectivity.
+
+\end{itemize}

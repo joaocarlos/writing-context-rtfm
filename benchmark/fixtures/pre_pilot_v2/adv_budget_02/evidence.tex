@@ -1,0 +1,13 @@
+% Evidence file containing four specific target atoms
+
+% Atom 1: INT8 post-training quantization on Cortex-M55
+We perform INT8 post-training quantization on the ARM Cortex-M55 target platform using per-tensor symmetric ranges.
+
+% Atom 2: inference latency ceiling of 45ms per token
+Benchmark profiling achieves an inference latency ceiling of 45ms per token on pre-fill sequences.
+
+% Atom 3: memory footprint strictly constrained to 2MB SRAM
+The system memory footprint is strictly constrained to 2MB SRAM during peak execution.
+
+% Atom 4: EEMBC MLMark benchmark suite
+All accuracy and latency comparisons are validated using the official EEMBC MLMark benchmark suite.

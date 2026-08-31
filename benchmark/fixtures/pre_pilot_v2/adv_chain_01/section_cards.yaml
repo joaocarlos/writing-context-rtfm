@@ -1,0 +1,27 @@
+version: 2
+document:
+  title: "Quantized Gradient Optimization"
+  thesis: "Quantized subgradient updates achieve sublinear convergence on bundle functions."
+sections:
+  section_foundations:
+    title: "Foundations"
+    path: "sections/sec1_defs.tex"
+    line_start: 1
+    line_end: 6
+    purpose: "State subgradient bundle definition."
+  section_convergence:
+    title: "Convergence Analysis"
+    path: "sections/sec3_thm.tex"
+    line_start: 1
+    line_end: 7
+    purpose: "State quantized step convergence theorem."
+    depends_on:
+      - section_foundations
+  section_proof:
+    title: "Proof of Main Result"
+    path: "sections/sec4_proof.tex"
+    line_start: 1
+    line_end: 6
+    purpose: "Prove asymptotic bound expanding Theorem 3.1."
+    depends_on:
+      - section_convergence

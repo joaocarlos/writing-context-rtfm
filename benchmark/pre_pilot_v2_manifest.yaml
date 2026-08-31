@@ -1,0 +1,201 @@
+version: 1
+manifest_id: "pre-pilot-v2-frozen-manifest"
+created_at: "2026-08-31"
+
+cases:
+  - id: "ADV-BUDGET-01"
+    category: "budget_competition"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_budget_01"
+    target: "section_methodology"
+    task: "Rewrite the methodology section with deterministic micro-kernel scheduling."
+    token_budget: 1200
+    role_budgets:
+      target_text: 0.5
+      local_context: 0.2
+      dependency: 0.2
+      reference: 0.1
+    expected_sources:
+      - path: "main.tex"
+        line_start: 9
+        line_end: 22
+        priority: "essential"
+        role: "target_text"
+      - path: "main.tex"
+        line_start: 26
+        line_end: 30
+        priority: "essential"
+        role: "dependency"
+      - path: "main.tex"
+        line_start: 32
+        line_end: 36
+        priority: "supporting"
+        role: "dependency"
+    hard_failure_conditions:
+      corrupt_spans: false
+      empty_target_text: false
+    expected_degradation:
+      must_degrade_under_tight_budget: true
+
+  - id: "ADV-BUDGET-02"
+    category: "budget_competition"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_budget_02"
+    target: "section_evaluation"
+    task: "Draft evaluation comparing MCU quantized latency, memory bounds, and MLMark benchmark."
+    token_budget: 2000
+    must_consider:
+      - "INT8 post-training quantization on Cortex-M55"
+      - "inference latency ceiling of 45ms per token"
+      - "memory footprint strictly constrained to 2MB SRAM"
+      - "EEMBC MLMark benchmark suite"
+    expected_sources:
+      - path: "evidence.tex"
+        line_start: 1
+        line_end: 14
+        priority: "essential"
+        role: "local_context"
+    hard_failure_conditions:
+      must_consider_omitted_without_degraded_status: false
+    expected_degradation:
+      covered_atoms_count_min: 4
+
+  - id: "ADV-BIB-01"
+    category: "bibliographic_density"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_bib_01"
+    target: "section_related_work"
+    task: "Synthesize related literature on LLM quantization algorithms."
+    token_budget: 3000
+    role_budgets:
+      target_text: 0.3
+      local_context: 0.1
+      dependency: 0.2
+      reference: 0.4
+    expected_sources:
+      - path: "references.bib"
+        priority: "essential"
+        role: "reference"
+        min_citations_selected: 3
+    hard_failure_conditions:
+      duplicate_citation_identities: 0
+    expected_degradation:
+      quota_rejections_recorded: true
+
+  - id: "ADV-BIB-02"
+    category: "disambiguation_handoff"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_bib_02"
+    target: "section_intro"
+    task: "Introduce self-attention transformer mechanisms with literature grounding."
+    token_budget: 2000
+    expected_sources:
+      - path: "bib1.bib"
+        priority: "essential"
+        role: "reference"
+      - path: "bib2.bib"
+        priority: "essential"
+        role: "reference"
+    hard_failure_conditions:
+      duplicate_citation_identities: 0
+      erroneous_ownership_exclusion: false
+
+  - id: "ADV-BOUND-01"
+    category: "ast_boundaries"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_bound_01"
+    target: "subsec_sram_subsystem"
+    task: "Expand SRAM buffer hierarchy and memory allocation rules."
+    token_budget: 2000
+    expected_sources:
+      - path: "main.tex"
+        line_start: 11
+        line_end: 25
+        priority: "essential"
+        role: "target_text"
+    hard_failure_conditions:
+      adjacent_section_leakage: false
+      corrupt_span_boundaries: false
+
+  - id: "ADV-BOUND-02"
+    category: "latex_syntax_math"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_bound_02"
+    target: "subsec_variational_bound"
+    task: "Review mathematical formulation of variational evidence lower bound."
+    token_budget: 2000
+    expected_sources:
+      - path: "main.tex"
+        line_start: 10
+        line_end: 26
+        priority: "essential"
+        role: "target_text"
+    hard_failure_conditions:
+      broken_math_delimiters: false
+      unbalanced_align_environment: false
+      stripped_latex_macros: false
+
+  - id: "ADV-CHAIN-01"
+    category: "multi_hop_dependency"
+    type: "synthetic"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/adv_chain_01"
+    target: "section_proof"
+    task: "Complete proof of quantized step convergence theorem."
+    token_budget: 2000
+    expected_sources:
+      - path: "sections/sec4_proof.tex"
+        line_start: 1
+        line_end: 6
+        priority: "essential"
+        role: "target_text"
+        expected_retrieval_path: "target_text"
+      - path: "sections/sec3_thm.tex"
+        line_start: 1
+        line_end: 7
+        priority: "essential"
+        role: "dependency"
+        expected_retrieval_path: "reference_graph"
+      - path: "sections/sec1_defs.tex"
+        line_start: 1
+        line_end: 6
+        priority: "essential"
+        role: "dependency"
+        expected_retrieval_path: "lexical"
+    hard_failure_conditions:
+      corrupt_spans: false
+
+  - id: "REAL-MANUSCRIPT-01"
+    category: "real_world_modular"
+    type: "real"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/real_p1_cities"
+    target: "section_the_intelligent_cities_paradigm"
+    task: "Draft the conceptual section defining the Intelligent Cities paradigm and its principal dimensions."
+    token_budget: 4000
+    expected_sources:
+      - path: "template.tex"
+        line_start: 357
+        line_end: 450
+        priority: "essential"
+        role: "target_text"
+    hard_failure_conditions:
+      corrupt_spans: false
+      broken_math_delimiters: false
+      duplicate_citation_identities: 0
+
+  - id: "REAL-MANUSCRIPT-02"
+    category: "real_world_monolithic"
+    type: "real"
+    project_dir: "benchmark/fixtures/pre_pilot_v2/real_bio_smartbreathe"
+    target: "section_statistical_analysis"
+    task: "Draft the statistical analysis subsection describing content-validity and ICC reliability."
+    token_budget: 4000
+    expected_sources:
+      - path: "access.tex"
+        line_start: 500
+        line_end: 672
+        priority: "essential"
+        role: "target_text"
+    hard_failure_conditions:
+      corrupt_spans: false
+      broken_math_delimiters: false
+      duplicate_citation_identities: 0

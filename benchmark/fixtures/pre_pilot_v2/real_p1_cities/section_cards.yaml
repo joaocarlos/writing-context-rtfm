@@ -1,0 +1,11 @@
+version: 2
+document:
+  title: "Intelligent Cities: A Systematic Framework"
+  thesis: "Intelligent cities prioritize human well-being, sustainability, and citizen participation over mere technology deployment."
+sections:
+  section_the_intelligent_cities_paradigm:
+    title: "The Intelligent Cities paradigm"
+    path: "template.tex"
+    line_start: 357
+    line_end: 450
+    purpose: "Define the intelligent cities paradigm and contrast it with traditional smart city concepts."

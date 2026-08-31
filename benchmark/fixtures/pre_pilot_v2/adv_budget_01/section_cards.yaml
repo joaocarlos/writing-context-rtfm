@@ -1,0 +1,28 @@
+version: 2
+document:
+  title: "Quantized SLM Engine on MCU"
+  thesis: "Deterministic tensor micro-kernels enable sub-50ms token generation on MCUs."
+sections:
+  section_methodology:
+    title: "Methodology"
+    path: "main.tex"
+    line_start: 9
+    line_end: 22
+    purpose: "Detail tensor micro-kernel compilation, memory layout, and operator fusion."
+    depends_on:
+      - subsec_hardware_arch
+      - subsec_quant_formulae
+    must_preserve:
+      - "Weight quantization uses symmetric per-channel scaling"
+  subsec_hardware_arch:
+    title: "Hardware Architecture"
+    path: "main.tex"
+    line_start: 26
+    line_end: 30
+    purpose: "Describe Cortex-M55, Helium vector unit, and 1.5MB SRAM partition."
+  subsec_quant_formulae:
+    title: "Quantization Formulae"
+    path: "main.tex"
+    line_start: 32
+    line_end: 36
+    purpose: "State quantization clamp formulas, scale factors, and zero-point parameters."

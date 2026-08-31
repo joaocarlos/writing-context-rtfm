@@ -1,0 +1,11 @@
+version: 2
+document:
+  title: "Efficient LLM Quantization Review"
+  thesis: "Post-training quantization enables edge execution with bounded accuracy degradation."
+sections:
+  section_related_work:
+    title: "Related Work"
+    path: "main.tex"
+    line_start: 4
+    line_end: 10
+    purpose: "Synthesize foundational literature across 8-bit, 4-bit, and activation quantization."

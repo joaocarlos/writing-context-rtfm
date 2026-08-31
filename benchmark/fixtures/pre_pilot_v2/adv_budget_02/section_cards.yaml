@@ -1,0 +1,14 @@
+version: 2
+document:
+  title: "Quantized SLM Evaluation"
+  thesis: "Microcontroller inference achieves 45ms token latency within 2MB SRAM."
+sections:
+  section_evaluation:
+    title: "Evaluation"
+    path: "main.tex"
+    line_start: 4
+    line_end: 8
+    purpose: "Evaluate quantized model on physical testbeds across latency and SRAM occupancy."
+    must_preserve:
+      - "45ms per token"
+      - "2MB SRAM"

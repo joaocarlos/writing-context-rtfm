@@ -1,0 +1,11 @@
+version: 2
+document:
+  title: "Self-Attention Architectures"
+  thesis: "Self-attention eliminates recurrence while enabling parallel training."
+sections:
+  section_intro:
+    title: "Introduction"
+    path: "main.tex"
+    line_start: 4
+    line_end: 8
+    purpose: "Introduce transformer self-attention mechanisms and citation foundations."

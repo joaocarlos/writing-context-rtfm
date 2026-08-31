@@ -1,0 +1,11 @@
+version: 2
+document:
+  title: "SmartBreathe: Respiratory Care Device Validation"
+  thesis: "Digital respiratory monitors achieve high ICC reliability and clinical validity in patient trials."
+sections:
+  section_statistical_analysis:
+    title: "Statistical analysis"
+    path: "access.tex"
+    line_start: 500
+    line_end: 672
+    purpose: "Describe content validity index, intraclass correlation coefficient, and Bland-Altman agreement analysis."

@@ -1,0 +1,35 @@
+\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+
+\section{Introduction}
+\label{sec:intro}
+Background introduction text on embedded systems.
+
+\section{Methodology}
+\label{sec:methodology}
+The proposed quantized execution engine compiles transformer operators directly to micro-kernels.
+The memory layout uses continuous tensor buffers to avoid fragmentation.
+Each attention layer computes multi-head projections with specialized SIMD instructions.
+Weight quantization uses symmetric per-channel scaling factors calculated during offline calibration.
+The activation tensors are dynamically scaled to maintain numerical precision across deep layers.
+Intermediate activations are stored in a circular scratchpad buffer located in fast internal memory.
+DMA transfers pipeline tensor tiles asynchronously between external flash and internal SRAM.
+The execution scheduler dynamically balances compute across vector units and hardware accelerators.
+Execution timing is strictly deterministic with zero dynamic memory allocations in the hot loop.
+Operator fusion eliminates memory roundtrips between layer normalization and activation functions.
+
+\section{Dependencies}
+\label{sec:dependencies}
+\subsection{Hardware Architecture}
+\label{subsec:hardware_arch}
+The MCU features a dual-issue Cortex-M55 core running at 200MHz with Helium vector extensions.
+Internal SRAM is partitioned into 1.5MB for instruction and weight cache and 512KB for activation buffers.
+External flash operates via Octal-SPI with an effective throughput of 200MB/s for non-cached weights.
+
+\subsection{Quantization Formulae}
+\label{subsec:quant_formulae}
+Given input tensor $X$, quantized values $q_X$ are computed as $q_X = \text{clamp}(\lfloor X / S \rceil + Z, -128, 127)$.
+The scale factor $S = \frac{\max(X) - \min(X)}{255}$ and zero-point $Z = -128 - \lfloor \min(X) / S \rceil$.
+
+\end{document}

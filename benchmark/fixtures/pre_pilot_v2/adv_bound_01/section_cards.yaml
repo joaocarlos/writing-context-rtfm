@@ -1,0 +1,17 @@
+version: 2
+document:
+  title: "Edge Accelerator Co-Design"
+  thesis: "Banked SRAM scratchpads avoid TLB misses and provide deterministic vector execution."
+sections:
+  subsec_sram_subsystem:
+    title: "SRAM Subsystem"
+    path: "main.tex"
+    line_start: 11
+    line_end: 25
+    purpose: "Specify SRAM hierarchy, unnumbered buffer allocation, and tiled activation bank definition."
+  subsec_compute_core:
+    title: "Compute Core"
+    path: "main.tex"
+    line_start: 27
+    line_end: 32
+    purpose: "Describe MAC execution units and branch prediction."

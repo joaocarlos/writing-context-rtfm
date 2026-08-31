@@ -1,0 +1,14 @@
+version: 2
+document:
+  title: "Variational Inference for Quantized Posteriors"
+  thesis: "Variational evidence lower bounds remain tight under discrete scale factor quantization."
+sections:
+  subsec_variational_bound:
+    title: "Variational Lower Bound Derivation"
+    path: "main.tex"
+    line_start: 10
+    line_end: 26
+    purpose: "Derive analytical ELBO decomposition with KL divergence and Gaussian variance penalty."
+    must_preserve:
+      - "Variational Lower Bound"
+      - "KL"

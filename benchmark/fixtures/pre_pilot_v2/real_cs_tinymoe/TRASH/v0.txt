@@ -1,0 +1,257 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+%Template version as of 6/27/2024
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{subfigure}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{soul} % For \hl highlighting
+\usepackage{svg}
+\usepackage{dblfloatfix}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{LLM-based Agent for Dependable Wireless Sensor Networks Planning for Smart Cities Applications\\
+\thanks{This work was supported by EU Horizon Europe under GA ID:101160614 (EU-DREAM Project, DOI:10.3030/101160614), by FAPESB (Research Support Foundation of the State of Bahia, grant No. 2465/2025, by CNPq (National Council for Scientific and Technological Development), grant No.~404637/2024-8, and by grants UEFS-AUXPPG2026 and CAPES-PROAP2026.}
+}
+
+\author{
+\IEEEauthorblockN{
+Thiago C. Jesus\IEEEauthorrefmark{1}$^{,}$\IEEEauthorrefmark{2}, %
+Thommas Flores\IEEEauthorrefmark{1}$^{,}$\IEEEauthorrefmark{3}, %
+João Carlos N. Bittencourt\IEEEauthorrefmark{1}$^{,}$\IEEEauthorrefmark{4}$^{,}$\IEEEauthorrefmark{5},\\
+Ivanovitch Silva\IEEEauthorrefmark{3},
+Daniel G. Costa\IEEEauthorrefmark{1},
+João P. S. Catalão\IEEEauthorrefmark{1}%
+} 
+\IEEEauthorblockA{\IEEEauthorrefmark{1}SYSTEC-ARISE, Faculty of Engineering, University of Porto, Porto, Portugal}%
+\IEEEauthorblockA{\IEEEauthorrefmark{2}DTEC-UEFS, State University of Feira de Santana, Feira de Santana, Brazil}%
+\IEEEauthorblockA{\IEEEauthorrefmark{3}PPgEEC-UFRN, Federal University of Rio Grande do Norte, Natal, Brazil}%
+\IEEEauthorblockA{\IEEEauthorrefmark{4}CETEC, Federal University of Recôncavo da Bahia, Cruz das Almas, Brazil}%
+\IEEEauthorblockA{\IEEEauthorrefmark{5}PDEEC, Faculty of Engineering, University of Porto, Porto, Portugal}%
+
+\\Email: jesus@fe.up.pt, thommas.flores.101@ufrn.edu.br, joaocarlos@ufrb.edu.br,\\ivanovitch.silva@ufrn.br, danielgcosta@fe.up.pt, catalao@fe.up.pt}
+
+\maketitle
+
+\begin{abstract}
+Planning complex communication networks, such as wireless sensor networks (WSNs), is a challenging task due to the need to balance coverage, redundancy and dependability metrics, such as reliability and availability. Traditional network planning approaches ($e.g.$, heuristic optimizations and simulation-driven tuning) often demand extensive computations for each deployment scenario, and even machine learning models require problem-specific training with limited generalization. In this work, we propose a planning Large Language Model (LLM)-agent to address these challenges. The agent leverages the LLM’s advanced reasoning and knowledge integration to generate network configuration plans, such as node placements and connectivity strategies, based on a textual human-readable input. We develop a novel architecture that combines the LLM with domain-specific dataset and annotations regarding dependability analysis of thousands of networks. We detail the modeling and implementation of the agent, including semantic extraction and key mechanisms for chain-of-thought planning. In a case study on WSN deployment for surveillance in smart cities, \hl{the LLM agent achieves reliability and coverage, matching the dependability improvements of a prior CNN-based planning method while significantly reducing the need for exhaustive search}. These results underscore the potential of LLM-based agents to enhance network resilience and scalability, marking a step toward more intelligent and flexible network planning in future communication systems.
+\end{abstract}
+
+\begin{IEEEkeywords}
+...
+\end{IEEEkeywords}
+
+\section{Introduction}\label{sec:introduction}
+
+The design and planning of communication networks, from Wireless Sensor Networks (WSNs) in smart cities to future 6G infrastructures, have become progressively more complex. Modern networks must provide high dependability, $i.e.$, reliable and available service delivery even among failures or changing conditions~\cite{}. In safety-critical scenarios (e.g., industrial monitoring, emergency monitoring, etc.), a network outage or coverage gap can lead to severe consequences~\cite{}. Ensuring robust network coverage and reliability is therefore paramount, but achieving this is challenging due to the myriad factors (topology, device placement, routing, fault tolerance mechanisms) that planners must consider simultaneously~\cite{}. 
+
+%Limitations of Existing Approaches
+Traditional network planning techniques rely heavily on expert-driven heuristics, optimization algorithms, or iterative simulations. For instance, heuristic methods like genetic algorithms and particle swarm optimization have been used to optimize WSN layouts. While such approaches can improve specific metrics ($e.g.$, latency or packet loss), they suffer from high computational cost and scenario-specific tuning~\cite{}. Each new deployment or change often requires rerunning complex simulations or optimizations, which are time-intensive and does not scale well for large or rapidly changing networks. Moreover, conventional methods struggle to dynamically adapt. For instance, a topology optimized for one scenario may perform poorly if network conditions shift. Recent machine learning (ML) techniques have offered some relief by learning patterns from data. For example, CNN or reinforcement learning models can optimize certain network aspects like energy consumption or age-of-information~\cite{}. These data-driven methods yield faster inference once trained. However, current ML-based solutions remain limited: they often focus on a narrow objective (energy, latency, etc.) and lack integration of comprehensive dependability metrics~\cite{}. Furthermore, traditional ML models require extensive labeled data and retraining for new environments, making them less practical for the highly diverse and evolving conditions of communication networks~\cite{DepML2025}. This gap motivates the exploration of more generalizable, flexible planning paradigms.
+
+%Emergence of LLM-Based Agents
+The emergence of powerful large language models (LLMs) such as Gemini, ChatGPT and Llama has opened new avenues for AI-driven decision support in engineering domains. LLMs possess remarkable capabilities in understanding context, reasoning across domains, and generating human-like explanations~\cite{}. In networking, initial studies have proposed harnessing LLMs within autonomous agents to tackle complex management and configuration tasks~\cite{}. By integrating an LLM with tool interfaces and memory, such agents can interpret high-level intents, perform long-term planning, and interact with network simulation or control tools. This agent paradigm moves beyond static, task-specific models by enabling dynamic reasoning, since the LLM can iteratively break down a planning problem, call external resources, and refine its approach based on feedback. Early frameworks ($e.g.$, \hl{WirelessAgent}) illustrate that LLM-driven agents can achieve near-optimal performance in network configuration problems like resource slicing~\cite{}, highlighting their potential to bridge the gap between expert knowledge and automation. However, the application of LLM agents to communication network planning, especially with a focus on dependability, remains largely unexplored in literature, representing the critical gap this work addresses.
+
+
+%Problem Statement
+In this context, this paper tackles the problem of autonomous network planning under dependability constraints, specifically focusing on scenarios where a network designer must determine the placement and configuration of network nodes to maximize coverage and reliability, given certain resources and environmental conditions. Conventional solutions for this problem are either computationally prohibitive (exhaustive search or repeated simulations) or insufficiently adaptive to changing requirements. Our goal is to create an LLM-agent that can intelligently navigate the vast design space of network configurations, rapidly converge on high-quality solutions, and seamlessly adapt to new scenarios or objectives. The core challenge is enabling an AI with the expertise and adaptability to make planning decisions that traditionally require human intuition and extensive computation, all while rigorously accounting for dependability metrics.
+
+
+
+%Proposed LLM-Based Planning Agent
+The proposed agent has its reasoning engine augmented with a domain-specific knowledge base, taking as input a high-level description of the planning scenario, including the area of interest, expected number of sensor nodes, coverage requirements, and dependability targets. \hl{It then engages in a multi-step reasoning process to devise a network deployment plan. Crucially, the agent can interact with an external dependability evaluation dataset at any point in its reasoning}. This dataset contains the description of thousands of different networks, each represented through a structured set of attributes that capture both the physical deployment characteristics and the corresponding dependability outcomes. This integration allows the LLM agent to ground its reasoning in thousands of previously evaluated communication networks, learning associations between deployment geometry, sensing parameters, link reliability, and global dependability outcomes. As a result, the model can map a compact textual description of a scenario into a plausible, dependability-aware network configuration reflecting the statistical regularities encoded in the dataset, without requiring explicit simulation or iterative optimization during inference.
+
+
+%Validation Strategy
+The LLM agent’s performance is evaluated against two baselines: (i) the original data from the reference dataset, and (ii) a state-of-the-art ML-based planner (a CNN model) that was trained to output sensor placements for dependability optimization~\cite{DepML2025}. Key evaluation metrics include the achieved dependability index, coverage percentage, and redundancy level. \hl{The achieved results show that the LLM agent’s suggested configurations achieve dependability improvements on par with the CNN-based model – for example, improving the network’s reliability index by around 10\% and boosting area coverage significantly, comparable to the CNN’s performance. Notably, the LLM agent does so without requiring prior training on the specific scenario, demonstrating zero-shot generalization by leveraging its built-in knowledge and reasoning}. 
+
+The main contributions of this work are summarized as follows:
+\begin{itemize}
+
+
+    \item LLM-Driven Dependability-Aware Planning Framework: We propose a new formulation of communication network planning in which a Large Language Model acts as the primary decision-making engine. The framework defines how high-level textual descriptions of deployment scenarios are translated into structured planning tasks, establishes the dependability-oriented reasoning workflow, and specifies how the LLM leverages statistical regularities encoded in the dataset to generate network configurations without simulation or iterative search.
+    
+    \item Dataset-Enhanced Agent Architecture: We develop a concrete agent architecture that operationalizes the above framework by embedding domain knowledge into the LLM's reasoning process. This architecture integrates a curated dataset of thousands of WSN configurations, exposing the model to geometric constraints, sensing characteristics, and dependability metrics such as ITE, redundancy levels, and link reliability. Through this design, the agent performs a single-pass inference that yields configurations consistent with real-world dependability behavior encoded in the dataset.
+
+
+    \item Validation Against Prior ML-Based Planning Models: We conduct a systematic evaluation of the LLM agent using the same dataset employed to train a state-of-the-art CNN-based planner. Results demonstrate that the LLM achieves dependability and coverage performance on par with the CNN model, including improvements of approximately 10\% in the dependability index, while offering the advantage of zero-shot generalization, that is, planning new scenarios without any retraining.
+    
+    %\item New Insights for LLM Applications in Network Engineering: Through qualitative and quantitative analyses, we provide evidence that LLM-based agents can effectively support dependability-driven communication network planning. We discuss the agent's reasoning behavior, its reliance on dataset-encoded statistical regularities, and considerations such as prompt design, reliability, and interpretability. These insights identify opportunities and challenges for applying LLMs to broader network automation contexts.
+\end{itemize}
+
+
+The structure of this paper is as follows: Section~\ref{sec:related} discusses existing work on improving dependability in WSNs and examines the use of LLMs for network planning. Section~\ref{sec:approach} presents the proposed LLM-based methodology, covering the dataset, training procedure, and inference process. Section~\ref{sec:results} then offers an in-depth examination of the case study findings. Lastly, Section~\ref{sec:conclusion} highlights the main contributions and topics to future research, emphasizing the promise of LLM-driven strategies for enhancing dependability.
+
+
+\section{Related Works} \label{sec:related}
+
+% •  Paragraph 1: Classical network planning approaches (optimization, simulation, heuristics)
+% •	Review of traditional WSN/network planning methods: iterative simulations, graph-theoretic analyses, and heuristic algorithms (e.g., Genetic Algorithms, Particle Swarm Optimization). Emphasize how these methods aim to improve metrics like latency or connectivity.
+% •	High computational complexity and lack of scalability of these approaches – each new deployment or scenario change requires significant recomputation or manual re-tuning. Example: a GA-based topology design achieving high reliability but at the cost of heavy computation.
+% •	Mention of typical use-cases (network deployment, frequency planning, etc.) and the inherent difficulty in balancing multiple objectives (coverage, reliability, cost) with purely algorithmic methods. Highlight that static heuristics struggle to adapt to dynamic network conditions.
+
+
+% •  Paragraph 2: Learning-based and data-driven planning techniques
+% •	Introduction of machine learning in network planning: models that learn from data to predict optimal configurations or performance. Include examples like CNNs used for WSN placement optimization and reinforcement learning for network parameter tuning.
+% •	Achievements of these methods: faster decision-making once trained, ability to handle complex input patterns (e.g., environment maps to placements). Cite improvements in specific metrics (energy efficiency, network lifetime, latency) attained by ML approaches.
+% •	Limitations: Many ML solutions are specialized to one aspect (energy, AoI, etc.) and lack a holistic view of network dependability. They also require large training datasets and retraining when network conditions diverge from the training scenario. This part will stress that while ML is promising, its models can be inflexible outside their training scope, motivating more adaptive AI methods.
+
+
+% •  Paragraph 3: LLMs in networking and engineering decision support
+% •	Discuss the recent emergence of large language models in technical domains. Note that LLMs (e.g., ChatGPT) have been recognized for their capacity to reason and could assist in network management and design tasks.
+% •	Highlight key differences between LLM-based decision-making and traditional AI: LLMs can incorporate unstructured knowledge (e.g., textual guidelines, best practices) and perform on-the-fly reasoning instead of relying purely on learned statistical patterns.
+% •	Review early works applying LLMs to networking problems: e.g., WirelessAgent framework using an LLM agent for network slicing, which demonstrated near-optimal throughput and resource allocation compared to rule-based methods. Also mention any other instances of LLMs in configuration planning or IT operations if available.
+% •	Acknowledge challenges identified for direct LLM use: potential inaccuracies or “hallucinations” when dealing with domain-specific numeric data, and the need to augment LLMs with tool use and domain constraints. This sets context for why an agent approach (LLM + tools) is necessary.
+
+
+% •  Paragraph 4: Multi-agent systems and autonomous planning frameworks
+% •	Introduce the concept of multi-agent systems (MAS) in network planning/management. Explain how multiple agents can be assigned different roles (e.g., a global planner and several specialized sub-planners) to handle complex tasks in parallel.
+% •	Provide examples of MAS in communications: for instance, a 6G network management framework where a global LLM-based agent decomposes tasks and delegates to edge agents, resulting in efficient parallel configuration of network slices or resources.
+% •	Discuss advantages of MAS: scalability (agents can cover different network domains or geographic areas), modularity (easy to add an agent for a new function), and robustness (agents can negotiate or back each other up).
+% •	Also address the complexity: coordinating multiple agents requires careful design of communication and consensus mechanisms. Mention how recent research leverages LLMs within MAS to improve their planning and coordination abilities, though these are still in early stages.
+
+
+% •  Paragraph 5: Research gaps motivating this paper
+% •	Summarize the shortcomings of existing works: classical methods are too rigid and computationally heavy, ML-based methods lack general adaptability and often ignore comprehensive dependability, and LLM-based methods in networking are only nascent.
+% •	Point out the gap in integrating dependability analysis with AI planning – few works incorporate rigorous reliability/availability modeling into the planning loop. This limits the use of current methods in safety-critical or highly dynamic networks.
+% •	Note that while LLM agents have been conceptually proposed, there is a lack of concrete implementations and evaluations in real network planning scenarios. Most studies so far focus on theoretical frameworks or adjacent problems (like network slicing), leaving an open question on how well LLM agents can handle tasks like physical network deployment planning.
+% •	Therefore, identify the need for a unified approach that marries LLM-driven reasoning with quantitative network dependability tools, providing both adaptability and reliability. This gap directly motivates our proposed LLM-based agent and the contributions of this paper.
+
+
+
+\section{Background} \label{sec:background}
+
+
+
+
+
+
+
+% #######################################################################
+\section{Proposed Approach} \label{sec:approach}
+
+This study introduces a Large Language Model (LLM)-based methodology to generate the positioning, orientation, and interconnection of visual sensors from a textual description of the monitored environment. Instead of relying on a convolutional architecture, the proposed approach leverages the LLM’s ability to interpret structural and contextual information and to generate the corresponding Field of View (FoV) layout, coverage configuration, and network design. The complete workflow is presented in Figure \ref{fig:Workflow_depen}. This section details the proposed pipeline, designed to address the following research questions:
+
+\begin{itemize}
+\item \textbf{RQ1:} Can a Large Language Model generate sensor placement that satisfies reliability and coverage constraints directly from a description of the environment?
+\item \textbf{RQ2:} How accurate and reliable is the LLM-generated sensor configuration when compared to state-of-the-art optimisation or geometry-based approaches?
+\end{itemize}
+
+% Precisa alterar com base no novo dataset
+\subsection{Dataset Generation}
+
+The data was synthetically generated based on the methodology described in Section~\ref{sec:background}, which evaluates reliability across various scenarios by calculating specific metrics for each application configuration. Three scenarios were considered, featuring 5, 7, and 9 sensors, with parameters such as the number and positions of nodes, the dimensions of the monitored area, the minimum required coverage, camera angles and distances, communication radius, and the quality of nodes and links (measured by failure and repair rates). Each scenario was simulated over a 30-day period, producing hourly samples and leading to 721 reliability data points within the range $t = [0, 720]$ and a total of 6720 samples, all of which were stored in CSV format for later use during the training phase.
+
+% Precisa reescrever para evitar autoplágio 
+\subsection{Data Preprocessing}
+
+The process begins by obtaining raw data, which then undergoes thorough cleaning process. During this stage, missing values are identified and managed, usually replaced with mean values, while outliers are adjusted as necessary to maintain data quality and consistency.
+
+
+% Precisa reescrever para evitar autoplágio 
+\subsection{Feature Engineering}
+
+While the dependability evaluation methodology provides valuable insights, using all computed values during the training phase or as user inputs is impractical. A typical dependability evaluation yields hundreds of data points (this paper calculates 721 values for each scenario). To address this issue, the concept of Integral Time Error (ITE) is utilised, condensing multiple data points into a single representative value.
+
+The ITE metric is defined as the integral of the error function over the evaluation time interval~\cite{ITE2024}, as shown in Equation~\ref{eq:ITE_Discrete}. Here, $\hat{E}_r(t_i)$ represents the error value, indicating the deviation of dependability at the $i$-th time step from a reference value at time $t$, and $N$ is the total number of samples.
+
+\begin{equation} \label{eq:ITE_Discrete}
+ITE = \sum_{i=1}^{N} t_i \cdot \hat{E}_r(t_i),
+\end{equation}
+
+By computing the ITE for each scenario, the $N = 721$ dependability values are represented by a single metric that encapsulates the overall behavior of the dependability curve. This transformation simplifies the dataset while preserving the essential characteristics of dependability trends. Additionally, it enhances user input interaction and the ML training phase, as one metric can better represent dependability behavior instead of an extensive series of data points.
+
+
+\subsection{Knowledge Extraction}
+
+The knowledge extraction stage prepares the dataset used to fine-tune the LLM so that it can generate sensor layouts and FoV configurations from textual descriptions. For each row of the dataset, a detailed natural-language instruction is constructed. This instruction describes the monitored region, its geometric properties, sensing constraints, and node parameters.
+
+A representative excerpt of the generated prompt is shown below:
+
+\begin{verbatim}
+Create a visual sensor network deployed in
+a rectangular monitored region with width
+= 50 m and height h=32 m, whose reference
+point is at (x_ref, y_ref).The minimum 
+required covered....
+\end{verbatim}
+
+
+The numerical output associated with each prompt is produced by selecting all required fields in a predefined fixed order, generating a structured output array aligned with the instruction. Each instruction and its corresponding output array are stored as a JSONL record in the format \texttt{{instruction, input, output}}.
+
+
+\subsection{Data Segregation}
+
+The preprocessed and validated dataset was partitioned into three subsets to support robust model development and evaluation. A total of 70\% of the samples was allocated for training, 15\% for validation, and the remaining 15\% for testing. This segregation strategy ensures that model optimization, hyperparameter tuning, and final performance assessment are carried out on mutually exclusive data partitions, thereby minimizing information leakage and enhancing the reliability of the results.
+
+\subsection{Model Evaluation}
+
+To comprehensively assess the performance of the fine-tuned LLMs, this study utilizes a set of metrics covering generation quality, semantic accuracy, and computational efficiency. The specific metrics adopted are defined as follows:
+
+\begin{itemize}
+    \item \textbf{Cross-Entropy}: measures the divergence between the model's predicted probability distribution and the true distribution of the target sequences, where lower values indicate better predictive performance;
+
+    \item \textbf{Bilingual Evaluation Understudy (BLEU)}: A precision-oriented metric that quantifies the $n$-gram overlap between the generated output and the reference text. It is widely used to evaluate the structural and lexical correspondence of the generated sequences;
+
+    \item \textbf{Recall-Oriented Understudy for Gisting Evaluation (ROUGE)}: Focuses on recall to measure how much of the reference content is captured by the model. We report three variants:
+    \begin{itemize}
+        \item \textbf{ROUGE-1:} Measures the overlap of unigrams (individual tokens);
+        \item \textbf{ROUGE-2:} Measures the overlap of bigrams, capturing local coherence;
+        \item \textbf{ROUGE-L:} Based on the Longest Common Subsequence, evaluating sentence-level structure and sequence fluency.
+    \end{itemize}
+
+    \item \textbf{}
+
+    \item \textbf{}
+
+    \item \textbf{}
+
+    \item \textbf{}
+
+    \item \textbf{}
+\end{itemize}
+
+
+
+
+% #######################################################################
+\section{Case Study} \label{sec:case_study}
+
+\section{Results} \label{sec:results}
+
+\subsection{Instrumentation}
+
+The development, training, and simulation processes were conducted in an environment featuring a 12th Gen Intel Core i9-12900K processor (3.19~GHz), 64~GB of RAM, and an NVIDIA GeForce RTX 3080 graphics card running Windows 10 Pro (v. 22H2). Dataset generation and the dependability methodology were executed using Matlab r2024b 64-bit (v. 24.2.0.2806996), integrated with the SHARPE tool (v. 1.3.1).
+
+
+
+
+\begin{figure*}[htpb]
+    \centering
+    \includegraphics[width=1\linewidth]{Figures/Untitled.pdf}
+    \caption{Workflow for developing and deploying machine learning Models in electrical vehicles.}
+    \label{fig:Workflow_tinyML}
+\end{figure*}
+
+\section{Conclusion}\label{conclusion}
+
+
+FUTURE WORK: the agent iteratively evaluates candidate network designs using a dependability analysis module and refines its plans in a closed loop
+
+FUTURE WORK: Humanize more the input prompt, which requires retraining.
+
+
+%\section*{Acknowledgment}
+
+
+\bibliographystyle{ieeetr}
+\bibliography{References}
+
+\end{document}

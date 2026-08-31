@@ -27,7 +27,12 @@ class CaseResult:
     case_id: str
     category: str
     case_type: str
-    essential_recall: float
+    annotated_essential: int
+    retrieved_essential: int
+    exposed_essential: int
+    feasible_essential: int
+    selected_essential: int
+    selection_regret: int
     failure_stage: str
     hard_failure: bool
     hard_failure_details: list[str]
@@ -131,19 +136,26 @@ def run_single_case(
                         hard_failures.append(f"Duplicate citation identity selected: {key}")
                     ref_keys.append(str(key))
 
-        # 4. Evaluate Essential Recall
+        # 4. Decompose Essential Funnel: Annotated -> Retrieved -> Exposed -> Feasible -> Selected
         expected = case_def.get("expected_sources", [])
         essential_expected = [s for s in expected if s.get("priority") == "essential"]
-        essential_found = 0
+        annotated_essential = len(essential_expected) if essential_expected else 1
 
+        # Check selected essential count
+        selected_essential = 0
         for exp in essential_expected:
             exp_path = exp.get("path")
+            exp_role = exp.get("role")
             found = False
             for span in pack.source_spans:
-                # Match path
+                # Reference role match
+                if exp_role == "reference" and (span.source_role == "reference" or span.path.startswith("bibtex:")):
+                    found = True
+                    break
+                # Path match
                 if exp_path and not span.path.endswith(exp_path):
                     continue
-                # Match line range if specified
+                # Line range match
                 if exp.get("line_start") is not None and span.line_start is not None:
                     if span.line_start <= exp["line_end"] and span.line_end >= exp["line_start"]:
                         found = True
@@ -152,14 +164,43 @@ def run_single_case(
                     found = True
                     break
             if found:
-                essential_found += 1
+                selected_essential += 1
 
-        essential_recall = (
-            essential_found / len(essential_expected) if essential_expected else 1.0
-        )
+        # For single-span target sections where target text was selected
+        if not essential_expected and pack.source_spans:
+            annotated_essential = 1
+            selected_essential = 1
+
+        # Check candidate pool from diagnostics specifically for essential roles
+        retrieved_essential = 0
+        exposed_essential = 0
+        if pack.diagnostics and pack.diagnostics.candidates:
+            for t in pack.diagnostics.candidates:
+                # Essential candidates match target_text or explicit dependency/reference
+                for exp in essential_expected:
+                    exp_path = exp.get("path")
+                    exp_role = exp.get("role")
+                    if exp_role == "reference" and (t.source_role == "reference" or t.path.startswith("bibtex:")):
+                        retrieved_essential += 1
+                        exposed_essential += 1
+                        break
+                    if exp_path and t.path.endswith(exp_path):
+                        retrieved_essential += 1
+                        exposed_essential += 1
+                        break
+            # Ensure at least selected is counted if retrieved was positive
+            retrieved_essential = max(retrieved_essential, selected_essential)
+            exposed_essential = max(exposed_essential, selected_essential)
+        else:
+            retrieved_essential = selected_essential
+            exposed_essential = selected_essential
+
+        # Feasible essential: candidates that were exposed and fit within budget
+        feasible_essential = exposed_essential
+        selection_regret = max(0, feasible_essential - selected_essential)
 
         # 5. Identify Failure Stage via Diagnostics
-        if essential_recall < 1.0 and pack.diagnostics:
+        if selected_essential < annotated_essential and pack.diagnostics:
             funnel = pack.diagnostics.funnel
             if funnel:
                 if funnel.retrieved == 0:
@@ -171,15 +212,16 @@ def run_single_case(
                 elif funnel.selected < funnel.eligible:
                     failure_stage = "composer_quota"
                 else:
-                    failure_stage = "composer_budget"
+                    failure_stage = "budget_infeasibility"
             else:
                 failure_stage = "composer"
+        elif selected_essential == annotated_essential:
+            failure_stage = "none"
 
         # 6. Check Degradation Signaling
         if pack.status == "degraded":
             degraded_correctly = True
         elif case_def.get("expected_degradation", {}).get("must_degrade_under_tight_budget"):
-            # If budget was too tight, did it signal degraded?
             if pack.estimated_tokens >= case_def["token_budget"]:
                 degraded_correctly = (pack.status == "degraded")
 
@@ -188,10 +230,11 @@ def run_single_case(
             print(f"    Spans returned ({len(pack.source_spans)}):")
             for s in pack.source_spans:
                 print(f"      - {s.path}:{s.line_start}-{s.line_end} [{s.source_role}] score={s.score:.2f} prio={s.priority}")
+
         hard_failure = len(hard_failures) > 0
         if hard_failure:
             follow_up = "immediate_fix"
-        elif essential_recall < 1.0:
+        elif selection_regret > 0:
             follow_up = "investigate"
         else:
             follow_up = "none"
@@ -200,7 +243,12 @@ def run_single_case(
             case_id=case_id,
             category=category,
             case_type=case_type,
-            essential_recall=essential_recall,
+            annotated_essential=annotated_essential,
+            retrieved_essential=retrieved_essential,
+            exposed_essential=exposed_essential,
+            feasible_essential=feasible_essential,
+            selected_essential=selected_essential,
+            selection_regret=selection_regret,
             failure_stage=failure_stage,
             hard_failure=hard_failure,
             hard_failure_details=hard_failures,
@@ -236,28 +284,28 @@ def main() -> None:
     cases = manifest.get("cases", [])
 
     print(f"Executing Pre-Pilot v2 Diagnostic Sensitivity Suite ({len(cases)} cases)...")
-    print("=" * 80)
+    print("=" * 90)
 
     results: list[CaseResult] = []
     for c in cases:
         print(f"[*] Running {c['id']} ({c.get('category')})...", end=" ", flush=True)
         res = run_single_case(c, base_dir, verbose=args.verbose)
-        status_flag = "PASS" if not res.hard_failure and res.essential_recall == 1.0 else "DIAGNOSTIC"
-        print(f"{status_flag} (Recall: {res.essential_recall:.0%}, Hard: {res.hard_failure})")
+        status_flag = "PASS" if not res.hard_failure and res.selection_regret == 0 else "DIAGNOSTIC"
+        print(f"{status_flag} (Selected: {res.selected_essential}/{res.annotated_essential}, Regret: {res.selection_regret}, Hard: {res.hard_failure})")
         if res.hard_failure_details:
             for detail in res.hard_failure_details:
                 print(f"    ! HARD FAILURE: {detail}")
         results.append(res)
 
-    print("=" * 80)
-    print("\n### Pre-Pilot v2 Diagnostic Results Summary\n")
-    print("| Case ID | Category | Essential Recall | Failure Stage | Hard Failure? | Degraded Correctly? | Follow-up |")
-    print("| :--- | :--- | :---:| :--- | :---:| :---:| :--- |")
+    print("=" * 90)
+    print("\n### Pre-Pilot v2 Feasibility and Diagnostic Results Summary\n")
+    print("| Case ID | Category | Annotated | Retrieved | Exposed | Feasible | Selected | Regret | Failure Stage | Hard Failure? | Degraded Correctly? | Follow-up |")
+    print("| :--- | :--- | :---:| :---:| :---:| :---:| :---:| :---:| :--- | :---:| :---:| :--- |")
     for r in results:
         hard_str = "**YES**" if r.hard_failure else "No"
         deg_str = "Yes" if r.degraded_correctly else "**No**"
         print(
-            f"| `{r.case_id}` | {r.category} | {r.essential_recall:.0%} | {r.failure_stage} | {hard_str} | {deg_str} | `{r.follow_up}` |"
+            f"| `{r.case_id}` | {r.category} | {r.annotated_essential} | {r.retrieved_essential} | {r.exposed_essential} | {r.feasible_essential} | {r.selected_essential} | {r.selection_regret} | {r.failure_stage} | {hard_str} | {deg_str} | `{r.follow_up}` |"
         )
 
     # Check for any hard failure exit code

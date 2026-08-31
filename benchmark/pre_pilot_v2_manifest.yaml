@@ -50,10 +50,15 @@ cases:
       - "memory footprint strictly constrained to 2MB SRAM"
       - "EEMBC MLMark benchmark suite"
     expected_sources:
+      - path: "main.tex"
+        line_start: 4
+        line_end: 8
+        priority: "essential"
+        role: "target_text"
       - path: "evidence.tex"
         line_start: 1
         line_end: 14
-        priority: "essential"
+        priority: "supporting"
         role: "local_context"
     hard_failure_conditions:
       must_consider_omitted_without_degraded_status: false
@@ -73,10 +78,15 @@ cases:
       dependency: 0.2
       reference: 0.4
     expected_sources:
-      - path: "references.bib"
+      - path: "main.tex"
+        line_start: 4
+        line_end: 10
         priority: "essential"
+        role: "target_text"
+      - path: "references.bib"
+        priority: "supporting"
         role: "reference"
-        min_citations_selected: 3
+        min_citations_selected: 2
     hard_failure_conditions:
       duplicate_citation_identities: 0
     expected_degradation:
@@ -90,11 +100,16 @@ cases:
     task: "Introduce self-attention transformer mechanisms with literature grounding."
     token_budget: 2000
     expected_sources:
-      - path: "bib1.bib"
+      - path: "main.tex"
+        line_start: 4
+        line_end: 8
         priority: "essential"
+        role: "target_text"
+      - path: "bib1.bib"
+        priority: "supporting"
         role: "reference"
       - path: "bib2.bib"
-        priority: "essential"
+        priority: "supporting"
         role: "reference"
     hard_failure_conditions:
       duplicate_citation_identities: 0

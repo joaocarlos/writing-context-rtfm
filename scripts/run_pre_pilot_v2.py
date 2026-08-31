@@ -7,15 +7,16 @@ Executes controlled adversarial cases and outputs per-case diagnostic breakdown.
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 from typing import Any
 
 import yaml
 
 from writing_context_rtfm.config import load_config
 from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.providers.base import BaseContextProvider
 from writing_context_rtfm.providers.bibtex import BibTeXProvider
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import load_section_cards
@@ -51,9 +52,7 @@ def check_math_delimiters(text: str) -> bool:
     return True
 
 
-def run_single_case(
-    case_def: dict[str, Any], base_dir: Path, verbose: bool = False
-) -> CaseResult:
+def run_single_case(case_def: dict[str, Any], base_dir: Path, verbose: bool = False) -> CaseResult:
     case_id = case_def["id"]
     category = case_def.get("category", "unknown")
     case_type = case_def.get("type", "synthetic")
@@ -73,7 +72,7 @@ def run_single_case(
     with ExtensionStore(":memory:") as store:
         adapter = RTFMAdapter(project_root=str(proj_dir.resolve()))
         # Include BibTeX provider if bib files present
-        providers = [BibTeXProvider(config)] if list(proj_dir.glob("*.bib")) else []
+        providers: list[BaseContextProvider] = [BibTeXProvider(config)] if list(proj_dir.glob("*.bib")) else []
 
         generator = ContextPackGenerator(
             config,
@@ -101,7 +100,9 @@ def run_single_case(
         for span in pack.source_spans:
             if span.line_start is not None and span.line_end is not None:
                 if span.line_start > span.line_end:
-                    hard_failures.append(f"Inverted span lines: {span.line_start} > {span.line_end}")
+                    hard_failures.append(
+                        f"Inverted span lines: {span.line_start} > {span.line_end}"
+                    )
 
         # Check math environment balance in selected spans
         for span in pack.source_spans:
@@ -111,7 +112,9 @@ def run_single_case(
                     lines = f.readlines()
                 content = "".join(lines[span.line_start - 1 : span.line_end])
                 if not check_math_delimiters(content):
-                    hard_failures.append(f"Broken math delimiters in {span.path}:{span.line_start}-{span.line_end}")
+                    hard_failures.append(
+                        f"Broken math delimiters in {span.path}:{span.line_start}-{span.line_end}"
+                    )
 
         # Check target text availability if required
         if case_id == "ADV-BUDGET-01":
@@ -149,7 +152,9 @@ def run_single_case(
             found = False
             for span in pack.source_spans:
                 # Reference role match
-                if exp_role == "reference" and (span.source_role == "reference" or span.path.startswith("bibtex:")):
+                if exp_role == "reference" and (
+                    span.source_role == "reference" or span.path.startswith("bibtex:")
+                ):
                     found = True
                     break
                 # Path match
@@ -180,7 +185,9 @@ def run_single_case(
                 for exp in essential_expected:
                     exp_path = exp.get("path")
                     exp_role = exp.get("role")
-                    if exp_role == "reference" and (t.source_role == "reference" or t.path.startswith("bibtex:")):
+                    if exp_role == "reference" and (
+                        t.source_role == "reference" or t.path.startswith("bibtex:")
+                    ):
                         retrieved_essential += 1
                         exposed_essential += 1
                         break
@@ -223,13 +230,17 @@ def run_single_case(
             degraded_correctly = True
         elif case_def.get("expected_degradation", {}).get("must_degrade_under_tight_budget"):
             if pack.estimated_tokens >= case_def["token_budget"]:
-                degraded_correctly = (pack.status == "degraded")
+                degraded_correctly = pack.status == "degraded"
 
         if verbose:
-            print(f"\n    [Debug {case_id}] Estimated Tokens: {pack.estimated_tokens}, Status: {pack.status}")
+            print(
+                f"\n    [Debug {case_id}] Estimated Tokens: {pack.estimated_tokens}, Status: {pack.status}"
+            )
             print(f"    Spans returned ({len(pack.source_spans)}):")
             for s in pack.source_spans:
-                print(f"      - {s.path}:{s.line_start}-{s.line_end} [{s.source_role}] score={s.score:.2f} prio={s.priority}")
+                print(
+                    f"      - {s.path}:{s.line_start}-{s.line_end} [{s.source_role}] score={s.score:.2f} prio={s.priority}"
+                )
 
         hard_failure = len(hard_failures) > 0
         if hard_failure:
@@ -291,7 +302,9 @@ def main() -> None:
         print(f"[*] Running {c['id']} ({c.get('category')})...", end=" ", flush=True)
         res = run_single_case(c, base_dir, verbose=args.verbose)
         status_flag = "PASS" if not res.hard_failure and res.selection_regret == 0 else "DIAGNOSTIC"
-        print(f"{status_flag} (Selected: {res.selected_essential}/{res.annotated_essential}, Regret: {res.selection_regret}, Hard: {res.hard_failure})")
+        print(
+            f"{status_flag} (Selected: {res.selected_essential}/{res.annotated_essential}, Regret: {res.selection_regret}, Hard: {res.hard_failure})"
+        )
         if res.hard_failure_details:
             for detail in res.hard_failure_details:
                 print(f"    ! HARD FAILURE: {detail}")
@@ -299,7 +312,9 @@ def main() -> None:
 
     print("=" * 90)
     print("\n### Pre-Pilot v2 Feasibility and Diagnostic Results Summary\n")
-    print("| Case ID | Category | Annotated | Retrieved | Exposed | Feasible | Selected | Regret | Failure Stage | Hard Failure? | Degraded Correctly? | Follow-up |")
+    print(
+        "| Case ID | Category | Annotated | Retrieved | Exposed | Feasible | Selected | Regret | Failure Stage | Hard Failure? | Degraded Correctly? | Follow-up |"
+    )
     print("| :--- | :--- | :---:| :---:| :---:| :---:| :---:| :---:| :--- | :---:| :---:| :--- |")
     for r in results:
         hard_str = "**YES**" if r.hard_failure else "No"
@@ -311,7 +326,10 @@ def main() -> None:
     # Check for any hard failure exit code
     has_hard_failure = any(r.hard_failure for r in results)
     if has_hard_failure:
-        print("\n❌ One or more Hard Correctness Failures detected! Immediate fix required.", file=sys.stderr)
+        print(
+            "\n❌ One or more Hard Correctness Failures detected! Immediate fix required.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     else:
         print("\n✅ Zero Hard Correctness Failures across all pre-pilot cases.")

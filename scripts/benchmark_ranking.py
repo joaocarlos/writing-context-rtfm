@@ -65,14 +65,37 @@ def run_benchmark():
         # Setup mock adapter that provides realistic multi-source hits
         adapter = MagicMock()
         mock_candidates = [
-            RTFMResult(path=src, line_start=1, line_end=20, snippet=f"Content for {src}", score=0.9 - idx * 0.1, metadata={})
+            RTFMResult(
+                path=src,
+                line_start=1,
+                line_end=20,
+                snippet=f"Content for {src}",
+                score=0.9 - idx * 0.1,
+                metadata={},
+            )
             for idx, src in enumerate(expected)
         ]
         # Distractors
-        mock_candidates.extend([
-            RTFMResult(path="sections/99_distractor1.tex", line_start=1, line_end=10, snippet="Distractor text 1", score=0.3, metadata={}),
-            RTFMResult(path="sections/99_distractor2.tex", line_start=1, line_end=10, snippet="Distractor text 2", score=0.2, metadata={}),
-        ])
+        mock_candidates.extend(
+            [
+                RTFMResult(
+                    path="sections/99_distractor1.tex",
+                    line_start=1,
+                    line_end=10,
+                    snippet="Distractor text 1",
+                    score=0.3,
+                    metadata={},
+                ),
+                RTFMResult(
+                    path="sections/99_distractor2.tex",
+                    line_start=1,
+                    line_end=10,
+                    snippet="Distractor text 2",
+                    score=0.2,
+                    metadata={},
+                ),
+            ]
+        )
         adapter.search.return_value = mock_candidates
 
         store = ExtensionStore(":memory:")
@@ -92,27 +115,31 @@ def run_benchmark():
         r_at_k = sum(rel_at_k) / len(expected) if expected else 0.0
         ndcg_val = ndcg_at_k(relevance, k)
 
-        results_table.append({
-            "task_id": task_id,
-            "target": target,
-            "expected_count": len(expected),
-            "retrieved_count": len(retrieved_paths),
-            "p@3": p_at_k,
-            "r@3": r_at_k,
-            "ndcg@3": ndcg_val,
-        })
+        results_table.append(
+            {
+                "task_id": task_id,
+                "target": target,
+                "expected_count": len(expected),
+                "retrieved_count": len(retrieved_paths),
+                "p@3": p_at_k,
+                "r@3": r_at_k,
+                "ndcg@3": ndcg_val,
+            }
+        )
 
     # Print Table
     print(f"{'Task ID':<25} {'Target':<18} {'P@3':<8} {'R@3':<8} {'nDCG@3':<8}")
-    print(f"{'-'*25} {'-'*18} {'-'*8} {'-'*8} {'-'*8}")
+    print(f"{'-' * 25} {'-' * 18} {'-' * 8} {'-' * 8} {'-' * 8}")
     for row in results_table:
-        print(f"{row['task_id']:<25} {row['target']:<18} {row['p@3']:<8.2f} {row['r@3']:<8.2f} {row['ndcg@3']:<8.2f}")
+        print(
+            f"{row['task_id']:<25} {row['target']:<18} {row['p@3']:<8.2f} {row['r@3']:<8.2f} {row['ndcg@3']:<8.2f}"
+        )
 
     avg_p = sum(r["p@3"] for r in results_table) / len(results_table)
     avg_r = sum(r["r@3"] for r in results_table) / len(results_table)
     avg_ndcg = sum(r["ndcg@3"] for r in results_table) / len(results_table)
 
-    print(f"{'-'*67}")
+    print(f"{'-' * 67}")
     print(f"{'Average':<44} {avg_p:<8.2f} {avg_r:<8.2f} {avg_ndcg:<8.2f}\n")
 
 

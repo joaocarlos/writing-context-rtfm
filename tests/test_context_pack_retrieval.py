@@ -57,7 +57,9 @@ def dynamic_rtfm_search_mock(query: str, limit: int = 10, **kwargs):
     results = []
 
     # Approach related chunks
-    if any(k in q_lower for k in ("approach", "methodology", "dataset", "cnn", "quantization", "mimii")):
+    if any(
+        k in q_lower for k in ("approach", "methodology", "dataset", "cnn", "quantization", "mimii")
+    ):
         results.append(
             RTFMResult(
                 path="sections/03_approach.tex",
@@ -70,7 +72,10 @@ def dynamic_rtfm_search_mock(query: str, limit: int = 10, **kwargs):
         )
 
     # Intro / background chunks
-    if any(k in q_lower for k in ("intro", "tinyml", "acoustic", "water pump", "motivation", "background")):
+    if any(
+        k in q_lower
+        for k in ("intro", "tinyml", "acoustic", "water pump", "motivation", "background")
+    ):
         results.append(
             RTFMResult(
                 path="sections/01_intro.tex",

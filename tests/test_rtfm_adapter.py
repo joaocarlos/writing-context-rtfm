@@ -296,9 +296,7 @@ class TestResolveRtfmDbPath(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        adapter = RTFMAdapter(
-            project_root=str(self.project_root), allow_cli_fallback=False
-        )
+        adapter = RTFMAdapter(project_root=str(self.project_root), allow_cli_fallback=False)
         results = adapter.search("routing mechanism", corpus="manuscript", limit=3)
 
         self.assertEqual([item.path for item in results], ["strong.tex", "medium.tex", "weak.tex"])
@@ -343,9 +341,7 @@ class TestResolveRtfmDbPath(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        adapter = RTFMAdapter(
-            project_root=str(self.project_root), allow_cli_fallback=False
-        )
+        adapter = RTFMAdapter(project_root=str(self.project_root), allow_cli_fallback=False)
         results = adapter.search("cat", corpus="manuscript", limit=5)
 
         self.assertEqual([item.path for item in results], ["exact.tex"])
@@ -371,18 +367,14 @@ class TestResolveRtfmDbPath(unittest.TestCase):
         conn.commit()
         conn.close()
 
-        adapter = RTFMAdapter(
-            project_root=str(self.project_root), allow_cli_fallback=False
-        )
+        adapter = RTFMAdapter(project_root=str(self.project_root), allow_cli_fallback=False)
         results = adapter.search("routing", corpus="manuscript", limit=1)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].path, "intro.tex")
 
     @patch.object(RTFMAdapter, "_run_command")
     def test_strict_local_search_never_uses_cli(self, run_command):
-        adapter = RTFMAdapter(
-            project_root=str(self.project_root), allow_cli_fallback=False
-        )
+        adapter = RTFMAdapter(project_root=str(self.project_root), allow_cli_fallback=False)
         with self.assertRaises(RTFMAdapterError):
             adapter.search("routing", corpus="manuscript", limit=1)
         run_command.assert_not_called()

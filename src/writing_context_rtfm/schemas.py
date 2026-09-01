@@ -40,7 +40,6 @@ class QuerySpec:
         return hash((self.text, self.query_type, self.family, self.weight, self.is_verified))
 
 
-
 @dataclass(frozen=True)
 class SourceSpan:
     path: str
@@ -210,4 +209,3 @@ class ProviderConfig:
     sse_url: str | None = None
     headers: dict[str, str] | None = None
     extra: dict[str, Any] | None = None
-

@@ -73,14 +73,11 @@ def _path_matches(path: str, card_path: str | None) -> bool:
     return p_norm.endswith(c_norm)
 
 
-def _lexical_signature(
-    text: str, shingle_size: int = 2
-) -> tuple[set[str], set[tuple[str, ...]]]:
+def _lexical_signature(text: str, shingle_size: int = 2) -> tuple[set[str], set[tuple[str, ...]]]:
     clean = re.sub(r"[^\w\s]", " ", text.lower()).split()
     words = set(clean)
     shingles = {
-        tuple(clean[index : index + shingle_size])
-        for index in range(len(clean) - shingle_size + 1)
+        tuple(clean[index : index + shingle_size]) for index in range(len(clean) - shingle_size + 1)
     }
     return words, shingles
 
@@ -171,15 +168,12 @@ def _extract_task_citation_keys(task: str) -> list[str]:
     for group in re.findall(latex_pattern, task):
         keys.extend(key.strip() for key in group.split(",") if key.strip())
     keys.extend(
-        match.group(1)
-        for match in re.finditer(r"(?<![\w\\])@([A-Za-z0-9][\w:./+-]*)", task)
+        match.group(1) for match in re.finditer(r"(?<![\w\\])@([A-Za-z0-9][\w:./+-]*)", task)
     )
     return list(dict.fromkeys(keys))
 
 
-def _build_atomic_obligations(
-    task: str, must_consider: list[str]
-) -> list[AtomicObligation]:
+def _build_atomic_obligations(task: str, must_consider: list[str]) -> list[AtomicObligation]:
     obligations = [
         AtomicObligation(
             id=f"must_consider:{index}",
@@ -240,8 +234,10 @@ def _obligation_matches_text(obligation: AtomicObligation, text: str) -> bool:
     if not required_terms:
         return False
     present = len(required_terms & _atom_terms(text))
-    threshold = len(required_terms) if len(required_terms) <= 2 else max(
-        2, (4 * len(required_terms) + 4) // 5
+    threshold = (
+        len(required_terms)
+        if len(required_terms) <= 2
+        else max(2, (4 * len(required_terms) + 4) // 5)
     )
     return present >= threshold
 
@@ -256,14 +252,10 @@ def _span_evidence_text(span: SourceSpan) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def _span_obligation_ids(
-    span: SourceSpan, obligations: list[AtomicObligation]
-) -> set[str]:
+def _span_obligation_ids(span: SourceSpan, obligations: list[AtomicObligation]) -> set[str]:
     text = _span_evidence_text(span)
     return {
-        obligation.id
-        for obligation in obligations
-        if _obligation_matches_text(obligation, text)
+        obligation.id for obligation in obligations if _obligation_matches_text(obligation, text)
     }
 
 
@@ -274,8 +266,7 @@ def _greedy_atomic_cover(
 ) -> tuple[list[SourceSpan], dict[int, set[str]]]:
     """Choose a compact, high-ranked set of spans without issuing more searches."""
     span_hits = {
-        id(span): _span_obligation_ids(span, obligations) - already_covered
-        for span in candidates
+        id(span): _span_obligation_ids(span, obligations) - already_covered for span in candidates
     }
     uncovered = {obligation.id for obligation in obligations} - already_covered
     cover: list[SourceSpan] = []
@@ -296,7 +287,6 @@ def _greedy_atomic_cover(
         uncovered -= span_hits[id(best)]
         remaining.remove(best)
     return cover, span_hits
-
 
 
 def apply_reciprocal_rank_fusion(
@@ -325,11 +315,18 @@ def apply_reciprocal_rank_fusion(
     for key, base_span in span_map.items():
         norm_fusion = round(min(1.0, (rrf_scores[key] / max(1e-6, max_rrf))), 3)
         struct_score: float | None
-        if base_span.source_role in ("target_text", "local_context") or base_span.priority == "essential":
+        if (
+            base_span.source_role in ("target_text", "local_context")
+            or base_span.priority == "essential"
+        ):
             final_score = base_span.score
             struct_score = base_span.structural_score or base_span.score
         else:
-            raw_retrieval = base_span.retrieval_score if base_span.retrieval_score is not None else base_span.score
+            raw_retrieval = (
+                base_span.retrieval_score
+                if base_span.retrieval_score is not None
+                else base_span.score
+            )
             final_score = round(0.5 * raw_retrieval + 0.5 * norm_fusion, 3)
             struct_score = base_span.structural_score
 
@@ -343,7 +340,9 @@ def apply_reciprocal_rank_fusion(
             query=base_span.query,
             metadata=base_span.metadata,
             source_role=base_span.source_role,
-            retrieval_score=base_span.retrieval_score if base_span.retrieval_score is not None else base_span.score,
+            retrieval_score=base_span.retrieval_score
+            if base_span.retrieval_score is not None
+            else base_span.score,
             fusion_score=norm_fusion,
             structural_score=struct_score,
         )
@@ -362,9 +361,7 @@ def apply_mmr_diversity(spans: list[SourceSpan], lambda_param: float = 0.75) -> 
     remaining = list(spans)
     snippets = {id(span): str((span.metadata or {}).get("snippet", "")) for span in spans}
     signatures = {
-        span_id: _lexical_signature(snippet)
-        for span_id, snippet in snippets.items()
-        if snippet
+        span_id: _lexical_signature(snippet) for span_id, snippet in snippets.items() if snippet
     }
     similarity_cache: dict[tuple[int, int], float] = {}
 
@@ -583,7 +580,13 @@ class ContextPackGenerator:
 
         # 2. Document thesis (if review)
         if task_type == "review" and self.section_cards and self.section_cards.document.thesis:
-            _add(self.section_cards.document.thesis, "thesis", family="thesis", weight=0.9, is_verified=True)
+            _add(
+                self.section_cards.document.thesis,
+                "thesis",
+                family="thesis",
+                weight=0.9,
+                is_verified=True,
+            )
 
         if target_card:
             # 3. Target section intent, title, and key terms (skip key terms if minimal or line range exists)
@@ -619,9 +622,21 @@ class ContextPackGenerator:
                     dep_is_ver = dep_id not in unverified_deps_set
                     dep_weight = 0.85 if dep_is_ver else 0.65
                     if dep_card.role:
-                        _add(dep_card.role, "dep_intent", family="deps", weight=dep_weight, is_verified=dep_is_ver)
+                        _add(
+                            dep_card.role,
+                            "dep_intent",
+                            family="deps",
+                            weight=dep_weight,
+                            is_verified=dep_is_ver,
+                        )
                     if dep_card.title:
-                        _add(dep_card.title, "dep_title", family="deps", weight=dep_weight * 0.95, is_verified=dep_is_ver)
+                        _add(
+                            dep_card.title,
+                            "dep_title",
+                            family="deps",
+                            weight=dep_weight * 0.95,
+                            is_verified=dep_is_ver,
+                        )
 
                     if pack_mode != "minimal":
                         max_dep_kt = 6 if pack_mode == "deep" else 3
@@ -638,7 +653,6 @@ class ContextPackGenerator:
             _add(mc, "must_consider", family="task", weight=1.0, is_verified=True)
 
         return specs, target_card, dep_cards, query_type_map
-
 
     # -----------------------------------------------------------------------
     # Deduplication
@@ -881,7 +895,9 @@ class ContextPackGenerator:
             if any(phrase.lower() in snippet for phrase in avoid_phrases):
                 discarded += 1
                 if tracker is not None:
-                    tracker.record_filtered(span, reason=FILTER_AVOID_PATTERN, action="filter_avoid")
+                    tracker.record_filtered(
+                        span, reason=FILTER_AVOID_PATTERN, action="filter_avoid"
+                    )
             else:
                 kept.append(span)
         return kept, discarded
@@ -993,7 +1009,9 @@ class ContextPackGenerator:
         retrieval_fingerprint = compute_retrieval_fingerprint(rtfm_db, provider_fps)
 
         if self.config.cache.enabled and not include_diagnostics:
-            cached = self.store.get_cached_pack(task_hash, config_hash, sc_hash, retrieval_fingerprint)
+            cached = self.store.get_cached_pack(
+                task_hash, config_hash, sc_hash, retrieval_fingerprint
+            )
             if cached:
                 spans = [SourceSpan(**s) for s in cached.get("source_spans", [])]
                 cd_data = cached.get("cache")
@@ -1073,7 +1091,9 @@ class ContextPackGenerator:
                         )
                         all_candidates.append(target_span)
                         if tracker is not None:
-                            tracker.record_retrieved(target_span, query="target_range", stream_key="target_range")
+                            tracker.record_retrieved(
+                                target_span, query="target_range", stream_key="target_range"
+                            )
 
                         # Local context before
                         if start > 1:
@@ -1093,7 +1113,11 @@ class ContextPackGenerator:
                             )
                             all_candidates.append(before_span)
                             if tracker is not None:
-                                tracker.record_retrieved(before_span, query="target_context_before", stream_key="target_range")
+                                tracker.record_retrieved(
+                                    before_span,
+                                    query="target_context_before",
+                                    stream_key="target_range",
+                                )
 
                         # Local context after
                         if end < num_lines:
@@ -1113,7 +1137,11 @@ class ContextPackGenerator:
                             )
                             all_candidates.append(after_span)
                             if tracker is not None:
-                                tracker.record_retrieved(after_span, query="target_context_after", stream_key="target_range")
+                                tracker.record_retrieved(
+                                    after_span,
+                                    query="target_context_after",
+                                    stream_key="target_range",
+                                )
 
                     # Case B: Target section specified without line numbers -> Atomically extract target section
                     elif target is not None:
@@ -1121,7 +1149,9 @@ class ContextPackGenerator:
                         with contextlib.suppress(Exception):
                             doc_parser_target.parse(target_path)
 
-                        target_node = doc_parser_target.find_section_node(target or resolved_key or "")
+                        target_node = doc_parser_target.find_section_node(
+                            target or resolved_key or ""
+                        )
                         if target_node and target_node.source_path == target_path:
                             start = max(1, min(target_node.line_start, num_lines))
                             end = max(1, min(target_node.line_end, num_lines))
@@ -1144,7 +1174,9 @@ class ContextPackGenerator:
                             )
                             all_candidates.append(target_span)
                             if tracker is not None:
-                                tracker.record_retrieved(target_span, query="target_section", stream_key="target_range")
+                                tracker.record_retrieved(
+                                    target_span, query="target_section", stream_key="target_range"
+                                )
                 else:
                     if has_explicit_line_range:
                         warnings.append(
@@ -1163,20 +1195,27 @@ class ContextPackGenerator:
             if s.source_role in ("target_text", "local_context") or s.priority == "essential"
         )
         thesis_text = (
-            (self.section_cards.document.thesis if self.section_cards and self.section_cards.document else "")
-            or ""
+            self.section_cards.document.thesis
+            if self.section_cards and self.section_cards.document
+            else ""
+        ) or ""
+        constraints_text = " ".join(
+            target_card.constraints if target_card and target_card.constraints else []
         )
-        constraints_text = " ".join(target_card.constraints if target_card and target_card.constraints else [])
-        baseline_tokens = essential_tokens + self._estimate_tokens(
-            SourceSpan(
-                path="",
-                line_start=0,
-                line_end=0,
-                reason="",
-                score=1.0,
-                metadata={"snippet": f"{thesis_text} {constraints_text}"},
+        baseline_tokens = (
+            essential_tokens
+            + self._estimate_tokens(
+                SourceSpan(
+                    path="",
+                    line_start=0,
+                    line_end=0,
+                    reason="",
+                    score=1.0,
+                    metadata={"snippet": f"{thesis_text} {constraints_text}"},
+                )
             )
-        ) + 150
+            + 150
+        )
 
         if is_strict and baseline_tokens > token_budget:
             quality.minimum_required_tokens = baseline_tokens
@@ -1201,10 +1240,14 @@ class ContextPackGenerator:
             return ContextPack(
                 task=task,
                 target=target,
-                document_thesis=self.section_cards.document.thesis if self.section_cards and self.section_cards.document else None,
+                document_thesis=self.section_cards.document.thesis
+                if self.section_cards and self.section_cards.document
+                else None,
                 prior_claims=[],
                 terminology={},
-                constraints=target_card.constraints if target_card and target_card.constraints else [],
+                constraints=target_card.constraints
+                if target_card and target_card.constraints
+                else [],
                 source_spans=[],
                 estimated_tokens=0,
                 status="degraded",
@@ -1250,10 +1293,14 @@ class ContextPackGenerator:
                 return ContextPack(
                     task=task,
                     target=target,
-                    document_thesis=self.section_cards.document.thesis if self.section_cards and self.section_cards.document else None,
+                    document_thesis=self.section_cards.document.thesis
+                    if self.section_cards and self.section_cards.document
+                    else None,
                     prior_claims=[],
                     terminology={},
-                    constraints=target_card.constraints if target_card and target_card.constraints else [],
+                    constraints=target_card.constraints
+                    if target_card and target_card.constraints
+                    else [],
                     source_spans=[],
                     estimated_tokens=0,
                     status="degraded",
@@ -1293,8 +1340,12 @@ class ContextPackGenerator:
         queries = [qs.text for qs in query_specs]
         quality.queries_issued = len(queries)
         quality.card_uncertainties = {
-            "unverified_key_terms": list(target_card.unverified_key_terms or []) if target_card else [],
-            "unverified_dependencies": list(target_card.unverified_dependencies or []) if target_card else [],
+            "unverified_key_terms": list(target_card.unverified_key_terms or [])
+            if target_card
+            else [],
+            "unverified_dependencies": list(target_card.unverified_dependencies or [])
+            if target_card
+            else [],
         }
 
         # --- Retrieval & Stream Fusion ---
@@ -1353,18 +1404,21 @@ class ContextPackGenerator:
                         continue
                     query_type = qs.query_type
                     raw_score = r.score if r.score is not None else 0.5
-                    score = self._compute_final_score(
-                        r,
-                        target_card,
-                        dep_cards,
-                        must_consider,
-                        q,
-                        query_type,
-                        task_type=task_type,
-                        target_line_start=line_start,
-                        target_line_end=line_end,
-                        retrieval_rank=retrieval_rank,
-                    ) * qs.weight
+                    score = (
+                        self._compute_final_score(
+                            r,
+                            target_card,
+                            dep_cards,
+                            must_consider,
+                            q,
+                            query_type,
+                            task_type=task_type,
+                            target_line_start=line_start,
+                            target_line_end=line_end,
+                            retrieval_rank=retrieval_rank,
+                        )
+                        * qs.weight
+                    )
                     span = SourceSpan(
                         path=r.path,
                         line_start=r.line_start,
@@ -1422,7 +1476,9 @@ class ContextPackGenerator:
                     for ps in p_spans:
                         span_with_scores = replace(
                             ps,
-                            retrieval_score=ps.retrieval_score if ps.retrieval_score is not None else ps.score,
+                            retrieval_score=ps.retrieval_score
+                            if ps.retrieval_score is not None
+                            else ps.score,
                             metadata={
                                 **(ps.metadata or {}),
                                 "provider_id": provider.provider_id,
@@ -1469,9 +1525,7 @@ class ContextPackGenerator:
                     handoff_span,
                     metadata={
                         **(handoff_span.metadata or {}),
-                        "provider_id": (handoff_span.metadata or {}).get(
-                            "provider_id", "bibtex"
-                        ),
+                        "provider_id": (handoff_span.metadata or {}).get("provider_id", "bibtex"),
                     },
                 )
                 stream_candidates[stream_key].append(span_with_provider)
@@ -1516,7 +1570,7 @@ class ContextPackGenerator:
                                     f_abs = Path(pr) / file_rel
                                     if f_abs.is_file():
                                         f_lines = f_abs.read_text(
-                                             encoding="utf-8", errors="replace"
+                                            encoding="utf-8", errors="replace"
                                         ).splitlines()
                                         e_start = max(1, env.get("line_start", 1))
                                         e_end = min(len(f_lines), env.get("line_end", e_start))
@@ -1654,7 +1708,9 @@ class ContextPackGenerator:
         filtered = sorted(
             filtered,
             key=lambda s: (
-                0 if (s.priority == "essential" or s.source_role == "target_text") else (1 if s.priority == "supporting" else 2),
+                0
+                if (s.priority == "essential" or s.source_role == "target_text")
+                else (1 if s.priority == "supporting" else 2),
                 -s.score,
             ),
         )
@@ -1682,9 +1738,7 @@ class ContextPackGenerator:
             for obligation in obligations
             if _obligation_matches_text(obligation, fixed_packet_text)
         }
-        atomic_cover, atomic_hits = _greedy_atomic_cover(
-            filtered, obligations, fixed_covered
-        )
+        atomic_cover, atomic_hits = _greedy_atomic_cover(filtered, obligations, fixed_covered)
         atomic_span_ids = {id(span) for span in atomic_cover}
         original_order = {id(span): rank for rank, span in enumerate(filtered)}
         filtered = sorted(
@@ -1708,9 +1762,7 @@ class ContextPackGenerator:
             for span in filtered
             if span.source_role == "target_text" or id(span) in atomic_span_ids
         ]
-        minimum_atomic_tokens = sum(
-            self._estimate_tokens(span) for span in required_atomic_spans
-        )
+        minimum_atomic_tokens = sum(self._estimate_tokens(span) for span in required_atomic_spans)
         if not is_strict and minimum_atomic_tokens > token_budget:
             max_budget = getattr(self.config.context, "max_token_budget", 32000)
             effective_budget = min(max_budget, minimum_atomic_tokens)
@@ -1731,9 +1783,7 @@ class ContextPackGenerator:
         current_tokens = 0
         tokens_by_role = dict.fromkeys(resolved_budgets, 0)
         provider_reference_tokens = 0
-        provider_reference_limit = int(
-            resolved_budgets.get("reference", 0.0) * usable_budget
-        )
+        provider_reference_limit = int(resolved_budgets.get("reference", 0.0) * usable_budget)
 
         def is_provider_reference(span: SourceSpan) -> bool:
             return span.source_role == "reference" and bool(
@@ -1831,9 +1881,7 @@ class ContextPackGenerator:
                 "kind": obligation.kind,
                 "label": obligation.label,
                 "covered": obligation.id in covered_ids,
-                "source_paths": list(
-                    dict.fromkeys(selected_paths_by_obligation[obligation.id])
-                ),
+                "source_paths": list(dict.fromkeys(selected_paths_by_obligation[obligation.id])),
             }
             for obligation in obligations
         ]
@@ -1843,9 +1891,7 @@ class ContextPackGenerator:
         quality.atomic_coverage = {
             "required": len(obligations),
             "covered": len(covered_ids),
-            "ratio": round(len(covered_ids) / len(obligations), 4)
-            if obligations
-            else 1.0,
+            "ratio": round(len(covered_ids) / len(obligations), 4) if obligations else 1.0,
             "uncovered": uncovered_ids,
             "obligations": obligation_records,
             "requested_token_budget": initial_token_budget,
@@ -2070,9 +2116,7 @@ class ContextPackGenerator:
         ):
             local_start = max(1, target_line_start - 15)
             local_end = target_line_end + 15
-            is_target_file = max(local_start, result.line_start) <= min(
-                local_end, result.line_end
-            )
+            is_target_file = max(local_start, result.line_start) <= min(local_end, result.line_end)
         is_dep_file = any(_path_matches(result.path, dc.path) for dc in dep_cards)
 
         # RTFM semantic relevance (weight 1.0)

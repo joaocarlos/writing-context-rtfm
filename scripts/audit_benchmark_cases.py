@@ -51,9 +51,7 @@ def main() -> int:
             )
         ),
         "corpus_warning_case_ids": sorted(
-            case_id
-            for case_id, value in report["cases"].items()
-            if value["corpus_warnings"]
+            case_id for case_id, value in report["cases"].items() if value["corpus_warnings"]
         ),
         "issues": {
             case_id: value["issues"]

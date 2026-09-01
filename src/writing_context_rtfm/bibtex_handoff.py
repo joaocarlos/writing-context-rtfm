@@ -31,6 +31,7 @@ def canonical_json(data: Any) -> str:
 class BenchmarkError(RuntimeError):
     pass
 
+
 BIBTEX_HANDOFF_BENCHMARK_VERSION = "bibtex-handoff-pilot-v1"
 HANDOFF_COST_REPETITIONS = 5
 HANDOFF_VARIANTS = ("current", "fallback", "reconstruction")
@@ -71,9 +72,7 @@ def _span_identities(span: SourceSpan) -> set[str]:
     metadata = span.metadata or {}
     identities = {str(value) for value in metadata.get("bibliographic_ids", [])}
     citekeys = [metadata.get("citekey"), *metadata.get("citekeys", [])]
-    identities.update(
-        f"citekey:{str(value).casefold()}" for value in citekeys if value
-    )
+    identities.update(f"citekey:{str(value).casefold()}" for value in citekeys if value)
     doi = _normalize_doi(str(metadata.get("doi") or ""))
     title = _normalize_title(str(metadata.get("title") or ""))
     if doi:
@@ -153,7 +152,9 @@ def audit_passive_bibtex_ownership(
         identities: set[str] = _span_identities(span)
         if provider is not None and span.line_start is not None and span.line_end is not None:
             try:
-                entries = provider.entries_for_source_span(span.path, span.line_start, span.line_end)
+                entries = provider.entries_for_source_span(
+                    span.path, span.line_start, span.line_end
+                )
                 for entry in entries:
                     identities.update(_entry_identities(entry))
             except Exception:
@@ -199,7 +200,6 @@ def audit_passive_bibtex_ownership(
     return records
 
 
-
 class BibTeXHandoffPolicy:
     """Audit and optionally repair provider ownership for excluded BibTeX spans."""
 
@@ -226,22 +226,16 @@ class BibTeXHandoffPolicy:
         resolved: list[tuple[SourceSpan, list[BibEntry]]] = [
             (
                 span,
-                self.provider.entries_for_source_span(
-                    span.path, span.line_start, span.line_end
-                ),
+                self.provider.entries_for_source_span(span.path, span.line_start, span.line_end),
             )
             for span in excluded
         ]
-        existing_ids = set().union(
-            *(_span_identities(span) for span in provider_spans), set()
-        )
+        existing_ids = set().union(*(_span_identities(span) for span in provider_spans), set())
         additions: list[SourceSpan] = []
         reconstructed_keys: set[str] = set()
 
         for excluded_span, entries in resolved:
-            missing = [
-                entry for entry in entries if not (_entry_identities(entry) & existing_ids)
-            ]
+            missing = [entry for entry in entries if not (_entry_identities(entry) & existing_ids)]
             if not missing or self.variant == "current":
                 continue
             if self.variant == "fallback":
@@ -269,9 +263,7 @@ class BibTeXHandoffPolicy:
                 if key in reconstructed_keys:
                     continue
                 reconstructed_keys.add(key)
-                reconstructed = self.provider.reconstruct_entry(
-                    entry, score=excluded_span.score
-                )
+                reconstructed = self.provider.reconstruct_entry(entry, score=excluded_span.score)
                 additions.append(
                     replace(
                         reconstructed,
@@ -285,9 +277,7 @@ class BibTeXHandoffPolicy:
                 )
 
         resulting_spans = [*provider_spans, *additions]
-        resulting_ids = set().union(
-            *(_span_identities(span) for span in resulting_spans), set()
-        )
+        resulting_ids = set().union(*(_span_identities(span) for span in resulting_spans), set())
         root = Path(self.provider.config.rtfm.project_root)
         relevant_entries = {
             entry.citekey.casefold(): entry
@@ -296,8 +286,7 @@ class BibTeXHandoffPolicy:
             if _entry_matches_expected(entry, self.expected_sources, root)
         }
         replaced_relevant = sum(
-            bool(_entry_identities(entry) & resulting_ids)
-            for entry in relevant_entries.values()
+            bool(_entry_identities(entry) & resulting_ids) for entry in relevant_entries.values()
         )
         primary_counts = Counter(
             identity
@@ -345,9 +334,7 @@ class BibTeXHandoffPolicy:
             "relevant_excluded_entries": len(relevant_entries),
             "replaced_relevant_entries": replaced_relevant,
             "bibliographic_handoff_recall": (
-                round(replaced_relevant / len(relevant_entries), 4)
-                if relevant_entries
-                else 1.0
+                round(replaced_relevant / len(relevant_entries), 4) if relevant_entries else 1.0
             ),
             "duplicate_identity_count": sum(
                 count - 1 for count in primary_counts.values() if count > 1
@@ -358,9 +345,7 @@ class BibTeXHandoffPolicy:
         return additions
 
 
-def build_bibtex_handoff_freeze(
-    cases_path: Path, private_root: Path
-) -> dict[str, Any]:
+def build_bibtex_handoff_freeze(cases_path: Path, private_root: Path) -> dict[str, Any]:
     from writing_context_rtfm.candidate_exposure import build_pilot_v1_freeze
 
     base = build_pilot_v1_freeze(cases_path, private_root)
@@ -446,9 +431,7 @@ def run_bibtex_handoff(
             for variant in variant_order:
                 workspace = Path(prepared["workspace"])
                 config = load_config(str(workspace))
-                adapter = RTFMAdapter(
-                    project_root=str(workspace), allow_cli_fallback=False
-                )
+                adapter = RTFMAdapter(project_root=str(workspace), allow_cli_fallback=False)
                 exposure = CandidateExposurePolicy(adapter, POLICY_SPECS["current"])
                 handoff = BibTeXHandoffPolicy(
                     BibTeXProvider(config),
@@ -462,9 +445,7 @@ def run_bibtex_handoff(
                     bibliography_handoff=handoff,
                 )
                 if exposure.telemetry["query_hash"] != frozen_by_id[case.id]["query_hash"]:
-                    raise BenchmarkError(
-                        f"Frozen query mismatch for {case.id}/{variant}"
-                    )
+                    raise BenchmarkError(f"Frozen query mismatch for {case.id}/{variant}")
                 records.append(
                     {
                         "case_id": case.id,
@@ -476,16 +457,12 @@ def run_bibtex_handoff(
                         "costs": {
                             **exposure.telemetry,
                             **evidence.get("phase_latency_ms", {}),
-                            "effective_candidate_spans": len(
-                                evidence.get("candidate_spans", [])
-                            ),
+                            "effective_candidate_spans": len(evidence.get("candidate_spans", [])),
                             "effective_candidate_tokens_processed": sum(
                                 int(span.get("tokens", 0))
                                 for span in evidence.get("candidate_spans", [])
                             ),
-                            "handoff_latency_ms": handoff.telemetry[
-                                "handoff_latency_ms"
-                            ],
+                            "handoff_latency_ms": handoff.telemetry["handoff_latency_ms"],
                             "total_latency_ms": evidence["retrieval_latency_ms"],
                             "context_tokens": evidence["context_tokens"],
                         },
@@ -515,10 +492,7 @@ def _percentile(values: Sequence[float], fraction: float) -> float:
     if lower == upper:
         return round(float(ordered[lower]), 4)
     return round(
-        float(
-            ordered[lower]
-            + (ordered[upper] - ordered[lower]) * (position - lower)
-        ),
+        float(ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)),
         4,
     )
 
@@ -551,13 +525,10 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
     )
     for variant, variant_records in by_variant.items():
         coverage_records = [
-            record
-            for record in variant_records
-            if int(record.get("repetition", 1)) == 1
+            record for record in variant_records if int(record.get("repetition", 1)) == 1
         ]
         expected = sum(
-            len(record["metrics"]["expected_source_outcomes"])
-            for record in coverage_records
+            len(record["metrics"]["expected_source_outcomes"]) for record in coverage_records
         )
         exposed = sum(
             outcome["selected"] or outcome["lost_after"] is not None
@@ -570,22 +541,18 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
             for outcome in record["metrics"]["expected_source_outcomes"]
         )
         relevant_excluded = sum(
-            int(record["handoff"]["relevant_excluded_entries"])
-            for record in coverage_records
+            int(record["handoff"]["relevant_excluded_entries"]) for record in coverage_records
         )
         replaced_relevant = sum(
-            int(record["handoff"]["replaced_relevant_entries"])
-            for record in coverage_records
+            int(record["handoff"]["replaced_relevant_entries"]) for record in coverage_records
         )
         duplicate_identities = sum(
-            int(record["handoff"]["duplicate_identity_count"])
-            for record in coverage_records
+            int(record["handoff"]["duplicate_identity_count"]) for record in coverage_records
         )
         gained_cases = sum(
             int(
                 sum(
-                    outcome["selected"]
-                    for outcome in record["metrics"]["expected_source_outcomes"]
+                    outcome["selected"] for outcome in record["metrics"]["expected_source_outcomes"]
                 )
                 > sum(
                     outcome["selected"]
@@ -605,22 +572,17 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
             "exposed_sources": exposed,
             "selected_sources": selected,
             "exposed_recall": round(exposed / expected, 4) if expected else 0.0,
-            "final_selection_recall": (
-                round(selected / expected, 4) if expected else 0.0
-            ),
+            "final_selection_recall": (round(selected / expected, 4) if expected else 0.0),
             "selection_regret": exposed - selected,
             "relevant_excluded_entries": relevant_excluded,
             "replaced_relevant_entries": replaced_relevant,
             "bibliographic_handoff_recall": (
-                round(replaced_relevant / relevant_excluded, 4)
-                if relevant_excluded
-                else 1.0
+                round(replaced_relevant / relevant_excluded, 4) if relevant_excluded else 1.0
             ),
             "cases_with_final_selection_gain": gained_cases,
             "duplicate_identity_count": duplicate_identities,
             "hard_constraint_violations": sum(
-                int(record["hard_constraint_violations"])
-                for record in variant_records
+                int(record["hard_constraint_violations"]) for record in variant_records
             ),
             "addition_rate": round(
                 sum(bool(record["handoff"]["addition_count"]) for record in variant_records)
@@ -660,9 +622,7 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
         candidate_increase = (
             0.0
             if candidate_base == 0
-            else summary["costs"]["effective_candidate_spans"]["total"]
-            / candidate_base
-            - 1.0
+            else summary["costs"]["effective_candidate_spans"]["total"] / candidate_base - 1.0
         )
         latency_increase = (
             0.0
@@ -670,25 +630,26 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
             else summary["costs"]["total_latency_ms"]["p95"] / latency_base - 1.0
         )
         reasons = []
-        if summary["cases_with_final_selection_gain"] < HANDOFF_CORRECTION_RULE[
-            "minimum_cases_with_handoff_gain"
-        ]:
+        if (
+            summary["cases_with_final_selection_gain"]
+            < HANDOFF_CORRECTION_RULE["minimum_cases_with_handoff_gain"]
+        ):
             reasons.append("no_observed_handoff_gain")
         if summary["final_selection_recall"] < baseline["final_selection_recall"]:
             reasons.append("final_selection_regression")
-        if summary["duplicate_identity_count"] > HANDOFF_CORRECTION_RULE[
-            "maximum_duplicate_identity_count"
-        ]:
+        if (
+            summary["duplicate_identity_count"]
+            > HANDOFF_CORRECTION_RULE["maximum_duplicate_identity_count"]
+        ):
             reasons.append("bibliographic_duplication")
         if summary["hard_constraint_violations"]:
             reasons.append("hard_constraint_violation")
-        if candidate_increase > HANDOFF_CORRECTION_RULE[
-            "maximum_candidate_processing_increase_ratio"
-        ]:
+        if (
+            candidate_increase
+            > HANDOFF_CORRECTION_RULE["maximum_candidate_processing_increase_ratio"]
+        ):
             reasons.append("candidate_cost_threshold_exceeded")
-        if latency_increase > HANDOFF_CORRECTION_RULE[
-            "maximum_total_latency_p95_increase_ratio"
-        ]:
+        if latency_increase > HANDOFF_CORRECTION_RULE["maximum_total_latency_p95_increase_ratio"]:
             reasons.append("latency_threshold_exceeded")
         summary["candidate_processing_increase_ratio"] = round(candidate_increase, 4)
         summary["total_latency_p95_increase_ratio"] = round(latency_increase, 4)

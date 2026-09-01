@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.4] - 2026-09-01
+
+### Fixed
+- Fixed packaging build configuration in `pyproject.toml` where `src/writing_context_rtfm/bibtex_handoff.py` and benchmark modules were incorrectly excluded by hatchling, causing `ModuleNotFoundError: No module named 'writing_context_rtfm.bibtex_handoff'` when running CLI entrypoints installed from PyPI wheels.
+
 ## [0.11.3] - 2026-08-30
 
 ### Added

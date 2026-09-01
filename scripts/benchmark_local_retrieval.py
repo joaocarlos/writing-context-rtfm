@@ -340,9 +340,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     }
     report_digest = sha256_text(json.dumps(report, sort_keys=True))
     report_path = (
-        Path(args.artifacts_root).resolve()
-        / "local-model-reports"
-        / f"{report_digest}.json"
+        Path(args.artifacts_root).resolve() / "local-model-reports" / f"{report_digest}.json"
     )
     _atomic_json(report_path, report, mode=0o600)
     del backend

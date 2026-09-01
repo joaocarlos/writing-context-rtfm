@@ -312,12 +312,10 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
         sids = entry["declared_in_sections"]
         canonical_occurrences = occurrences_by_spec.get((key, "canonical", canonical), [])
         variant_occurrences = {
-            form: occurrences_by_spec.get((key, "variant", form), [])
-            for form in entry["variants"]
+            form: occurrences_by_spec.get((key, "variant", form), []) for form in entry["variants"]
         }
         forbidden_occurrences = {
-            form: occurrences_by_spec.get((key, "avoid", form), [])
-            for form in entry["avoid"]
+            form: occurrences_by_spec.get((key, "avoid", form), []) for form in entry["avoid"]
         }
         all_occurrences = list(canonical_occurrences)
         for occurrences in [*variant_occurrences.values(), *forbidden_occurrences.values()]:

@@ -68,8 +68,7 @@ def _scoped_call_result(tool_name, arguments):
     if tool_name == "zotero_get_collection_items":
         if arguments["collection_key"] == "URBAN001":
             text = (
-                "- `KEEP0001` | Urban paper (2024) [PDF]\n"
-                "- `DUPL0001` | Shared paper (2023) [PDF]"
+                "- `KEEP0001` | Urban paper (2024) [PDF]\n- `DUPL0001` | Shared paper (2023) [PDF]"
             )
         else:
             text = (

@@ -740,8 +740,14 @@ def prepare_case(
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         if not isinstance(metadata, dict):
             raise BenchmarkError(f"Prepared metadata must be an object: {metadata_path}")
-        if metadata.get("case_hash") == case.case_hash and metadata.get("archive_sha256") == before_hash:
-            if metadata.get("index_command_version") != INDEX_COMMAND_VERSION and indexer is not None:
+        if (
+            metadata.get("case_hash") == case.case_hash
+            and metadata.get("archive_sha256") == before_hash
+        ):
+            if (
+                metadata.get("index_command_version") != INDEX_COMMAND_VERSION
+                and indexer is not None
+            ):
                 allowed_files = [str(value) for value in metadata.get("allowed_files", [])]
                 indexer.index_files(destination, allowed_files)
                 _write_rtfm_source_config(destination, destination)
@@ -807,7 +813,9 @@ def prepare_case(
             if not path.is_file():
                 raise BenchmarkError(f"Allowlisted file missing for {case.id}: {relative}")
             if project != path.resolve() and project not in path.resolve().parents:
-                raise BenchmarkError(f"Allowlisted file escapes workspace for {case.id}: {relative}")
+                raise BenchmarkError(
+                    f"Allowlisted file escapes workspace for {case.id}: {relative}"
+                )
 
         leakage = audit_duplicate_prose(gold, project, allowed_files)
         masked_target = locate_benchmark_target(
@@ -829,7 +837,9 @@ def prepare_case(
             raise BenchmarkError(f"Gold leaked into frozen cards for {case.id}")
         for relative in allowed_files:
             if gold in (project / relative).read_text(encoding="utf-8", errors="replace"):
-                raise BenchmarkError(f"Complete gold leaked into visible file {relative} for {case.id}")
+                raise BenchmarkError(
+                    f"Complete gold leaked into visible file {relative} for {case.id}"
+                )
 
         staged_destination = Path(tmp_name) / "workspace"
         project.rename(staged_destination)
@@ -1043,9 +1053,7 @@ class _PackDiagnosticRecorder:
         self.started_at = time.perf_counter()
 
     def __call__(self, stage: str, spans: Sequence[SourceSpan]) -> None:
-        self.elapsed_ms[stage] = round(
-            (time.perf_counter() - self.started_at) * 1000, 3
-        )
+        self.elapsed_ms[stage] = round((time.perf_counter() - self.started_at) * 1000, 3)
         snapshot = [_diagnostic_span(span) for span in spans]
         if stage.startswith("stream:"):
             self.streams[stage.removeprefix("stream:")] = snapshot
@@ -1089,9 +1097,7 @@ class ProductionRetrievalBackend:
         }
 
     def _topk(self, case: CaseManifest, prepared: dict[str, Any]) -> dict[str, Any]:
-        adapter = RTFMAdapter(
-            project_root=prepared["workspace"], allow_cli_fallback=False
-        )
+        adapter = RTFMAdapter(project_root=prepared["workspace"], allow_cli_fallback=False)
         results = adapter.search(case.task, corpus="manuscript", limit=100)
         spans = []
         for rank, result in enumerate(results, start=1):
@@ -1138,7 +1144,9 @@ class ProductionRetrievalBackend:
         cards = load_section_cards(config.section_cards.path, required=True)
         adapter = RTFMAdapter(project_root=str(workspace), allow_cli_fallback=False)
         providers = [
-            provider for provider in get_active_providers(config) if provider.provider_id == "bibtex"
+            provider
+            for provider in get_active_providers(config)
+            if provider.provider_id == "bibtex"
         ]
         diagnostics = _PackDiagnosticRecorder()
         with ExtensionStore(":memory:") as store:
@@ -1233,9 +1241,7 @@ class ProductionRetrievalBackend:
         packet["context_tokens"] = sum(int(span["tokens"]) for span in packet["spans"])
         packet["retrieval_latency_ms"] = round((time.perf_counter() - started) * 1000, 3)
         if packet["context_tokens"] > case.context_budget:
-            raise BenchmarkError(
-                f"Context budget exceeded for {case.id}/{packet['strategy']}"
-            )
+            raise BenchmarkError(f"Context budget exceeded for {case.id}/{packet['strategy']}")
         return packet
 
     def retrieve(
@@ -1377,16 +1383,12 @@ def _source_first_ranks(
 def _candidate_diagnostics(
     evidence: dict[str, Any], expected: tuple[dict[str, Any], ...]
 ) -> dict[str, Any]:
-    diagnostics_available = (
-        "candidate_spans" in evidence and "diagnostic_trace" in evidence
-    )
+    diagnostics_available = "candidate_spans" in evidence and "diagnostic_trace" in evidence
     selected = list(evidence.get("spans", []))
     candidates = list(evidence.get("candidate_spans", selected))
     trace_value = evidence.get("diagnostic_trace") or {}
     trace = {
-        stage: list(trace_value[stage])
-        for stage in _PACK_DIAGNOSTIC_STAGES
-        if stage in trace_value
+        stage: list(trace_value[stage]) for stage in _PACK_DIAGNOSTIC_STAGES if stage in trace_value
     }
     if "retrieved" not in trace:
         trace["retrieved"] = candidates
@@ -1574,9 +1576,7 @@ def parse_citation_keys(text: str, *, source_format: str | None = None) -> set[s
     return keys
 
 
-_BIBTEX_HEADER = re.compile(
-    r"(?im)^\s*@(?P<type>[a-z]+)\s*[({]\s*(?P<key>[^,\s]+)\s*,"
-)
+_BIBTEX_HEADER = re.compile(r"(?im)^\s*@(?P<type>[a-z]+)\s*[({]\s*(?P<key>[^,\s]+)\s*,")
 
 
 def bibliography_key_inventory(paths: list[Path]) -> dict[str, Any]:
@@ -1731,20 +1731,14 @@ def audit_case_annotations(
             idea_gold_presence[idea_id] = {
                 candidate: _anchor_hit(gold, candidate) for candidate in sorted(candidates)
             }
-        term_gold_presence = {
-            term: _anchor_hit(gold, term) for term in case.required_terminology
-        }
-        protected_gold_presence = {
-            literal: literal in gold for literal in case.protected_literals
-        }
+        term_gold_presence = {term: _anchor_hit(gold, term) for term in case.required_terminology}
+        protected_gold_presence = {literal: literal in gold for literal in case.protected_literals}
         gold_citations = parse_citation_keys(gold, source_format=target_format or None)
         required_citation_gold_presence = {
             key: key in gold_citations for key in case.required_citation_keys
         }
         obligation_ids = {
-            str(value)
-            for span in corrected_spans
-            for value in span.get("obligations", [])
+            str(value) for span in corrected_spans for value in span.get("obligations", [])
         }
         if not obligation_ids <= set(idea_ids):
             issues.append("unknown_source_span_obligation")
@@ -1816,23 +1810,22 @@ def audit_case_annotations(
             for artifact in artifacts.iter_kind("generation"):
                 if artifact.get("payload", {}).get("case_id") == case.id:
                     metrics = artifact.get("payload", {}).get("metrics", {})
-                    generated_citations.update(str(value) for value in metrics.get("citation_keys", []))
+                    generated_citations.update(
+                        str(value) for value in metrics.get("citation_keys", [])
+                    )
         review = auditor_reviews.get(case.id)
         review_issues = [] if review is None else review["issues"]
         review_decision = None if review is None else review["decision"]
         manifest_disagreements = [
             str(value) for value in (case.annotations.get("disagreements") or [])
         ]
-        auditor_issue_codes = sorted(
-            {value.split(":", 1)[0] for value in review_issues if value}
-        )
+        auditor_issue_codes = sorted({value.split(":", 1)[0] for value in review_issues if value})
         if review_decision == "approved":
             review_manifest_consistent = not review_issues and not manifest_disagreements
         elif review_decision == "needs_revision":
-            review_manifest_consistent = (
-                case.annotations.get("auditor") == "complete"
-                and sorted(review_issues) == sorted(manifest_disagreements)
-            )
+            review_manifest_consistent = case.annotations.get("auditor") == "complete" and sorted(
+                review_issues
+            ) == sorted(manifest_disagreements)
         else:
             review_manifest_consistent = False
         annotation_resolved = bool(
@@ -1879,9 +1872,7 @@ def audit_case_annotations(
             },
         }
     unresolved_annotation_case_ids = sorted(
-        case_id
-        for case_id, result in case_results.items()
-        if not result["annotation_resolved"]
+        case_id for case_id, result in case_results.items() if not result["annotation_resolved"]
     )
     return {
         "audit_version": 1,
@@ -1962,7 +1953,11 @@ def deterministic_output_metrics(
         actual_structure = candidate_structure if candidate_structure is not None else output
         for kind, expected_tokens in expected_structure.items():
             structure_coverage[kind] = (
-                round(sum(token in actual_structure for token in expected_tokens) / len(expected_tokens), 4)
+                round(
+                    sum(token in actual_structure for token in expected_tokens)
+                    / len(expected_tokens),
+                    4,
+                )
                 if expected_tokens
                 else 1.0
             )
@@ -2117,7 +2112,9 @@ def _parse_model_spec(value: Any, context: str) -> ModelSpec:
 
 def load_models(path: Path) -> ModelsConfig:
     document = _read_yaml(path)
-    _require_fields(document, ("version", "temperature", "repetitions", "generators", "judges"), str(path))
+    _require_fields(
+        document, ("version", "temperature", "repetitions", "generators", "judges"), str(path)
+    )
     if document["version"] != 1:
         raise BenchmarkError(f"Unsupported models config version: {document['version']}")
     temperature = float(document["temperature"])
@@ -2324,7 +2321,9 @@ class CLIModelClient:
             raise BenchmarkError(f"CLI executable unavailable for {spec.id}: {spec.command}")
         self.executable = executable
 
-    def _run(self, command: list[str], prompt: str | None = None) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, command: list[str], prompt: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         try:
             with tempfile.TemporaryDirectory(prefix="writing-context-model-") as tmp_name:
                 return _run_cli_process_group(
@@ -2426,9 +2425,7 @@ class CLIModelClient:
                 "--print-timeout",
                 f"{self.spec.timeout_seconds}s",
             ]
-            message = canonical_json(
-                {"event": "user", "message": {"content": effective_prompt}}
-            )
+            message = canonical_json({"event": "user", "message": {"content": effective_prompt}})
             result = self._run(command, message + "\n")
             output = result.stdout
         elif self.spec.provider == "gemini_cli":
@@ -2945,14 +2942,18 @@ def _summary(values: list[float]) -> dict[str, float | None]:
     }
 
 
-def _case_bootstrap_interval(values: dict[str, list[float]], samples: int = 2000) -> list[float] | None:
+def _case_bootstrap_interval(
+    values: dict[str, list[float]], samples: int = 2000
+) -> list[float] | None:
     """Deterministic case-level bootstrap; repetitions stay nested within each case."""
     if not values:
         return None
     import random
 
     case_ids = sorted(values)
-    case_medians = {case_id: float(_percentile(items, 0.5) or 0.0) for case_id, items in values.items()}
+    case_medians = {
+        case_id: float(_percentile(items, 0.5) or 0.0) for case_id, items in values.items()
+    }
     rng = random.Random(20260823)
     estimates = []
     for _ in range(samples):
@@ -2985,9 +2986,7 @@ def build_retrieval_diagnostic_report(
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     first_ranks: dict[str, list[float]] = defaultdict(list)
     loss_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    selection_reason_counts: dict[str, dict[str, int]] = defaultdict(
-        lambda: defaultdict(int)
-    )
+    selection_reason_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for case in stage_cases:
         prepared = load_prepared(case, private_root)
@@ -3036,19 +3035,13 @@ def build_retrieval_diagnostic_report(
     candidate_diagnostics = {
         strategy: {
             "cases_with_diagnostics": counts[strategy].get("cases_with_diagnostics", 0),
-            "expected_sources_evaluated": counts[strategy].get(
-                "expected_sources_evaluated", 0
-            ),
+            "expected_sources_evaluated": counts[strategy].get("expected_sources_evaluated", 0),
             "never_retrieved": counts[strategy].get("never_retrieved", 0),
-            "retrieved_not_selected": counts[strategy].get(
-                "retrieved_not_selected", 0
-            ),
+            "retrieved_not_selected": counts[strategy].get("retrieved_not_selected", 0),
             "selected": counts[strategy].get("selected", 0),
             "first_candidate_rank": _summary(first_ranks[strategy]),
             "loss_stage_counts": dict(sorted(loss_counts[strategy].items())),
-            "selection_loss_reason_counts": dict(
-                sorted(selection_reason_counts[strategy].items())
-            ),
+            "selection_loss_reason_counts": dict(sorted(selection_reason_counts[strategy].items())),
         }
         for strategy in STRATEGIES
     }
@@ -3100,9 +3093,7 @@ def build_report(
     case_metric_values: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
         lambda: defaultdict(lambda: defaultdict(list))
     )
-    output_by_pair: dict[str, dict[str, dict[str, float]]] = defaultdict(
-        lambda: defaultdict(dict)
-    )
+    output_by_pair: dict[str, dict[str, dict[str, float]]] = defaultdict(lambda: defaultdict(dict))
     seen_retrievals: set[str] = set()
     generation_by_digest: dict[str, tuple[CaseManifest, dict[str, Any], dict[str, Any]]] = {}
     for case, retrieval, generation in _stage_generations(
@@ -3161,9 +3152,7 @@ def build_report(
                                 candidate_counts[strategy]["selected"] += 1
                             else:
                                 candidate_counts[strategy]["retrieved_not_selected"] += 1
-                    for loss_stage, count in retrieval_metrics_value[
-                        "loss_stage_counts"
-                    ].items():
+                    for loss_stage, count in retrieval_metrics_value["loss_stage_counts"].items():
                         candidate_loss_counts[strategy][loss_stage] += int(count)
                     for reason, count in retrieval_metrics_value[
                         "selection_loss_reason_counts"
@@ -3173,9 +3162,7 @@ def build_report(
                 value = float(retrieval_metrics_value[name])
                 retrieval_values[strategy][name].append(value)
                 retrieval_by_case[strategy][name][case.id].append(value)
-        pair_id = (
-            f"{case.id}|{generation['key']['model']}|{generation['key']['repetition']}"
-        )
+        pair_id = f"{case.id}|{generation['key']['model']}|{generation['key']['repetition']}"
         for name, value in generation["payload"]["metrics"].items():
             if isinstance(value, int | float) and not isinstance(value, bool):
                 output_values[strategy][name].append(float(value))
@@ -3293,9 +3280,7 @@ def build_report(
                         float(
                             (_percentile(retrieval_by_case[strategy][metric][case_id], 0.5) or 0.0)
                             - (
-                                _percentile(
-                                    retrieval_by_case[comparator][metric][case_id], 0.5
-                                )
+                                _percentile(retrieval_by_case[comparator][metric][case_id], 0.5)
                                 or 0.0
                             )
                         )
@@ -3334,7 +3319,8 @@ def build_report(
 
     for strategy in ("pack_baseline", "pack_rrf"):
         gates[strategy] = {
-            "idea_noninferiority": median(strategy, "output", "idea_coverage") >= best_nonpack_ideas - 0.05,
+            "idea_noninferiority": median(strategy, "output", "idea_coverage")
+            >= best_nonpack_ideas - 0.05,
             "protected_literals_no_regression": median(
                 strategy, "output", "protected_literal_preservation"
             )
@@ -3491,9 +3477,7 @@ def build_report(
             case_metric_values, "pack_baseline", "protected_structure_preservation", case_id
         )
         if (
-            rrf_literals is not None
-            and base_literals is not None
-            and rrf_literals < base_literals
+            rrf_literals is not None and base_literals is not None and rrf_literals < base_literals
         ) or (
             rrf_structure is not None
             and base_structure is not None
@@ -3503,14 +3487,8 @@ def build_report(
         rrf_idea = case_median(case_metric_values, "pack_rrf", "idea_coverage", case_id)
         base_idea = case_median(case_metric_values, "pack_baseline", "idea_coverage", case_id)
         rrf_support = case_median(case_judge_values, "pack_rrf", "evidence_support", case_id)
-        base_support = case_median(
-            case_judge_values, "pack_baseline", "evidence_support", case_id
-        )
-        if (
-            rrf_idea is not None
-            and base_idea is not None
-            and rrf_idea < base_idea - 0.05
-        ) or (
+        base_support = case_median(case_judge_values, "pack_baseline", "evidence_support", case_id)
+        if (rrf_idea is not None and base_idea is not None and rrf_idea < base_idea - 0.05) or (
             rrf_support is not None
             and base_support is not None
             and rrf_support < base_support - 0.25
@@ -3682,7 +3660,9 @@ def build_cli_parser() -> argparse.ArgumentParser:
         command.add_argument("--private-root", default="benchmark/private.local")
         command.add_argument("--artifacts-root", default="benchmark/artifacts.local")
 
-    preflight = subparsers.add_parser("preflight", help="Validate privacy, corpus, tools, and models")
+    preflight = subparsers.add_parser(
+        "preflight", help="Validate privacy, corpus, tools, and models"
+    )
     add_paths(preflight)
     prepare = subparsers.add_parser("prepare", help="Safely mask and explicitly index cases")
     add_paths(prepare, include_models=False)
@@ -3697,9 +3677,7 @@ def build_cli_parser() -> argparse.ArgumentParser:
         "retrieval-report", help="Aggregate anonymized candidate diagnostics without model calls"
     )
     add_paths(retrieval_report, include_models=False)
-    retrieval_report.add_argument(
-        "--stage", required=True, choices=("pilot", "confirmation")
-    )
+    retrieval_report.add_argument("--stage", required=True, choices=("pilot", "confirmation"))
     retrieval_report.add_argument("--anonymized", action="store_true", required=True)
     retrieval_report.add_argument(
         "--limit-cases", type=_positive_int, help="Bounded retrieval diagnostic case set"
@@ -3784,9 +3762,7 @@ def main(argv: list[str] | None = None) -> int:
             output = (
                 Path(args.output).resolve()
                 if args.output
-                else Path(
-                    f"benchmark/anonymized_aggregates/{args.stage}-retrieval.json"
-                ).resolve()
+                else Path(f"benchmark/anonymized_aggregates/{args.stage}-retrieval.json").resolve()
             )
             _atomic_json(output, report_value)
             print(f"Anonymized retrieval report written to {output}")

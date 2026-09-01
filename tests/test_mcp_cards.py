@@ -139,7 +139,6 @@ class TestMCPCards(unittest.TestCase):
         self.assertIn("get_section_card_history", tool_names)
         self.assertEqual(len(tool_names), 19)
 
-
     def test_initialize_advertises_tools_and_prompts(self):
         req = {"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {}}
         res = json.loads(process_message(json.dumps(req)))

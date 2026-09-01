@@ -281,12 +281,9 @@ class TestContextPackGenerator(unittest.TestCase):
         # Use a small token budget so both cannot fit
         pack = self.generator.generate(task="write intro", target=None, token_budget=1500)
 
-        self.assertEqual(
-            pack.status, "degraded"
-        )  # Degraded due to missing section cards
+        self.assertEqual(pack.status, "degraded")  # Degraded due to missing section cards
         self.assertEqual(len(pack.source_spans), 1)
         self.assertTrue(pack.quality.get("dropped_for_budget", 0) >= 1)
-
 
 
 if __name__ == "__main__":

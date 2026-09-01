@@ -85,6 +85,7 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
             with ExtensionStore(config.cache.path) as store:
                 stats = store.get_openai_embeddings_stats(model)
                 from writing_context_rtfm.hashing import stable_hash
+
                 return stable_hash(
                     "openai_semantic",
                     model,
@@ -109,7 +110,9 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         if not missing:
             return
 
-        logger.info(f"OpenAI Semantic Sync: {len(missing)} missing chunks to embed for model {model}.")
+        logger.info(
+            f"OpenAI Semantic Sync: {len(missing)} missing chunks to embed for model {model}."
+        )
 
         extra = self._get_provider_extra()
         model = extra.get("model", "text-embedding-3-small")

@@ -34,7 +34,9 @@ def _result(path: str, score: float, snippet: str, rank: int) -> RTFMResult:
     )
 
 
-def _generator(tmp_path: Path, *, max_budget: int = 2_000) -> tuple[ContextPackGenerator, MagicMock]:
+def _generator(
+    tmp_path: Path, *, max_budget: int = 2_000
+) -> tuple[ContextPackGenerator, MagicMock]:
     config = AppConfig(
         version=1,
         rtfm=RTFMConfig(project_root=str(tmp_path)),
@@ -53,7 +55,9 @@ def _generator(tmp_path: Path, *, max_budget: int = 2_000) -> tuple[ContextPackG
     return ContextPackGenerator(config, None, adapter, store), adapter
 
 
-def test_elastic_selection_prioritizes_required_atom_over_higher_ranked_noise(tmp_path: Path) -> None:
+def test_elastic_selection_prioritizes_required_atom_over_higher_ranked_noise(
+    tmp_path: Path,
+) -> None:
     generator, adapter = _generator(tmp_path)
     noise = _result("noise.tex", 0.99, "general background " * 90, 1)
     evidence = _result(
@@ -125,7 +129,9 @@ def test_missing_atom_is_reported_without_retrieval_retry(tmp_path: Path) -> Non
     assert coverage["ratio"] == 0.0
     assert coverage["uncovered"] == ["must_consider:1"]
     assert pack.status == "degraded"
-    assert any("direct-read" in warning and "must_consider:1" in warning for warning in pack.warnings)
+    assert any(
+        "direct-read" in warning and "must_consider:1" in warning for warning in pack.warnings
+    )
     assert adapter.search.call_count == pack.quality["queries_issued"]
 
 
@@ -146,7 +152,8 @@ def test_explicit_task_citation_key_is_an_atomic_obligation(tmp_path: Path) -> N
 
     assert "bibtex:Smith2025" in {span.path for span in pack.source_spans}
     citation_atoms = [
-        item for item in pack.quality["atomic_coverage"]["obligations"]
+        item
+        for item in pack.quality["atomic_coverage"]["obligations"]
         if item["kind"] == "citation"
     ]
     assert citation_atoms == [
@@ -162,9 +169,7 @@ def test_explicit_task_citation_key_is_an_atomic_obligation(tmp_path: Path) -> N
 
 def test_must_consider_changes_cache_identity() -> None:
     base = compute_task_hash("Draft", None, 1_000, must_consider=[])
-    required = compute_task_hash(
-        "Draft", None, 1_000, must_consider=["sealed reference chamber"]
-    )
+    required = compute_task_hash("Draft", None, 1_000, must_consider=["sealed reference chamber"])
 
     assert base != required
 
@@ -232,9 +237,7 @@ def test_elastic_notes_do_not_degrade_server_status() -> None:
     assert not _is_degrading_pack_warning(
         "2 candidate span(s) were dropped to strictly respect the token budget."
     )
-    assert _is_degrading_pack_warning(
-        "Atomic evidence coverage is incomplete for must_consider:1."
-    )
+    assert _is_degrading_pack_warning("Atomic evidence coverage is incomplete for must_consider:1.")
 
 
 def test_omitted_provider_span_does_not_count_as_fixed_evidence(tmp_path: Path) -> None:
@@ -253,9 +256,7 @@ def test_omitted_provider_span_does_not_count_as_fixed_evidence(tmp_path: Path) 
             score=0.95,
             priority="essential",
             source_role="reference",
-            metadata={
-                "snippet": "The sealed reference chamber is required. " * 100
-            },
+            metadata={"snippet": "The sealed reference chamber is required. " * 100},
         )
     ]
     generator.providers = [provider]
@@ -297,6 +298,4 @@ def test_refresh_index_reports_completed_sync_without_serializing_none(
     assert payload["status"] == "ok"
     assert payload["rtfm_sync"] == "completed"
     adapter_class.return_value.sync.assert_called_once_with(corpus="manuscript")
-    store_class.return_value.invalidate_for_fingerprint.assert_called_once_with(
-        "fingerprint"
-    )
+    store_class.return_value.invalidate_for_fingerprint.assert_called_once_with("fingerprint")

@@ -176,6 +176,7 @@ class TestNewFeatures(unittest.TestCase):
             patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter") as MockAdapter,
         ):
             mock_adapter = MockAdapter.return_value
+
             def fake_search(query, **_kwargs):
                 if query.casefold() == "edge device":
                     return []

@@ -52,13 +52,21 @@ def verify_exposure_aggregates(exposure_data: dict[str, Any], verbose: bool = Fa
     if expected_sources <= 0:
         errors.append(f"Invalid expected_sources: {expected_sources}")
     if raw_exposed > expected_sources:
-        errors.append(f"Raw exposed sources ({raw_exposed}) cannot exceed expected ({expected_sources})")
+        errors.append(
+            f"Raw exposed sources ({raw_exposed}) cannot exceed expected ({expected_sources})"
+        )
     if post_exposed > raw_exposed:
-        errors.append(f"Post-exclusion exposed ({post_exposed}) cannot exceed raw exposed ({raw_exposed})")
+        errors.append(
+            f"Post-exclusion exposed ({post_exposed}) cannot exceed raw exposed ({raw_exposed})"
+        )
     if selected_sources > post_exposed:
-        errors.append(f"Selected sources ({selected_sources}) cannot exceed post-exclusion exposed ({post_exposed})")
+        errors.append(
+            f"Selected sources ({selected_sources}) cannot exceed post-exclusion exposed ({post_exposed})"
+        )
     if selection_regret != 0:
-        errors.append(f"Selection regret must be 0 for current production policy, got {selection_regret}")
+        errors.append(
+            f"Selection regret must be 0 for current production policy, got {selection_regret}"
+        )
     if hard_violations != 0:
         errors.append(f"Hard constraint violations must be 0, got {hard_violations}")
 
@@ -69,7 +77,9 @@ def verify_exposure_aggregates(exposure_data: dict[str, Any], verbose: bool = Fa
             errors.append("score_tail_adaptive must not be eligible for production promotion")
 
     if verbose:
-        print(f"✓ Exposure Aggregate ({version}): {selected_sources}/{expected_sources} selected, 0 regret, freeze={freeze_hash[:8]}")
+        print(
+            f"✓ Exposure Aggregate ({version}): {selected_sources}/{expected_sources} selected, 0 regret, freeze={freeze_hash[:8]}"
+        )
 
     return errors
 
@@ -102,10 +112,14 @@ def verify_handoff_aggregates(handoff_data: dict[str, Any], verbose: bool = Fals
             # Verify cost increase ratio is positive (demonstrating why they were not promoted)
             inc = vinfo.get("candidate_processing_increase_ratio", 0.0)
             if inc <= 0.0:
-                errors.append(f"{vname} variant expected candidate processing increase ratio > 0, got {inc}")
+                errors.append(
+                    f"{vname} variant expected candidate processing increase ratio > 0, got {inc}"
+                )
 
     if verbose:
-        print(f"✓ BibTeX Handoff Aggregate ({version}): {case_count} cases, freeze={freeze_hash[:8]}")
+        print(
+            f"✓ BibTeX Handoff Aggregate ({version}): {case_count} cases, freeze={freeze_hash[:8]}"
+        )
 
     return errors
 
@@ -125,7 +139,9 @@ def verify_retrieval_aggregates(retrieval_data: dict[str, Any], verbose: bool = 
     if evaluated <= 0:
         errors.append(f"Evaluated expected sources must be positive, got {evaluated}")
     if selected + never_retrieved != evaluated:
-        errors.append(f"Diagnostic partitioning mismatch: selected ({selected}) + never_retrieved ({never_retrieved}) != evaluated ({evaluated})")
+        errors.append(
+            f"Diagnostic partitioning mismatch: selected ({selected}) + never_retrieved ({never_retrieved}) != evaluated ({evaluated})"
+        )
 
     if verbose:
         print(f"✓ Retrieval Aggregate: {selected}/{evaluated} evaluated sources selected")

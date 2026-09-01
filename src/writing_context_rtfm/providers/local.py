@@ -41,9 +41,7 @@ def _result_text(result: Any) -> str:
 def _parse_libraries(markdown_text: str) -> list[_ZoteroLibrary]:
     libraries: list[_ZoteroLibrary] = []
     section_type = "user"
-    pattern = re.compile(
-        r"^- \*\*(?P<name>.+?)\*\*.*\((?P<label>libraryID|groupID)=(?P<id>\d+)\)"
-    )
+    pattern = re.compile(r"^- \*\*(?P<name>.+?)\*\*.*\((?P<label>libraryID|groupID)=(?P<id>\d+)\)")
     for line in markdown_text.splitlines():
         if line.startswith("## User Library"):
             section_type = "user"
@@ -71,9 +69,7 @@ def _parse_libraries(markdown_text: str) -> list[_ZoteroLibrary]:
 def _parse_collections(markdown_text: str) -> list[_ZoteroCollection]:
     collections: list[_ZoteroCollection] = []
     ancestors: list[str] = []
-    pattern = re.compile(
-        r"^(?P<indent> *)- \*\*(?P<name>.+?)\*\* \(Key: (?P<key>[A-Za-z0-9]{8})\)"
-    )
+    pattern = re.compile(r"^(?P<indent> *)- \*\*(?P<name>.+?)\*\* \(Key: (?P<key>[A-Za-z0-9]{8})\)")
     for line in markdown_text.splitlines():
         match = pattern.match(line)
         if not match:
@@ -229,7 +225,10 @@ class ZoteroProvider(BaseContextProvider):
             {"library_id": selected.library_id, "library_type": selected.library_type},
         )
         switch_text = _result_text(switch_response)
-        if "error" in switch_text.casefold() or "successfully switched" not in switch_text.casefold():
+        if (
+            "error" in switch_text.casefold()
+            or "successfully switched" not in switch_text.casefold()
+        ):
             raise RuntimeError(
                 f"Could not switch Zotero to library '{selected.name}': {switch_text.strip()}"
             )
@@ -300,9 +299,7 @@ class ZoteroProvider(BaseContextProvider):
                 }
                 if offset:
                     arguments["offset"] = offset
-                item_response = self._call_tool(
-                    manager, "zotero_get_collection_items", arguments
-                )
+                item_response = self._call_tool(manager, "zotero_get_collection_items", arguments)
                 item_text = _result_text(item_response)
                 if item_text.lstrip().casefold().startswith("error"):
                     raise RuntimeError(
@@ -317,7 +314,6 @@ class ZoteroProvider(BaseContextProvider):
         self._resolved_collections = tuple(resolved)
         self._allowed_item_keys = allowed_item_keys
         return self._resolved_collections
-
 
     def fetch_context(
         self,
@@ -611,9 +607,7 @@ class ZoteroProvider(BaseContextProvider):
                 if is_semantic:
                     # Attempt Semantic Search for high-level intents
                     try:
-                        semantic_limit = (
-                            min(max(limit * 10, 50), 200) if collections else limit
-                        )
+                        semantic_limit = min(max(limit * 10, 50), 200) if collections else limit
                         res = self._call_tool(
                             manager,
                             "zotero_semantic_search",

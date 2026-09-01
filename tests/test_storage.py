@@ -250,6 +250,7 @@ class TestStorage(unittest.TestCase):
     def test_fresh_uninitialized_store_never_raises_operational_error(self):
         # Create a fresh store with temp file without calling init_db
         import tempfile
+
         with tempfile.NamedTemporaryFile(suffix=".sqlite") as tmp:
             fresh_store = ExtensionStore(tmp.name)
             # Must return None safely without raising sqlite3.OperationalError

@@ -238,7 +238,14 @@ class ExtensionStore:
                 ORDER BY r.created_at DESC
                 LIMIT 1
             """,
-                (task_hash, config_hash, section_cards_hash, index_fingerprint, index_fingerprint, index_fingerprint),
+                (
+                    task_hash,
+                    config_hash,
+                    section_cards_hash,
+                    index_fingerprint,
+                    index_fingerprint,
+                    index_fingerprint,
+                ),
             )
             row = cursor.fetchone()
             if row:
@@ -403,7 +410,16 @@ class ExtensionStore:
                 (run_id, metric_name, metric_value, metric_text, source_id, source_path, line_start, line_end)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-                (run_id, metric_name, metric_value, metric_text, source_id, source_path, line_start, line_end),
+                (
+                    run_id,
+                    metric_name,
+                    metric_value,
+                    metric_text,
+                    source_id,
+                    source_path,
+                    line_start,
+                    line_end,
+                ),
             )
             conn.commit()
 
@@ -578,7 +594,6 @@ class ExtensionStore:
             )
             conn.commit()
 
-
     def get_missing_openai_chunks(
         self, rtfm_db_path: str, model: str = "text-embedding-3-small"
     ) -> list[dict[str, Any]]:
@@ -680,8 +695,7 @@ class ExtensionStore:
     ) -> list[dict[str, Any]]:
         """Return new or content-changed RTFM chunks for one local model identity."""
         cached = {
-            row["chunk_id"]: row["content_hash"]
-            for row in self.get_local_embeddings(model_key)
+            row["chunk_id"]: row["content_hash"] for row in self.get_local_embeddings(model_key)
         }
         missing: list[dict[str, Any]] = []
         with sqlite3.connect(rtfm_db_path, check_same_thread=False) as conn:

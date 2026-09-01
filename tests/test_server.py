@@ -116,9 +116,7 @@ def test_handle_get_writing_context_pack(
 @patch("writing_context_rtfm.providers.get_active_providers")
 @patch("writing_context_rtfm.server._load_runtime")
 @patch("writing_context_rtfm.server.ContextPackGenerator")
-def test_handle_explain_context_pack(
-    mock_generator_class, mock_load_runtime, mock_get_providers
-):
+def test_handle_explain_context_pack(mock_generator_class, mock_load_runtime, mock_get_providers):
     mock_get_providers.return_value = []
     mock_load_runtime.return_value = (MagicMock(), MagicMock(), [], MagicMock(), MagicMock())
 
@@ -228,6 +226,7 @@ def test_process_message_valid_json(mock_stdout, mock_handle):
 
     # Test initialize message
     from writing_context_rtfm import server
+
     orig_root = server.WORKSPACE_ROOT
     try:
         msg_init = json.dumps(

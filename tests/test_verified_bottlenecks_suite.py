@@ -42,7 +42,12 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
         # Create target file with 100 lines
         self.target_file = self.project_root / "sections" / "03_approach.tex"
         self.target_file.write_text(
-            "\n".join([f"Line {i}: Detailed methodology and equations with MIMII data." for i in range(1, 101)])
+            "\n".join(
+                [
+                    f"Line {i}: Detailed methodology and equations with MIMII data."
+                    for i in range(1, 101)
+                ]
+            )
         )
 
         self.sc_file = self.project_root / ".writing-context" / "section_cards.yaml"
@@ -69,10 +74,13 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
             unverified_dependencies=["section_unverified"],
             must_preserve=["Split is fixed."],
             verified_facts=[
-                {"value": "16-bit float baseline achieves 94.2% accuracy.", "status": "verified", "source": "sec_eval"}
+                {
+                    "value": "16-bit float baseline achieves 94.2% accuracy.",
+                    "status": "verified",
+                    "source": "sec_eval",
+                }
             ],
         )
-
 
         self.section_cards = SectionCards(
             version=1,
@@ -113,7 +121,6 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
         self.assertTrue(any("strict token_budget" in w.lower() for w in pack.warnings))
         # Verify RTFM search was never invoked
         self.adapter.search.assert_not_called()
-
 
     # -------------------------------------------------------------------------
     # Bottleneck 2 & 6: Score Decomposition and Lexical Similarity V2
@@ -233,7 +240,9 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
         summary = self.store.get_target_feedback_summary("section_approach")
         self.assertEqual(summary["target"], "section_approach")
         self.assertEqual(summary["metrics"]["helpfulness"]["count"], 3)
-        self.assertAlmostEqual(summary["metrics"]["helpfulness"]["avg_value"], (0.9 + 1.0 + 0.2) / 3, places=2)
+        self.assertAlmostEqual(
+            summary["metrics"]["helpfulness"]["avg_value"], (0.9 + 1.0 + 0.2) / 3, places=2
+        )
 
     # -------------------------------------------------------------------------
     # Bottleneck 5: QuerySpec and Card Uncertainties Telemetry
@@ -246,8 +255,14 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
             token_budget=4000,
         )
 
-        self.assertIn("speculative_term", pack.quality.get("card_uncertainties", {}).get("unverified_key_terms", []))
-        self.assertIn("section_unverified", pack.quality.get("card_uncertainties", {}).get("unverified_dependencies", []))
+        self.assertIn(
+            "speculative_term",
+            pack.quality.get("card_uncertainties", {}).get("unverified_key_terms", []),
+        )
+        self.assertIn(
+            "section_unverified",
+            pack.quality.get("card_uncertainties", {}).get("unverified_dependencies", []),
+        )
         # Ensure they did NOT create degraded status on their own
         self.assertEqual(pack.status, "complete")
 
@@ -296,7 +311,6 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
         fp2 = provider.get_fingerprint(self.config)
         self.assertNotEqual(fp1, fp2)
 
-
         ret_fp2 = compute_retrieval_fingerprint(self.rtfm_db, {"bibtex": fp2})
         self.assertNotEqual(ret_fp1, ret_fp2)
 
@@ -305,8 +319,12 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
         emb_3small = [0.1] * 1536
         emb_3large = [0.2] * 3072
 
-        self.store.store_openai_embeddings([{"chunk_id": "chunk_1", "embedding": emb_3small, "model": "text-embedding-3-small"}])
-        self.store.store_openai_embeddings([{"chunk_id": "chunk_1", "embedding": emb_3large, "model": "text-embedding-3-large"}])
+        self.store.store_openai_embeddings(
+            [{"chunk_id": "chunk_1", "embedding": emb_3small, "model": "text-embedding-3-small"}]
+        )
+        self.store.store_openai_embeddings(
+            [{"chunk_id": "chunk_1", "embedding": emb_3large, "model": "text-embedding-3-large"}]
+        )
 
         # Verify both exist independently
         stats_small = self.store.get_openai_embeddings_stats("text-embedding-3-small")
@@ -358,7 +376,13 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
             title="Intro",
             role="Introduction",
             path="sections/01_intro.tex",
-            verified_facts=[{"value": "Acoustic monitoring is non-invasive.", "status": "verified", "source": "intro"}],
+            verified_facts=[
+                {
+                    "value": "Acoustic monitoring is non-invasive.",
+                    "status": "verified",
+                    "source": "intro",
+                }
+            ],
         )
         approach_with_dep = SectionCard(
             id="section_approach",
@@ -378,7 +402,6 @@ class TestVerifiedBottlenecksSuite(unittest.TestCase):
         )
 
         self.assertIn("[section_intro] Acoustic monitoring is non-invasive.", pack.prior_claims)
-
 
 
 if __name__ == "__main__":

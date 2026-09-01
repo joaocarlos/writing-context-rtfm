@@ -65,9 +65,7 @@ def test_minilm_encoder_does_not_invent_a_query_prompt() -> None:
 
 def _create_rtfm_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
-        conn.execute(
-            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT NOT NULL)"
-        )
+        conn.execute("CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT NOT NULL)")
         conn.execute(
             """
             CREATE TABLE chunks (

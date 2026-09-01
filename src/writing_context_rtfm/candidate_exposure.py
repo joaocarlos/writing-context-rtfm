@@ -93,7 +93,9 @@ def _expected_hit(
 ) -> bool:
     for results in streams.values():
         for result in results:
-            if any(result.path.casefold().endswith(value.casefold()) for value in excluded_suffixes):
+            if any(
+                result.path.casefold().endswith(value.casefold()) for value in excluded_suffixes
+            ):
                 continue
             if result.path != str(expected.get("path", "")):
                 continue
@@ -109,11 +111,7 @@ def _expected_hit(
 
 
 def _label_covered(label: str, streams: Mapping[int, Sequence[RTFMResult]]) -> bool:
-    terms = {
-        value
-        for value in re.findall(r"[\w-]+", label.casefold())
-        if len(value) > 2
-    }
+    terms = {value for value in re.findall(r"[\w-]+", label.casefold()) if len(value) > 2}
     if not terms:
         return True
     text = " ".join(
@@ -147,9 +145,7 @@ class CandidateExposurePolicy:
         self._retrieval_latency_ms = 0.0
         self._depths: dict[int, int] = {}
 
-    def _search(
-        self, index: int, query: QuerySpec, corpus: str, depth: int
-    ) -> list[RTFMResult]:
+    def _search(self, index: int, query: QuerySpec, corpus: str, depth: int) -> list[RTFMResult]:
         t0 = time.perf_counter()
         results = self.adapter.search(query.text, corpus=corpus, limit=depth)
         self._retrieval_latency_ms += (time.perf_counter() - t0) * 1000.0
@@ -168,20 +164,13 @@ class CandidateExposurePolicy:
     def _search_all(
         self, specs: Sequence[QuerySpec], corpus: str, depth: int
     ) -> dict[int, list[RTFMResult]]:
-        return {
-            index: self._search(index, spec, corpus, depth)
-            for index, spec in enumerate(specs)
-        }
+        return {index: self._search(index, spec, corpus, depth) for index, spec in enumerate(specs)}
 
-    def _global_cap(
-        self, streams: dict[int, list[RTFMResult]]
-    ) -> dict[int, list[RTFMResult]]:
+    def _global_cap(self, streams: dict[int, list[RTFMResult]]) -> dict[int, list[RTFMResult]]:
         seen: set[tuple[str, int | None, int | None, str]] = set()
         kept: dict[int, list[RTFMResult]] = {index: [] for index in streams}
         ordered = [
-            (index, result)
-            for index, results in sorted(streams.items())
-            for result in results
+            (index, result) for index, results in sorted(streams.items()) for result in results
         ]
         for index, result in ordered:
             key = _result_key(result)
@@ -213,9 +202,7 @@ class CandidateExposurePolicy:
             if not _label_covered(label, streams):
                 reasons.append(f"uncovered_obligation:{index}")
         total = sum(len(results) for results in streams.values())
-        unique = len(
-            {_result_key(result) for results in streams.values() for result in results}
-        )
+        unique = len({_result_key(result) for results in streams.values() for result in results})
         unique_ratio = 1.0 if total == 0 else unique / total
         if total and unique_ratio <= self.spec.progressive_unique_ratio:
             reasons.append("low_unique_candidate_ratio")
@@ -243,16 +230,12 @@ class CandidateExposurePolicy:
                     index,
                     spec,
                     corpus,
-                    self.spec.maximum_depth
-                    if index == task_index
-                    else self.spec.shallow_depth,
+                    self.spec.maximum_depth if index == task_index else self.spec.shallow_depth,
                 )
                 for index, spec in enumerate(specs)
             }
         elif self.name == "global_cap":
-            streams = self._global_cap(
-                self._search_all(specs, corpus, self.spec.maximum_depth)
-            )
+            streams = self._global_cap(self._search_all(specs, corpus, self.spec.maximum_depth))
         elif self.name == "score_tail_adaptive":
             streams = {}
             for index, spec in enumerate(specs):
@@ -262,17 +245,13 @@ class CandidateExposurePolicy:
                     and _score_ratio(results) >= self.spec.score_tail_ratio
                 ):
                     trigger_reasons.append(f"strong_score_tail:{index}:10")
-                    results = self._search(
-                        index, spec, corpus, self.spec.intermediate_depth
-                    )
+                    results = self._search(index, spec, corpus, self.spec.intermediate_depth)
                     if (
                         len(results) >= self.spec.intermediate_depth
                         and _score_ratio(results) >= self.spec.score_tail_ratio
                     ):
                         trigger_reasons.append(f"strong_score_tail:{index}:20")
-                        results = self._search(
-                            index, spec, corpus, self.spec.maximum_depth
-                        )
+                        results = self._search(index, spec, corpus, self.spec.maximum_depth)
                 streams[index] = results
         elif self.name == "progressive_coverage":
             streams = self._search_all(specs, corpus, self.spec.shallow_depth)
@@ -300,16 +279,12 @@ class CandidateExposurePolicy:
             missing = [
                 expected
                 for expected in self.expected_sources
-                if not _expected_hit(
-                    streams, expected, excluded_suffixes=self.excluded_suffixes
-                )
+                if not _expected_hit(streams, expected, excluded_suffixes=self.excluded_suffixes)
             ]
             if missing:
                 trigger_reasons.append("oracle_expected_source_missing")
                 for depth in (self.spec.intermediate_depth, self.spec.maximum_depth):
-                    streams[task_index] = self._search(
-                        task_index, specs[task_index], corpus, depth
-                    )
+                    streams[task_index] = self._search(task_index, specs[task_index], corpus, depth)
                     missing = [
                         expected
                         for expected in missing
@@ -344,14 +319,10 @@ class CandidateExposurePolicy:
             "retrieved_candidates": self._retrieved_candidates,
             "retrieved_candidate_tokens": self._retrieved_tokens,
             "candidate_spans": len(final_results),
-            "candidate_tokens_processed": sum(
-                _result_tokens(result) for result in final_results
-            ),
+            "candidate_tokens_processed": sum(_result_tokens(result) for result in final_results),
             "unique_candidates": len({_result_key(result) for result in final_results}),
             "retrieval_latency_ms": round(self._retrieval_latency_ms, 3),
-            "stream_depths": {
-                str(index): depth for index, depth in sorted(self._depths.items())
-            },
+            "stream_depths": {str(index): depth for index, depth in sorted(self._depths.items())},
             "expansion_triggered": any(
                 depth > self.spec.shallow_depth for depth in self._depths.values()
             ),
@@ -406,9 +377,7 @@ def _query_payload(case: Any, prepared: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def build_pilot_v1_freeze(
-    cases_path: Path, private_root: Path
-) -> dict[str, Any]:
+def build_pilot_v1_freeze(cases_path: Path, private_root: Path) -> dict[str, Any]:
     cases = cases_for_stage(load_cases(cases_path.resolve()), "pilot")
     if not cases or any(not case.annotations_resolved for case in cases):
         raise BenchmarkError("Pilot v1 freeze requires every pilot annotation to be resolved")
@@ -441,9 +410,7 @@ def build_pilot_v1_freeze(
             "query_result_excluded_suffixes": [".bib"],
             "structured_bibtex_excludes_rtfm_bib": True,
         },
-        "policy_specs": {
-            name: asdict(spec) for name, spec in POLICY_SPECS.items()
-        },
+        "policy_specs": {name: asdict(spec) for name, spec in POLICY_SPECS.items()},
         "promotion_rule": PROMOTION_RULE,
         "cost_measurement": {
             "repetitions": EXPOSURE_COST_REPETITIONS,
@@ -454,9 +421,7 @@ def build_pilot_v1_freeze(
     return {**payload, "freeze_sha256": sha256_text(canonical_json(payload))}
 
 
-def write_pilot_v1_freeze(
-    cases_path: Path, private_root: Path, output: Path
-) -> dict[str, Any]:
+def write_pilot_v1_freeze(cases_path: Path, private_root: Path, output: Path) -> dict[str, Any]:
     freeze = build_pilot_v1_freeze(cases_path, private_root)
     _atomic_json(output, freeze, mode=0o600)
     return freeze
@@ -497,9 +462,7 @@ def run_candidate_exposure(
             policy_order = EXPOSURE_POLICIES[offset:] + EXPOSURE_POLICIES[:offset]
             for name in policy_order:
                 workspace = Path(prepared["workspace"])
-                adapter = RTFMAdapter(
-                    project_root=str(workspace), allow_cli_fallback=False
-                )
+                adapter = RTFMAdapter(project_root=str(workspace), allow_cli_fallback=False)
                 policy = CandidateExposurePolicy(
                     adapter,
                     POLICY_SPECS[name],
@@ -555,9 +518,7 @@ def _percentile(values: Sequence[float], fraction: float) -> float:
     upper = math.ceil(position)
     if lower == upper:
         return round(float(ordered[lower]), 4)
-    interpolated = ordered[lower] + (ordered[upper] - ordered[lower]) * (
-        position - lower
-    )
+    interpolated = ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
     return round(float(interpolated), 4)
 
 
@@ -601,9 +562,7 @@ def build_candidate_exposure_report(results: dict[str, Any]) -> dict[str, Any]:
                 if outcome["selected"] or outcome["lost_after"] is not None
             )
             selected += sum(1 for outcome in outcomes if outcome["selected"])
-            baseline = current_by_case[record["case_id"]]["metrics"][
-                "expected_source_outcomes"
-            ]
+            baseline = current_by_case[record["case_id"]]["metrics"]["expected_source_outcomes"]
             baseline_exposed = sum(
                 1
                 for outcome in baseline
@@ -636,9 +595,7 @@ def build_candidate_exposure_report(results: dict[str, Any]) -> dict[str, Any]:
             "exposed_sources": exposed,
             "selected_sources": selected,
             "raw_query_recall": round(raw_exposed / expected, 4) if expected else 0.0,
-            "post_exclusion_query_recall": round(
-                post_exclusion_exposed / expected, 4
-            )
+            "post_exclusion_query_recall": round(post_exclusion_exposed / expected, 4)
             if expected
             else 0.0,
             "raw_to_post_exclusion_loss": raw_exposed - post_exclusion_exposed,
@@ -680,21 +637,15 @@ def build_candidate_exposure_report(results: dict[str, Any]) -> dict[str, Any]:
         reasons = []
         if summary["offline_only"]:
             reasons.append("offline_only")
-        if summary["cases_with_exposure_gain"] < PROMOTION_RULE[
-            "minimum_cases_with_exposure_gain"
-        ]:
+        if summary["cases_with_exposure_gain"] < PROMOTION_RULE["minimum_cases_with_exposure_gain"]:
             reasons.append("insufficient_case_replication")
         if summary["final_selection_recall"] < baseline["final_selection_recall"]:
             reasons.append("final_selection_regression")
         if summary["hard_constraint_violations"]:
             reasons.append("hard_constraint_violation")
-        if candidate_increase > PROMOTION_RULE[
-            "maximum_candidate_processing_increase_ratio"
-        ]:
+        if candidate_increase > PROMOTION_RULE["maximum_candidate_processing_increase_ratio"]:
             reasons.append("candidate_cost_threshold_exceeded")
-        if latency_increase > PROMOTION_RULE[
-            "maximum_total_latency_p95_increase_ratio"
-        ]:
+        if latency_increase > PROMOTION_RULE["maximum_total_latency_p95_increase_ratio"]:
             reasons.append("latency_threshold_exceeded")
         summary["candidate_processing_increase_ratio"] = round(candidate_increase, 4)
         summary["total_latency_p95_increase_ratio"] = round(latency_increase, 4)

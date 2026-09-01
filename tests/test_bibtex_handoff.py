@@ -73,12 +73,8 @@ def _other_provider_span() -> SourceSpan:
 def test_handoff_variants_repair_only_missing_structured_identity(tmp_path) -> None:
     expected = ({"path": "references.bib", "line_start": 1, "line_end": 6},)
 
-    current = BibTeXHandoffPolicy(
-        _provider(tmp_path), "current", expected_sources=expected
-    )
-    fallback = BibTeXHandoffPolicy(
-        _provider(tmp_path), "fallback", expected_sources=expected
-    )
+    current = BibTeXHandoffPolicy(_provider(tmp_path), "current", expected_sources=expected)
+    fallback = BibTeXHandoffPolicy(_provider(tmp_path), "fallback", expected_sources=expected)
     reconstruction = BibTeXHandoffPolicy(
         _provider(tmp_path), "reconstruction", expected_sources=expected
     )
@@ -112,9 +108,7 @@ def test_handoff_does_not_add_candidate_when_equivalent_provider_span_exists(
 
 
 def test_handoff_report_marks_fix_candidate_but_never_promotes() -> None:
-    def record(
-        case_id: str, variant: str, repetition: int, affected: bool
-    ) -> dict[str, object]:
+    def record(case_id: str, variant: str, repetition: int, affected: bool) -> dict[str, object]:
         repaired = affected and variant != "current"
         selected = not affected or repaired
         duplicate = int(variant == "fallback" and affected)
@@ -161,9 +155,7 @@ def test_handoff_report_marks_fix_candidate_but_never_promotes() -> None:
         for case_id in ("affected", "control")
         for variant in HANDOFF_VARIANTS
     ]
-    report = build_bibtex_handoff_report(
-        {"freeze_sha256": "freeze", "records": records}
-    )
+    report = build_bibtex_handoff_report({"freeze_sha256": "freeze", "records": records})
 
     reconstruction = report["variants"]["reconstruction"]
     fallback = report["variants"]["fallback"]

@@ -56,8 +56,7 @@ section_cards:
 
         self.methods_md = self.root / "methods.md"
         self.methods_md.write_text(
-            "# Methodology\n\n"
-            "We use quantization and Neural Network architectures.\n",
+            "# Methodology\n\nWe use quantization and Neural Network architectures.\n",
             encoding="utf-8",
         )
 
@@ -184,8 +183,16 @@ section_cards:
             "rhetorical_role": "introductory",
             "purpose": "Introduce the study and methods.",
             "key_terms": [{"value": "Quantization", "confidence": 0.95}],
-            "facts": [{"value": "Model has 7B parameters", "type": "numeric_constant", "confidence": 1.0}],
-            "constraints": [{"value": "Do not extrapolate beyond testing domain", "type": "boundary", "confidence": 0.85}],
+            "facts": [
+                {"value": "Model has 7B parameters", "type": "numeric_constant", "confidence": 1.0}
+            ],
+            "constraints": [
+                {
+                    "value": "Do not extrapolate beyond testing domain",
+                    "type": "boundary",
+                    "confidence": 0.85,
+                }
+            ],
         }
 
         cards_scan_command(str(self.root))

@@ -44,7 +44,9 @@ def local_encoder_key(
     query_prompt: str | None = "auto",
 ) -> str:
     """Return a stable identity for cached document embeddings."""
-    resolved_prompt = KNOWN_QUERY_PROMPTS.get(model_id, "") if query_prompt == "auto" else query_prompt
+    resolved_prompt = (
+        KNOWN_QUERY_PROMPTS.get(model_id, "") if query_prompt == "auto" else query_prompt
+    )
     return stable_hash("local-sentence-encoder-v1", model_id, revision or "", resolved_prompt or "")
 
 

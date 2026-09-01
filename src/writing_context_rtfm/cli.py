@@ -628,7 +628,11 @@ def _print_pack_explanation(pack: ContextPack, as_json: bool = False) -> None:
         print(f"=== Excluded by Provider Ownership ({len(diag.ownership_audit)}) ===")
         for rec in diag.ownership_audit:
             pos = f"{rec.path}:{rec.line_start or 1}-{rec.line_end or '?'}"
-            rep = f"replaced by {rec.replacement_provider}" if rec.replacement_found else "no replacement"
+            rep = (
+                f"replaced by {rec.replacement_provider}"
+                if rec.replacement_found
+                else "no replacement"
+            )
             print(f"  {pos} ({', '.join(rec.identities) if rec.identities else 'no id'}) -> {rep}")
         print()
 
@@ -676,8 +680,7 @@ def pack_command(args: argparse.Namespace) -> None:
                 sys.exit(1)
 
         include_diagnostics = (
-            getattr(args, "explain", False)
-            or getattr(args, "command", "") == "explain-pack"
+            getattr(args, "explain", False) or getattr(args, "command", "") == "explain-pack"
         )
 
         pack = generator.generate(
@@ -1195,7 +1198,9 @@ def main() -> None:
     )
     parser_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
     parser_pack.add_argument(
-        "--explain", action="store_true", help="Print structured diagnostic funnel and candidate explanation"
+        "--explain",
+        action="store_true",
+        help="Print structured diagnostic funnel and candidate explanation",
     )
 
     # explain-pack

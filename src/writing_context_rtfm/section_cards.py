@@ -86,9 +86,7 @@ def _merge_terminology(generated: Any, overrides: Any) -> dict[str, dict[str, An
         previous = merged.pop(previous_term, None) if previous_term else None
         if previous:
             definition = override_details["definition"] or previous["definition"]
-            variants = list(
-                dict.fromkeys([*previous["variants"], *override_details["variants"]])
-            )
+            variants = list(dict.fromkeys([*previous["variants"], *override_details["variants"]]))
             avoid = list(dict.fromkeys([*previous["avoid"], *override_details["avoid"]]))
             merged[override_term] = {
                 "definition": definition,
@@ -166,9 +164,7 @@ def _merge_split_cards(
     doc_title = over_doc.get("title") or gen_doc.get("title")
     doc_thesis = over_doc.get("thesis") or gen_doc.get("thesis")
     doc_style = over_doc.get("writing_style") or gen_doc.get("writing_style")
-    doc_term = _merge_terminology(
-        gen_doc.get("terminology"), over_doc.get("terminology")
-    )
+    doc_term = _merge_terminology(gen_doc.get("terminology"), over_doc.get("terminology"))
 
     document = DocumentCard(
         title=doc_title, thesis=doc_thesis, writing_style=doc_style, terminology=doc_term

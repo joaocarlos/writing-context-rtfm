@@ -35,8 +35,12 @@ from writing_context_rtfm.storage import ExtensionStore
 
 
 def test_deterministic_candidate_and_evidence_ids() -> None:
-    cid1 = compute_candidate_id("src/intro.tex", 1, 10, snippet="Introductory text", provider="rtfm")
-    cid2 = compute_candidate_id("src/intro.tex", 1, 10, snippet="Introductory text", provider="rtfm")
+    cid1 = compute_candidate_id(
+        "src/intro.tex", 1, 10, snippet="Introductory text", provider="rtfm"
+    )
+    cid2 = compute_candidate_id(
+        "src/intro.tex", 1, 10, snippet="Introductory text", provider="rtfm"
+    )
     assert cid1 == cid2
     assert len(cid1) == 16
 
@@ -342,7 +346,10 @@ def test_provider_reference_quota_rejection_in_diagnostics(tmp_path: Path) -> No
             reason="Reference entry 1",
             score=0.95,
             source_role="reference",
-            metadata={"provider_id": "bibtex", "snippet": "@article{one,\n" + "title={A},\n" * 30 + "}"},
+            metadata={
+                "provider_id": "bibtex",
+                "snippet": "@article{one,\n" + "title={A},\n" * 30 + "}",
+            },
         ),
         SourceSpan(
             path="refs.bib",
@@ -351,7 +358,10 @@ def test_provider_reference_quota_rejection_in_diagnostics(tmp_path: Path) -> No
             reason="Reference entry 2",
             score=0.90,
             source_role="reference",
-            metadata={"provider_id": "bibtex", "snippet": "@article{two,\n" + "title={B},\n" * 30 + "}"},
+            metadata={
+                "provider_id": "bibtex",
+                "snippet": "@article{two,\n" + "title={B},\n" * 30 + "}",
+            },
         ),
     ]
 
@@ -364,7 +374,12 @@ def test_provider_reference_quota_rejection_in_diagnostics(tmp_path: Path) -> No
         context=ContextConfig(
             min_score=0.1,
             max_source_spans=10,
-            role_budgets={"target_text": 0.5, "local_context": 0.2, "dependency": 0.2, "reference": 0.1},
+            role_budgets={
+                "target_text": 0.5,
+                "local_context": 0.2,
+                "dependency": 0.2,
+                "reference": 0.1,
+            },
         ),
         cache=CacheConfig(enabled=False),
     )
@@ -411,15 +426,11 @@ print(f"{cid}|{eid}")
 """
     # Run in subprocess 1 with PYTHONHASHSEED=0
     env1 = dict(os.environ, PYTHONHASHSEED="0")
-    out1 = subprocess.check_output(
-        [sys.executable, "-c", python_code], env=env1, text=True
-    ).strip()
+    out1 = subprocess.check_output([sys.executable, "-c", python_code], env=env1, text=True).strip()
 
     # Run in subprocess 2 with PYTHONHASHSEED=987654
     env2 = dict(os.environ, PYTHONHASHSEED="987654")
-    out2 = subprocess.check_output(
-        [sys.executable, "-c", python_code], env=env2, text=True
-    ).strip()
+    out2 = subprocess.check_output([sys.executable, "-c", python_code], env=env2, text=True).strip()
 
     assert out1 == out2
     cid, eid = out1.split("|")
@@ -432,7 +443,9 @@ def test_privacy_path_sanitization_and_bounded_trace_size() -> None:
     from writing_context_rtfm.candidate_trace import sanitize_path
 
     # Path sanitization checks
-    assert sanitize_path("/Users/joaocarlos/Developer/Projects/paper/intro.tex") == "paper/intro.tex"
+    assert (
+        sanitize_path("/Users/joaocarlos/Developer/Projects/paper/intro.tex") == "paper/intro.tex"
+    )
     assert sanitize_path("/home/ubuntu/project/sections/methods.tex") == "sections/methods.tex"
     assert sanitize_path("./sections/results.tex") == "sections/results.tex"
 
@@ -628,7 +641,10 @@ def test_golden_explain_pack_output(capsys: Any) -> None:
     assert "Selected:      1" in captured
 
     assert "=== Selected Spans (1) ===" in captured
-    assert "[1] sections/intro.tex:1-20 (role=target_text, score=1.00) -> Target section text" in captured
+    assert (
+        "[1] sections/intro.tex:1-20 (role=target_text, score=1.00) -> Target section text"
+        in captured
+    )
 
     assert "=== Rejections by Reason ===" in captured
     assert "REJECT_PROVIDER_REFERENCE_QUOTA: 2" in captured
@@ -640,4 +656,3 @@ def test_golden_explain_pack_output(capsys: Any) -> None:
     assert "=== Summary ===" in captured
     assert "Status:           complete" in captured
     assert "Estimated Tokens: 250" in captured
-

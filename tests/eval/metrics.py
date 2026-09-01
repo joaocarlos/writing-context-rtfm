@@ -59,8 +59,12 @@ def lexical_similarity_v2(text_a: str, text_b: str, shingle_size: int = 2) -> fl
 
     # Word shingles (n-grams)
     if len(clean_a) >= shingle_size and len(clean_b) >= shingle_size:
-        shingles_a = {tuple(clean_a[i : i + shingle_size]) for i in range(len(clean_a) - shingle_size + 1)}
-        shingles_b = {tuple(clean_b[i : i + shingle_size]) for i in range(len(clean_b) - shingle_size + 1)}
+        shingles_a = {
+            tuple(clean_a[i : i + shingle_size]) for i in range(len(clean_a) - shingle_size + 1)
+        }
+        shingles_b = {
+            tuple(clean_b[i : i + shingle_size]) for i in range(len(clean_b) - shingle_size + 1)
+        }
         shingle_jac = len(shingles_a & shingles_b) / max(1, len(shingles_a | shingles_b))
     else:
         shingle_jac = word_jac
@@ -83,8 +87,28 @@ def check_proxy_idea_coverage(
 
     gen_lower = generated_text.lower()
     stop_words = {
-        "the", "a", "an", "and", "or", "in", "on", "of", "to", "is", "are", "was",
-        "were", "for", "with", "by", "that", "this", "after", "before", "from", "include",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "in",
+        "on",
+        "of",
+        "to",
+        "is",
+        "are",
+        "was",
+        "were",
+        "for",
+        "with",
+        "by",
+        "that",
+        "this",
+        "after",
+        "before",
+        "from",
+        "include",
     }
 
     covered_count = 0
@@ -99,7 +123,9 @@ def check_proxy_idea_coverage(
                     found = True
                     break
                 # Check keyword overlap for multi-word alias
-                kw = [w for w in re.sub(r"[^\w\s]", " ", alias_clean).split() if w not in stop_words]
+                kw = [
+                    w for w in re.sub(r"[^\w\s]", " ", alias_clean).split() if w not in stop_words
+                ]
                 if kw and sum(1 for w in kw if w in gen_lower) / len(kw) >= min_keyword_ratio:
                     found = True
                     break

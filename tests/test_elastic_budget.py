@@ -76,6 +76,4 @@ class TestElasticBudget(unittest.TestCase):
         self.assertEqual(target_spans[0].priority, "essential")
 
         # Warning should document the auto-expansion
-        self.assertTrue(
-            any("Auto-expanded token budget" in w for w in pack.warnings)
-        )
+        self.assertTrue(any("Auto-expanded token budget" in w for w in pack.warnings))

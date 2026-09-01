@@ -212,9 +212,7 @@ def test_proofread_preserves_card_terminology_when_prior_usage_fails(
                 }
             }
         ),
-        sections={
-            "terms": SectionCard(id="terms", path="terms.tex", key_terms=["Quantization"])
-        },
+        sections={"terms": SectionCard(id="terms", path="terms.tex", key_terms=["Quantization"])},
     )
     mock_adapter.search.side_effect = RuntimeError("offline index")
     generator = ProofreadPackGenerator(mock_config, cards, mock_adapter, mock_store)

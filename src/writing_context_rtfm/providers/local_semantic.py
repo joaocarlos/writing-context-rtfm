@@ -83,7 +83,8 @@ class LocalSemanticSearchProvider(BaseContextProvider):
             else getattr(provider, "enabled", False)
         )
         return enabled and (
-            self._encoder is not None or importlib.util.find_spec("sentence_transformers") is not None
+            self._encoder is not None
+            or importlib.util.find_spec("sentence_transformers") is not None
         )
 
     def get_fingerprint(self, config: AppConfig) -> str | None:
@@ -154,9 +155,7 @@ class LocalSemanticSearchProvider(BaseContextProvider):
             return []
 
         chunk_ids = [str(row["chunk_id"]) for row in cached]
-        matrix = np.vstack(
-            [np.frombuffer(row["embedding"], dtype=np.float32) for row in cached]
-        )
+        matrix = np.vstack([np.frombuffer(row["embedding"], dtype=np.float32) for row in cached])
         query_matrix = self._get_encoder().encode_queries(queries)
         similarities = np.matmul(query_matrix, matrix.T)
         best_scores = np.max(similarities, axis=0)

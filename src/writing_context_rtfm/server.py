@@ -222,7 +222,9 @@ def _success_response(payload: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(payload)}]}
 
 
-def _sanitize_span_for_output(span_dict: dict[str, Any], output_mode: str = "prompt") -> dict[str, Any]:
+def _sanitize_span_for_output(
+    span_dict: dict[str, Any], output_mode: str = "prompt"
+) -> dict[str, Any]:
     """Strip internal-only fields from a serialized SourceSpan.
 
     In 'prompt' mode, metadata is omitted since text appears in formatted_prompt.
@@ -237,13 +239,16 @@ def _sanitize_span_for_output(span_dict: dict[str, Any], output_mode: str = "pro
     return out
 
 
-def _sanitize_pack_for_output(pack_dict: dict[str, Any], output_mode: str = "prompt") -> dict[str, Any]:
+def _sanitize_pack_for_output(
+    pack_dict: dict[str, Any], output_mode: str = "prompt"
+) -> dict[str, Any]:
     spans = pack_dict.get("source_spans") or []
-    pack_dict["source_spans"] = [_sanitize_span_for_output(s, output_mode=output_mode) for s in spans]
+    pack_dict["source_spans"] = [
+        _sanitize_span_for_output(s, output_mode=output_mode) for s in spans
+    ]
     if output_mode == "structured":
         pack_dict.pop("formatted_prompt", None)
     return pack_dict
-
 
 
 # --- Tool catalog -----------------------------------------------------------
@@ -1244,7 +1249,9 @@ def handle_request_more_context(args: dict[str, Any]) -> dict[str, Any]:
         store.init_db()
         results = store.get_more_context(run_id, limit)
         sanitized = [_sanitize_span_for_output(s, output_mode=output_mode) for s in results]
-        return _success_response({"run_id": run_id, "source_spans": sanitized, "count": len(sanitized)})
+        return _success_response(
+            {"run_id": run_id, "source_spans": sanitized, "count": len(sanitized)}
+        )
     except Exception as e:
         logger.exception("Failed to request more context")
         return _error_response(
@@ -1259,8 +1266,12 @@ def handle_submit_generation_feedback(args: dict[str, Any]) -> dict[str, Any]:
     metric_text = args.get("metric_text")
     source_id = args.get("source_id")
     source_path = args.get("source_path")
-    line_start = int(args["line_start"]) if "line_start" in args and args["line_start"] is not None else None
-    line_end = int(args["line_end"]) if "line_end" in args and args["line_end"] is not None else None
+    line_start = (
+        int(args["line_start"]) if "line_start" in args and args["line_start"] is not None else None
+    )
+    line_end = (
+        int(args["line_end"]) if "line_end" in args and args["line_end"] is not None else None
+    )
 
     if not run_id or not metric_name or metric_value is None:
         return _error_response(
@@ -1287,7 +1298,6 @@ def handle_submit_generation_feedback(args: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         logger.exception("Failed to submit feedback")
         return _error_response(ERROR_INTERNAL, f"Failed to submit feedback: {e}", type(e).__name__)
-
 
 
 def handle_get_target_feedback_summary(args: dict[str, Any]) -> dict[str, Any]:
@@ -2407,7 +2417,6 @@ def process_message(line: str) -> str | None:
                 elif name == "get_target_feedback_summary":
                     result = handle_get_target_feedback_summary(call_args)
                 else:
-
                     response = json.dumps(
                         {
                             "jsonrpc": "2.0",

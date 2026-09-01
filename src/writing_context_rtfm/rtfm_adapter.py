@@ -19,9 +19,7 @@ class RTFMAdapterError(Exception):
 class RTFMAdapter:
     """Wrapper around the RTFM CLI with optional direct SQLite fast-path."""
 
-    def __init__(
-        self, project_root: str | None = None, *, allow_cli_fallback: bool = True
-    ) -> None:
+    def __init__(self, project_root: str | None = None, *, allow_cli_fallback: bool = True) -> None:
         self.project_root = project_root
         self.allow_cli_fallback = allow_cli_fallback
         self.resolved_rtfm = "rtfm"
@@ -82,9 +80,7 @@ class RTFMAdapter:
             conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            book_columns = {
-                str(row["name"]) for row in cursor.execute("PRAGMA table_info(books)")
-            }
+            book_columns = {str(row["name"]) for row in cursor.execute("PRAGMA table_info(books)")}
             if "path" in book_columns:
                 book_file_column = "path"
             elif "filename" in book_columns:
@@ -139,9 +135,7 @@ class RTFMAdapter:
             return results
         except Exception as exc:
             if not self.allow_cli_fallback:
-                raise RTFMAdapterError(
-                    f"Direct SQLite search failed for {db_path}: {exc}"
-                ) from exc
+                raise RTFMAdapterError(f"Direct SQLite search failed for {db_path}: {exc}") from exc
             return None
         finally:
             if conn:

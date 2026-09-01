@@ -43,7 +43,9 @@ We conducted operational validation on industrial pumps with a fixed train-test 
 """
 
     def test_gold_reconstruction(self):
-        coverage = check_proxy_idea_coverage(self.gold_text, self.gold_text, self.rubric.required_ideas)
+        coverage = check_proxy_idea_coverage(
+            self.gold_text, self.gold_text, self.rubric.required_ideas
+        )
         self.assertEqual(coverage, 1.0, "Gold text must achieve 100% idea coverage")
 
         term_score = check_required_terms(self.gold_text, self.rubric.required_terms)
@@ -57,7 +59,9 @@ We conducted operational validation on industrial pumps with a fixed train-test 
         self.assertTrue(check_section_heading_presence(self.gold_text))
 
     def test_paraphrased_reconstruction_passes(self):
-        coverage = check_proxy_idea_coverage(self.paraphrased_text, self.gold_text, self.rubric.required_ideas)
+        coverage = check_proxy_idea_coverage(
+            self.paraphrased_text, self.gold_text, self.rubric.required_ideas
+        )
         self.assertGreaterEqual(coverage, 0.75, "Paraphrased text should cover core ideas")
 
         term_score = check_required_terms(self.paraphrased_text, self.rubric.required_terms)
@@ -70,7 +74,9 @@ We conducted operational validation on industrial pumps with a fixed train-test 
         self.assertTrue(check_section_heading_presence(self.paraphrased_text))
 
     def test_incomplete_reconstruction_fails_threshold(self):
-        coverage = check_proxy_idea_coverage(self.incomplete_text, self.gold_text, self.rubric.required_ideas)
+        coverage = check_proxy_idea_coverage(
+            self.incomplete_text, self.gold_text, self.rubric.required_ideas
+        )
         self.assertLess(coverage, 0.5, "Incomplete text should fail idea coverage threshold")
 
         term_score = check_required_terms(self.incomplete_text, self.rubric.required_terms)
@@ -78,7 +84,9 @@ We conducted operational validation on industrial pumps with a fixed train-test 
 
     def test_adversarial_reconstruction_detects_violations(self):
         unsupported = check_forbidden_phrases(self.adversarial_text, self.rubric.forbidden_claims)
-        self.assertGreaterEqual(unsupported, 2, "Forbidden claims must be detected in adversarial text")
+        self.assertGreaterEqual(
+            unsupported, 2, "Forbidden claims must be detected in adversarial text"
+        )
 
     def test_lexical_similarity_v2(self):
         sim_gold = lexical_similarity_v2(self.gold_text, self.gold_text)
@@ -87,7 +95,6 @@ We conducted operational validation on industrial pumps with a fixed train-test 
         sim_para = lexical_similarity_v2(self.gold_text, self.paraphrased_text)
         self.assertGreater(sim_para, 0.1)
         self.assertLess(sim_para, 1.0)
-
 
 
 if __name__ == "__main__":

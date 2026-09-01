@@ -28,9 +28,7 @@ def compute_task_hash(
     must_consider: list[str] | None = None,
 ) -> str:
     sorted_role_budgets = tuple(sorted(role_budgets.items())) if role_budgets else ()
-    normalized_must_consider = tuple(
-        item.strip() for item in (must_consider or []) if item.strip()
-    )
+    normalized_must_consider = tuple(item.strip() for item in (must_consider or []) if item.strip())
     return stable_hash(
         task.strip(),
         target or "",

@@ -73,7 +73,9 @@ def _card_author_packet(case: CaseManifest, private_root: Path) -> dict[str, Any
     }
 
 
-def _source_span_packet(case: CaseManifest, private_root: Path, span: dict[str, Any]) -> dict[str, Any]:
+def _source_span_packet(
+    case: CaseManifest, private_root: Path, span: dict[str, Any]
+) -> dict[str, Any]:
     prepared = load_prepared(case, private_root)
     source = Path(prepared["workspace"]) / str(span["path"])
     lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -101,9 +103,7 @@ def _auditor_packet(
         "target_heading": case.target_heading,
         "rubric": case.rubric_for_judge(),
         "gold": gold,
-        "graded_sources": [
-            _source_span_packet(case, private_root, span) for span in corrected
-        ],
+        "graded_sources": [_source_span_packet(case, private_root, span) for span in corrected],
         "mechanical_audit": {
             key: mechanical["cases"][case.id][key]
             for key in (

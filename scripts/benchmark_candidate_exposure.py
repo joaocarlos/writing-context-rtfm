@@ -15,9 +15,7 @@ from writing_context_rtfm.candidate_exposure import (
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "command", choices=("freeze", "run", "report")
-    )
+    parser.add_argument("command", choices=("freeze", "run", "report"))
     parser.add_argument("--cases", default="benchmark/cases.local.yaml")
     parser.add_argument("--private-root", default="benchmark/private.local")
     parser.add_argument(
@@ -44,16 +42,11 @@ def main() -> int:
         result = write_pilot_v1_freeze(cases_path, private_root, freeze_path)
         print(f"Pilot v1 frozen: {result['freeze_sha256']}")
     elif args.command == "run":
-        result = run_candidate_exposure(
-            cases_path, private_root, freeze_path, results_path
-        )
+        result = run_candidate_exposure(cases_path, private_root, freeze_path, results_path)
         print(f"Candidate exposure records ready: {len(result['records'])}")
     else:
         result = write_candidate_exposure_report(results_path, output_path)
-        print(
-            f"Candidate exposure report written: {output_path} "
-            f"({result['case_count']} cases)"
-        )
+        print(f"Candidate exposure report written: {output_path} ({result['case_count']} cases)")
     return 0
 
 

@@ -192,8 +192,8 @@ class BibTeXProvider(BaseContextProvider):
             except OSError:
                 parts.append(bf.name)
         from writing_context_rtfm.hashing import stable_hash
-        return stable_hash("bibtex", *parts)
 
+        return stable_hash("bibtex", *parts)
 
     def _find_bib_files(self) -> list[Path]:
         root = Path(self.config.rtfm.project_root)
@@ -293,9 +293,7 @@ class BibTeXProvider(BaseContextProvider):
             parser.parse(path)
             node = parser.find_section_node(section_id)
             if node is not None:
-                source = (root / node.source_path).read_text(
-                    encoding="utf-8", errors="replace"
-                )
+                source = (root / node.source_path).read_text(encoding="utf-8", errors="replace")
                 return source[node.char_start : node.char_end]
         except Exception as exc:
             logger.debug("Could not resolve BibTeX section %s: %s", section_id, exc)
@@ -355,9 +353,7 @@ class BibTeXProvider(BaseContextProvider):
                     if clean_k and clean_k not in cite_keys:
                         cite_keys.append(clean_k)
             except Exception as e:
-                logger.warning(
-                    "BibTeXProvider failed to extract citations from %s: %s", path, e
-                )
+                logger.warning("BibTeXProvider failed to extract citations from %s: %s", path, e)
 
         # Resolve explicit citation keys
         for key in cite_keys:

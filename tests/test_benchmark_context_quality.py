@@ -204,9 +204,7 @@ def test_safe_zip_rejects_symlinks(tmp_path: Path) -> None:
 
 def test_heading_prefix_preserves_heading_and_leading_label() -> None:
     section = "\\section{Nested {Method}}\n\\label{sec:method}\nSecret body."
-    assert heading_and_label_prefix(section) == (
-        "\\section{Nested {Method}}\n\\label{sec:method}"
-    )
+    assert heading_and_label_prefix(section) == ("\\section{Nested {Method}}\n\\label{sec:method}")
 
 
 def test_prepare_masks_target_isolates_gold_and_indexes_explicit_files(tmp_path: Path) -> None:
@@ -302,9 +300,7 @@ def test_annotation_audit_keeps_corpus_warning_separate_from_resolution(
             {
                 "role": "auditor",
                 "project_id": "P0",
-                "cases": [
-                    {"case_id": case.id, "decision": "approved", "issues": []}
-                ],
+                "cases": [{"case_id": case.id, "decision": "approved", "issues": []}],
             }
         ),
         encoding="utf-8",
@@ -313,9 +309,7 @@ def test_annotation_audit_keeps_corpus_warning_separate_from_resolution(
     report = audit_case_annotations([case], private_root=private_root)
     result = report["cases"][case.id]
 
-    assert result["corpus_warnings"] == [
-        "manuscript_citation_missing_from_bibliography"
-    ]
+    assert result["corpus_warnings"] == ["manuscript_citation_missing_from_bibliography"]
     assert result["review_manifest_consistent"] is True
     assert result["annotation_resolved"] is True
 
@@ -379,9 +373,7 @@ def test_rtfm_topk_preserves_raw_candidates_before_budget(
         lambda *_args, **_kwargs: results,
     )
 
-    evidence = ProductionRetrievalBackend()._topk(
-        case, {"workspace": str(tmp_path)}
-    )
+    evidence = ProductionRetrievalBackend()._topk(case, {"workspace": str(tmp_path)})
 
     assert len(evidence["candidate_spans"]) == 2
     assert [span["path"] for span in evidence["spans"]] == ["evidence.tex"]
@@ -641,9 +633,7 @@ def test_judgment_schema_and_disagreement_rules() -> None:
     conflict = {**base, "pass": False}
     conflict_result = reconcile_judgments(base, conflict)
     assert conflict_result["resolved"] is False
-    assert conflict_result["criterion_averages"] == dict.fromkeys(
-        base["ratings"], 4.0
-    )
+    assert conflict_result["criterion_averages"] == dict.fromkeys(base["ratings"], 4.0)
     assert conflict_result["pass"] is None
 
 
@@ -657,12 +647,12 @@ def test_paid_request_counts_respect_case_limit() -> None:
     case = SimpleNamespace(stages=("pilot", "confirmation"))
     cases = [case, case]
 
-    assert generation_request_count(
-        cases, _models(), stage="pilot", repetitions=1, limit_cases=1
-    ) == 4
-    assert judgment_request_count(
-        cases, _models(), stage="pilot", repetitions=1, limit_cases=1
-    ) == 8
+    assert (
+        generation_request_count(cases, _models(), stage="pilot", repetitions=1, limit_cases=1) == 4
+    )
+    assert (
+        judgment_request_count(cases, _models(), stage="pilot", repetitions=1, limit_cases=1) == 8
+    )
 
 
 @pytest.mark.parametrize("command", ("generate", "judge", "report", "retrieval-report"))
@@ -676,9 +666,7 @@ def test_paid_and_report_commands_accept_case_limit(command: str) -> None:
     assert parsed.limit_cases == 1
 
 
-@pytest.mark.parametrize(
-    "command", ("retrieve", "generate", "judge", "report", "retrieval-report")
-)
+@pytest.mark.parametrize("command", ("retrieve", "generate", "judge", "report", "retrieval-report"))
 def test_case_limit_must_be_positive(command: str) -> None:
     args = [command, "--stage", "pilot", "--limit-cases", "-1"]
     if command in {"report", "retrieval-report"}:
@@ -811,8 +799,8 @@ def test_cli_model_config_does_not_require_cli_versions(tmp_path: Path) -> None:
                             "provider": "codex_cli",
                             "model": "codex-test",
                             "command": "codex",
-                        }
-                    ]
+                        },
+                    ],
                 },
                 "judges": [
                     {
@@ -824,7 +812,7 @@ def test_cli_model_config_does_not_require_cli_versions(tmp_path: Path) -> None:
                         "provider": "codex_cli",
                         "model": "codex-judge",
                         "command": "codex",
-                    }
+                    },
                 ],
             },
             sort_keys=False,
@@ -964,7 +952,9 @@ def test_cli_model_clients_are_isolated_and_pinned(
             stdout = f"{provider} response"
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
-    monkeypatch.setattr("writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable))
+    monkeypatch.setattr(
+        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+    )
     monkeypatch.setattr("writing_context_rtfm.benchmark._run_cli_process_group", fake_run)
     spec = ModelSpec(
         provider=provider,
@@ -999,7 +989,9 @@ def test_cli_model_version_mismatch_fails_closed(
 ) -> None:
     executable = tmp_path / "gemini"
     executable.touch(mode=0o700)
-    monkeypatch.setattr("writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable))
+    monkeypatch.setattr(
+        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+    )
     monkeypatch.setattr(
         "writing_context_rtfm.benchmark._run_cli_process_group",
         lambda command, **kwargs: subprocess.CompletedProcess(
@@ -1023,16 +1015,16 @@ def test_codex_cli_without_version_accepts_installed_version(
 ) -> None:
     executable = tmp_path / "codex"
     executable.touch(mode=0o700)
-    monkeypatch.setattr("writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable))
+    monkeypatch.setattr(
+        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+    )
     monkeypatch.setattr(
         "writing_context_rtfm.benchmark._run_cli_process_group",
         lambda command, **kwargs: subprocess.CompletedProcess(
             command, 0, stdout="codex-cli 99.0.0\n", stderr=""
         ),
     )
-    client = CLIModelClient(
-        ModelSpec(provider="codex_cli", model="codex-test", command="codex")
-    )
+    client = CLIModelClient(ModelSpec(provider="codex_cli", model="codex-test", command="codex"))
 
     client.check_available()
 
@@ -1058,9 +1050,7 @@ def test_antigravity_model_mismatch_fails_closed(
     )
     monkeypatch.setattr(
         "writing_context_rtfm.benchmark._run_cli_process_group",
-        lambda command, **kwargs: subprocess.CompletedProcess(
-            command, 0, stdout=stream, stderr=""
-        ),
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout=stream, stderr=""),
     )
     client = CLIModelClient(
         ModelSpec(
@@ -1151,9 +1141,9 @@ class PartialDisagreementFakeModelClient(FakeModelClient):
         if not prompt.startswith("Evaluate the blinded candidate"):
             return super().generate(prompt, temperature=temperature, max_tokens=max_tokens)
         candidate = prompt.split("CANDIDATE ID\n", 1)[1].split("\n", 1)[0]
-        evidence_packet = prompt.split("EVIDENCE PACKET\n", 1)[1].split(
-            "\n\nCANDIDATE OUTPUT", 1
-        )[0]
+        evidence_packet = prompt.split("EVIDENCE PACKET\n", 1)[1].split("\n\nCANDIDATE OUTPUT", 1)[
+            0
+        ]
         span_id = json.loads(evidence_packet)[0]["id"]
         ratings = dict.fromkeys(
             (
@@ -1222,9 +1212,7 @@ def test_offline_end_to_end_all_strategies_and_anonymized_report(
         artifacts=artifacts,
     )
     assert retrieval_report["report_type"] == "candidate_diagnostics"
-    assert retrieval_report["strategies"]["pack_baseline"]["candidate_recall_at_5"][
-        "median"
-    ] == 1.0
+    assert retrieval_report["strategies"]["pack_baseline"]["candidate_recall_at_5"]["median"] == 1.0
     assert retrieval_report["candidate_diagnostics"]["pack_baseline"]["selected"] == 1
     generations = run_generation(
         [case, case],
@@ -1263,12 +1251,7 @@ def test_offline_end_to_end_all_strategies_and_anonymized_report(
     assert report["corpus_hashes"] == [case.archive_sha256]
     assert "materially_worse_cases" in report["rrf_promotion_decision"]
     assert "materially_worse_confirmation_cases" not in report["rrf_promotion_decision"]
-    assert (
-        report["strategies"]["rtfm_topk"]["retrieval"]["candidate_recall_at_5"][
-            "median"
-        ]
-        == 1.0
-    )
+    assert report["strategies"]["rtfm_topk"]["retrieval"]["candidate_recall_at_5"]["median"] == 1.0
     assert report["candidate_diagnostics"]["pack_baseline"] == {
         "cases_with_diagnostics": 1,
         "expected_sources_evaluated": 1,
@@ -1285,7 +1268,9 @@ def test_offline_end_to_end_all_strategies_and_anonymized_report(
         for kind in ("retrieval", "generation", "judgment")
         for value in artifacts.iter_kind(kind)
     )
-    workspace = Path(json.loads((private_root / "prepared" / f"{case.case_hash}.json").read_text())["workspace"])
+    workspace = Path(
+        json.loads((private_root / "prepared" / f"{case.case_hash}.json").read_text())["workspace"]
+    )
     cards = (workspace / ".writing-context" / "section_cards.yaml").read_text(encoding="utf-8")
     visible = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")

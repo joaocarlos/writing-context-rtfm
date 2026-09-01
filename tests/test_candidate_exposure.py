@@ -77,9 +77,7 @@ def test_current_and_deep_task_change_only_anchor_depth() -> None:
 def test_global_cap_round_robins_unique_candidates() -> None:
     shared = _results("same", 4, shared=True)
     adapter = FakeAdapter({"full task": shared, "keyword": shared})
-    spec = replace(
-        POLICY_SPECS["global_cap"], maximum_depth=4, global_unique_cap=3
-    )
+    spec = replace(POLICY_SPECS["global_cap"], maximum_depth=4, global_unique_cap=3)
     policy = CandidateExposurePolicy(adapter, spec)
 
     streams = policy(SPECS, "manuscript", 10, ())
@@ -144,9 +142,7 @@ def test_oracle_trigger_is_offline_and_stops_when_expected_source_appears() -> N
     policy = CandidateExposurePolicy(
         adapter,
         POLICY_SPECS["oracle_trigger"],
-        expected_sources=(
-            {"path": "expected.tex", "line_start": 105, "line_end": 110},
-        ),
+        expected_sources=({"path": "expected.tex", "line_start": 105, "line_end": 110},),
     )
 
     streams = policy(SPECS, "manuscript", 10, ())
@@ -185,9 +181,7 @@ def test_exposure_distinguishes_raw_bibtex_from_effective_query_results() -> Non
 
 
 def test_report_never_promotes_oracle() -> None:
-    def record(
-        case_id: str, policy: str, exposed: bool, repetition: int
-    ) -> dict[str, object]:
+    def record(case_id: str, policy: str, exposed: bool, repetition: int) -> dict[str, object]:
         outcome = {
             "selected": exposed,
             "lost_after": "retrieved" if exposed else None,
@@ -225,9 +219,7 @@ def test_report_never_promotes_oracle() -> None:
                         repetition=repetition,
                     )
                 )
-    report = build_candidate_exposure_report(
-        {"freeze_sha256": "freeze", "records": records}
-    )
+    report = build_candidate_exposure_report({"freeze_sha256": "freeze", "records": records})
 
     oracle = report["policies"]["oracle_trigger"]
     assert oracle["expected_sources"] == 2

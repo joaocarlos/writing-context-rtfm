@@ -42,16 +42,11 @@ def main() -> int:
         result = write_bibtex_handoff_freeze(cases_path, private_root, freeze_path)
         print(f"BibTeX handoff frozen: {result['freeze_sha256']}")
     elif args.command == "run":
-        result = run_bibtex_handoff(
-            cases_path, private_root, freeze_path, results_path
-        )
+        result = run_bibtex_handoff(cases_path, private_root, freeze_path, results_path)
         print(f"BibTeX handoff records ready: {len(result['records'])}")
     else:
         result = write_bibtex_handoff_report(results_path, output_path)
-        print(
-            f"BibTeX handoff report written: {output_path} "
-            f"({result['case_count']} cases)"
-        )
+        print(f"BibTeX handoff report written: {output_path} ({result['case_count']} cases)")
     return 0
 
 

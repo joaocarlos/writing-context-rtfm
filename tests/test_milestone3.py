@@ -212,7 +212,6 @@ class TestMilestone3(unittest.TestCase):
                 score=0.75,
                 metadata={},
             ),
-
         ]
         self.adapter.search.return_value = mock_results
 

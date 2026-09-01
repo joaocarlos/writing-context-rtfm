@@ -145,9 +145,7 @@ class TestSourceExclusion(unittest.TestCase):
 class TestScoreFiltering(unittest.TestCase):
     def test_single_file_target_boost_is_scoped_to_explicit_range(self):
         gen, _, _ = make_generator()
-        target_card = replace(
-            gen.section_cards.sections["section_approach"], path="main.tex"
-        )
+        target_card = replace(gen.section_cards.sections["section_approach"], path="main.tex")
         inside = make_result("main.tex", 100, 110, 1.0, snippet="target evidence")
         outside = make_result("main.tex", 400, 410, 1.0, snippet="unrelated section")
 
@@ -277,7 +275,6 @@ class TestScoreFiltering(unittest.TestCase):
         ]
         pack = gen.generate(task="write methodology", target="section_approach", token_budget=1000)
         assert pack.quality["discarded_low_score"] >= 2
-
 
 
 # ---------------------------------------------------------------------------

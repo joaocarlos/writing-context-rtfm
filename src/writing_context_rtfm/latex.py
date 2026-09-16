@@ -60,9 +60,10 @@ def scan_latex_commands(text: str) -> list[str]:
 
 def build_reference_graph(project_root: str) -> dict[str, Any]:
     """Parse all LaTeX files in the project root to build a cross-reference and dependency graph."""
-    from writing_context_rtfm.utils import is_allowed_source
+    from writing_context_rtfm.utils import is_allowed_source, is_path_ignored, load_ignore_spec
 
     project_path = Path(project_root).resolve()
+    ignore_spec = load_ignore_spec(project_path)
 
     tex_files: list[Path] = []
     labels: dict[str, Any] = {}
@@ -72,10 +73,20 @@ def build_reference_graph(project_root: str) -> dict[str, Any]:
 
     # 1. Scan for all allowed .tex files
     for root_dir, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if is_allowed_source(str(Path(root_dir) / d))]
+        dirs[:] = [
+            d
+            for d in dirs
+            if is_allowed_source(str(Path(root_dir) / d))
+            and not is_path_ignored(
+                (Path(root_dir) / d).relative_to(project_path), ignore_spec, is_dir=True
+            )
+        ]
         for file in files:
             if file.endswith(".tex"):
                 full_path = Path(root_dir) / file
+                rel_file = full_path.relative_to(project_path)
+                if is_path_ignored(rel_file, ignore_spec):
+                    continue
                 if is_allowed_source(str(full_path)):
                     tex_files.append(full_path)
 

@@ -1,7 +1,9 @@
 """Common utilities for the extension."""
 
+import contextlib
 import os
 from pathlib import Path
+from typing import Any
 
 from writing_context_rtfm.latex import scan_latex_commands as scan_latex_commands
 
@@ -29,6 +31,53 @@ EXCLUDED_SOURCE_EXTENSIONS = {
     ".toc",
     ".synctex.gz",
 }
+
+
+def load_ignore_spec(project_root: str | Path) -> Any | None:
+    """Load combined ignore spec from .gitignore and .rtfmignore in project root.
+
+    .rtfmignore patterns take precedence (appended after .gitignore).
+    Returns a pathspec.PathSpec instance or None if no ignore files exist or pathspec is unavailable.
+    """
+    root_path = Path(project_root).resolve()
+    lines: list[str] = []
+
+    # 1. .gitignore (if present)
+    gi_path = root_path / ".gitignore"
+    if gi_path.is_file():
+        with contextlib.suppress(Exception):
+            lines.extend(gi_path.read_text(encoding="utf-8", errors="replace").splitlines())
+
+    # 2. .rtfmignore (if present, takes precedence if appended)
+    ri_path = root_path / ".rtfmignore"
+    if ri_path.is_file():
+        with contextlib.suppress(Exception):
+            lines.extend(ri_path.read_text(encoding="utf-8", errors="replace").splitlines())
+
+    if not lines:
+        return None
+
+    try:
+        import pathspec
+
+        return pathspec.PathSpec.from_lines("gitignore", lines)
+    except Exception:
+        return None
+
+
+def is_path_ignored(rel_path: str | Path, spec: Any | None, is_dir: bool = False) -> bool:
+    """Check if a relative path matches the ignore spec.
+
+    If is_dir is True, checks both 'rel_path' and 'rel_path/' to match directory patterns.
+    """
+    if spec is None:
+        return False
+    norm_path = Path(rel_path).as_posix().lstrip("./")
+    if not norm_path:
+        return False
+    if is_dir:
+        return bool(spec.match_file(norm_path) or spec.match_file(f"{norm_path}/"))
+    return bool(spec.match_file(norm_path))
 
 
 def is_allowed_source(path: str) -> bool:

@@ -76,15 +76,27 @@ def initialize_section_cards(project_root: str | None = None) -> dict[str, Any]:
         "build",
         "dist",
     }
+    from writing_context_rtfm.utils import is_path_ignored, load_ignore_spec
+
+    ignore_spec = load_ignore_spec(root)
     found_files = []
 
     for dirpath, dirnames, filenames in os.walk(root):
         # Filter directories in place
-        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in exclude_dirs
+            and not is_path_ignored(
+                (Path(dirpath) / d).relative_to(root), ignore_spec, is_dir=True
+            )
+        ]
         for fname in filenames:
             if fname.endswith((".tex", ".md")) and fname not in ("README.md", "GEMINI.md"):
                 full_path = Path(dirpath) / fname
                 rel_path = full_path.relative_to(root)
+                if is_path_ignored(rel_path, ignore_spec):
+                    continue
                 found_files.append(rel_path)
 
     added = []
@@ -485,9 +497,22 @@ def find_entry_files(project_root: str) -> list[str]:
         "implementation_plan.md",
         "walkthrough.md",
     }
+    from writing_context_rtfm.utils import is_path_ignored, load_ignore_spec
+
+    ignore_spec = load_ignore_spec(root_path)
     for dirpath, dirnames, filenames in os.walk(root_path):
-        dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in exclude_dirs
+            and not is_path_ignored(
+                (Path(dirpath) / d).relative_to(root_path), ignore_spec, is_dir=True
+            )
+        ]
         for fname in filenames:
+            rel_file = (Path(dirpath) / fname).relative_to(root_path)
+            if is_path_ignored(rel_file, ignore_spec):
+                continue
             if fname.endswith(".tex"):
                 tex_files.append(Path(dirpath) / fname)
             elif fname.endswith(".md") and fname.lower() not in exclude_md_files:

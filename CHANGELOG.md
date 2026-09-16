@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.5] - 2026-09-16
+
+### Added
+- Added support for `.rtfmignore` and `.gitignore` file and directory exclusion patterns during section card discovery (`initialize_section_cards`, `cards scan` / `find_entry_files`).
+- Added ignore pattern support to LaTeX reference graph construction (`build_reference_graph`), excluding ignored `.tex` files from dependency, reference, and label indexing.
+- Added `load_ignore_spec` and `is_path_ignored` utilities using `pathspec` to load root `.gitignore` and `.rtfmignore` specifications.
+- Declared explicit `pathspec>=0.10.0` dependency in `pyproject.toml`.
+
 ## [0.11.4] - 2026-09-01
 
 ### Fixed

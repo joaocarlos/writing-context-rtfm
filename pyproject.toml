@@ -10,7 +10,7 @@ exclude = [
 
 [project]
 name = "writing-context-rtfm"
-version = "0.11.4"
+version = "0.11.5"
 description = "MCP extension for writing-context retrieval relying on RTFM"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -32,6 +32,7 @@ dependencies = [
     "pyyaml",
     "pylatexenc",
     "mcp>=1.27.1",
+    "pathspec>=0.10.0",
 ]
 
 [project.optional-dependencies]

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
+from writing_context_rtfm.retrieval import RetrievalEngine
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import (
     SectionCard,
@@ -93,7 +94,7 @@ class ProofreadPackGenerator:
         self,
         config: AppConfig,
         section_cards: SectionCards | None,
-        adapter: RTFMAdapter,
+        adapter: RetrievalEngine,
         store: ExtensionStore,
     ):
         self.config = config

@@ -7,16 +7,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+from writing_context_rtfm.retrieval import (
+    RetrievalEngine,
+    RetrievalEngineError,
+    RetrievalEngineHealth,
+)
 from writing_context_rtfm.schemas import RTFMResult
 
 
-class RTFMAdapterError(Exception):
+class RTFMAdapterError(RetrievalEngineError):
     """Exception raised for errors in the RTFM Adapter."""
 
     pass
 
 
-class RTFMAdapter:
+class RTFMAdapter(RetrievalEngine):
     """Wrapper around the RTFM CLI with optional direct SQLite fast-path."""
 
     def __init__(self, project_root: str | None = None, *, allow_cli_fallback: bool = True) -> None:
@@ -144,6 +149,9 @@ class RTFMAdapter:
 
     def search(self, query: str, *, corpus: str, limit: int = 10) -> list[RTFMResult]:
         """Search indexed content using RTFM."""
+        if not query or not query.strip():
+            return []
+
         direct_results = self._direct_sqlite_search(query, corpus=corpus, limit=limit)
         if direct_results is not None:
             return direct_results
@@ -219,3 +227,89 @@ class RTFMAdapter:
         if corpus:
             cmd.extend(["--corpus", corpus])
         self._run_command(cmd, capture_output=capture_output)
+
+    def get_db_path(self) -> Path | None:
+        """Return resolved path to the RTFM SQLite database."""
+        if not self.project_root:
+            return None
+        from writing_context_rtfm.utils import resolve_rtfm_db_path
+
+        return resolve_rtfm_db_path(Path(self.project_root))
+
+    def get_fingerprint(self) -> str:
+        """Return database invalidation fingerprint."""
+        from writing_context_rtfm.hashing import compute_rtfm_fingerprint
+
+        db_path = self.get_db_path()
+        if db_path and db_path.is_file():
+            return compute_rtfm_fingerprint(db_path)
+        return "no-rtfm-db"
+
+    def health_check(self) -> RetrievalEngineHealth:
+        """Perform a quick health and readiness diagnostic on RTFM."""
+        db_path = self.get_db_path()
+        db_exists = db_path.is_file() if db_path else False
+
+        cli_available = bool(
+            shutil.which(self.resolved_rtfm)
+            or (os.path.isabs(self.resolved_rtfm) and os.path.exists(self.resolved_rtfm))
+        )
+
+        version = None
+        for mod_name in ("rtfm", "rtfm_ai"):
+            try:
+                mod = __import__(mod_name)
+                version = getattr(mod, "__version__", None)
+                if version:
+                    break
+            except ImportError:
+                continue
+
+        total_chunks = 0
+        total_books = 0
+        has_embeddings = False
+        details: list[str] = []
+
+        if db_exists and db_path:
+            import sqlite3
+
+            try:
+                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT count(*) FROM chunks")
+                    total_chunks = cursor.fetchone()[0]
+                    cursor.execute("SELECT count(*) FROM books")
+                    total_books = cursor.fetchone()[0]
+
+                    tables = {
+                        row[0]
+                        for row in cursor.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    if "embeddings" in tables or "chunk_embeddings" in tables:
+                        has_embeddings = True
+                    else:
+                        cols = {row[1] for row in cursor.execute("PRAGMA table_info(chunks)")}
+                        if "embedding" in cols or "vector" in cols:
+                            has_embeddings = True
+                details.append(f"DB ready ({total_chunks} chunks, {total_books} books)")
+            except Exception as e:
+                details.append(f"DB read error: {e}")
+        else:
+            details.append("Database not found")
+
+        available = (db_exists and total_chunks > 0) or cli_available
+
+        return RetrievalEngineHealth(
+            available=available,
+            engine_name="rtfm",
+            version=version,
+            db_path=db_path,
+            db_exists=db_exists,
+            total_chunks=total_chunks,
+            total_books=total_books,
+            has_embeddings=has_embeddings,
+            details="; ".join(details),
+        )
+

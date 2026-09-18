@@ -58,6 +58,7 @@ result_b.txt
 *.db*
 *.sqlite*
 *.log
+*.ses
 scratch/
 
 # Simulation Sandbox

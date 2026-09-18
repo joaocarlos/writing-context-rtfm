@@ -9,8 +9,6 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from writing_context_rtfm import __version__
 from writing_context_rtfm.config import load_config
 from writing_context_rtfm.context_pack import ContextPackGenerator
@@ -497,6 +495,30 @@ def init_command(args: argparse.Namespace) -> None:
     # 5. Check and repair Codex global config.toml if present
     _update_codex_config()
 
+    if getattr(args, "quickstart", False):
+        print("\n[*] Quickstart: Bootstrapping manuscript section cards and index...")
+        try:
+            from writing_context_rtfm.features import cards_scan_command
+
+            scan_res = cards_scan_command(str(root))
+            sections_found = scan_res.get("sections_found", 0)
+            print(f"[*] Scanned manuscript structure: {sections_found} section(s) discovered.")
+        except Exception as e:
+            print(f"[*] Note: Card scanning deferred ({e})")
+
+        try:
+            from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+
+            adapter = RTFMAdapter(project_root=str(root))
+            print("[*] Synchronizing manuscript files into RTFM retrieval index...")
+            adapter.sync(capture_output=True)
+            print("[*] Retrieval index synchronized successfully.")
+        except Exception as e:
+            print(
+                f"[*] Note: RTFM index sync deferred ({e}). You can run 'writing-context-rtfm sync' at any time."
+            )
+        print("\n[OK] Quickstart complete! Your manuscript is ready for writing-context retrieval.")
+
 
 def init_cards_command(args: argparse.Namespace) -> None:
     """Scans the workspace and generates or appends section cards."""
@@ -751,125 +773,18 @@ def serve_command(args: argparse.Namespace) -> None:
 
 
 def doctor_command(args: argparse.Namespace) -> None:
+    from writing_context_rtfm.doctor import format_text_report, run_diagnostics
+
     project_root = Path(getattr(args, "project_root", ".")).resolve()
+    report = run_diagnostics(project_root)
 
-    print("Writing Context RTFM Extension Doctor")
-    print("======================================")
-
-    # 1. RTFM CLI / Package check
-    rtfm_cli = shutil.which("rtfm")
-    rtfm_pkg = False
-    try:
-        import rtfm_ai  # type: ignore # noqa: F401
-
-        rtfm_pkg = True
-    except ImportError:
-        try:
-            import rtfm  # type: ignore # noqa: F401
-
-            rtfm_pkg = True
-        except ImportError:
-            pass
-
-    print(
-        f"[*] RTFM CLI:         {'[OK] Found at ' + rtfm_cli if rtfm_cli else '[WARN] Not found in PATH'}"
-    )
-    print(
-        f"[*] RTFM Library:     {'[OK] Package rtfm/rtfm-ai importable' if rtfm_pkg else '[FAIL] Package not importable'}"
-    )
-
-    # 2. Project config
-    config_file = project_root / ".writing-context" / "config.yaml"
-    sc_file = project_root / ".writing-context" / "section_cards.yaml"
-    split_gen = project_root / ".writing-context" / "cards.generated.yaml"
-
-    print(f"[*] Project Root:     {project_root}")
-
-    config = None
-    if config_file.exists():
-        try:
-            config = load_config(str(project_root))
-            print(f"[*] Config:           [OK] Loaded from {config_file.relative_to(project_root)}")
-        except Exception as e:
-            print(
-                f"[*] Config:           [FAIL] Failed to load {config_file.relative_to(project_root)}: {e}"
-            )
+    if getattr(args, "json", False) is True:
+        print(json.dumps(report.to_dict(), indent=2))
     else:
-        print("[*] Config:           [WARN] config.yaml not found (using defaults)")
+        print(format_text_report(report))
 
-    if split_gen.exists():
-        try:
-            cards = load_section_cards(str(split_gen), required=False)
-            cnt = len(cards.sections) if cards else 0
-            print(
-                f"[*] Section Cards:    [OK] Split cards active ({cnt} sections in cards.generated.yaml)"
-            )
-        except Exception as e:
-            print(f"[*] Section Cards:    [FAIL] Failed to parse cards.generated.yaml: {e}")
-    elif sc_file.exists():
-        try:
-            with open(sc_file) as f:
-                yaml.safe_load(f)
-            cards = load_section_cards(str(sc_file), required=False)
-            if cards and cards.sections:
-                print(
-                    f"[*] Section Cards:    [OK] Parsed {len(cards.sections)} sections from {sc_file.relative_to(project_root)} (Note: Recommend split cards with 'writing-context-rtfm cards build')"
-                )
-            else:
-                print(
-                    f"[*] Section Cards:    [WARN] No sections found in {sc_file.relative_to(project_root)}"
-                )
-        except Exception as e:
-            print(
-                f"[*] Section Cards:    [FAIL] Failed to parse {sc_file.relative_to(project_root)}: {e}"
-            )
-    else:
-        print(
-            "[*] Section Cards:    [WARN] Section cards not found (Run 'writing-context-rtfm cards scan')"
-        )
-
-    # 3. Database Check
-    db_path = resolve_rtfm_db_path(project_root)
-    try:
-        rel_db = db_path.relative_to(project_root)
-    except ValueError:
-        rel_db = db_path
-
-    if db_path.exists():
-        print(f"[*] RTFM DB:          [OK] Found at {rel_db}")
-    else:
-        print(
-            f"[*] RTFM DB:          [FAIL] No RTFM library database found at {rel_db} (Needs sync)"
-        )
-
-    # 4. Cache Check
-    if not config:
-        with contextlib.suppress(Exception):
-            config = load_config(str(project_root))
-
-    if config:
-        cache_db = Path(config.cache.path)
-        if cache_db.exists():
-            try:
-                with ExtensionStore(str(cache_db)) as store:
-                    store.init_db()
-                try:
-                    rel_cache = cache_db.relative_to(project_root)
-                except ValueError:
-                    rel_cache = cache_db
-                print(f"[*] Cache DB:         [OK] Found and initialized at {rel_cache}")
-            except Exception as e:
-                print(
-                    f"[*] Cache DB:         [FAIL] Cache database at {cache_db} exists but failed to initialize: {e}"
-                )
-        else:
-            try:
-                rel_cache = cache_db.relative_to(project_root)
-            except ValueError:
-                rel_cache = cache_db
-            print(
-                f"[*] Cache DB:         [OK] Not found (will be automatically created at {rel_cache})"
-            )
+    if report.has_critical_failures:
+        sys.exit(1)
 
 
 def inspect_target_command(args: argparse.Namespace) -> None:
@@ -1139,11 +1054,16 @@ def cards_command(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command")
 
     # init
     p_init = subparsers.add_parser("init", help="Initialize configuration files")
     p_init.add_argument("--project-root", default=".", help="Project root path")
+    p_init.add_argument(
+        "--quickstart",
+        action="store_true",
+        help="One-command complete bootstrap: config, section cards scan, and initial index sync",
+    )
 
     # init-cards (deprecated in favor of 'cards scan')
     p_init_cards = subparsers.add_parser(
@@ -1276,6 +1196,11 @@ def main() -> None:
         "doctor", help="Run diagnostic health checks on extension environment"
     )
     p_doc.add_argument("--project-root", default=".", help="Project root path")
+    p_doc.add_argument(
+        "--json",
+        action="store_true",
+        help="Output diagnostic report in JSON format",
+    )
 
     # inspect-target
     p_insp = subparsers.add_parser(
@@ -1365,6 +1290,24 @@ def main() -> None:
     subparsers.add_parser("serve", help="Start the MCP server")
 
     args = parser.parse_args()
+
+    if not getattr(args, "command", None):
+        if not sys.stdin.isatty():
+            args.command = "serve"
+        else:
+            print(
+                f"Writing Context RTFM v{__version__} — Surgical Context for Writing Agents\n\n"
+                "Usage: writing-context-rtfm <command> [options]\n\n"
+                "Key Commands:\n"
+                "  doctor        Diagnose Python, dependencies, index, Zotero, API keys, models\n"
+                "  init          Initialize configuration (--quickstart for complete 1-step bootstrap)\n"
+                "  sync          Synchronize manuscript files into RTFM retrieval index\n"
+                "  cards         Manage section cards (build, update, validate)\n"
+                "  pack          Generate a targeted writing context pack\n"
+                "  serve         Start MCP server (STDIO mode for Claude Desktop / Cursor)\n\n"
+                "Tip: Run 'writing-context-rtfm --help' for full command list."
+            )
+            return
 
     commands = {
         "init": init_command,

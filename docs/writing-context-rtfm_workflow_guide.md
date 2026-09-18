@@ -24,65 +24,125 @@ graph TD
 
 ---
 
-## 2. Setup and Project Onboarding
+## 2. The Three Canonical Workflows
 
-To integrate the extension into a manuscript project, follow this setup sequence:
+### 2.1 Fluxo 1: Primeiro Uso (First Use & Setup)
 
-### Step 1: Install the Package
-Ensure the package is installed in the target Python environment:
+To start using `writing-context-rtfm` in a new or existing manuscript, setup takes less than a minute.
+
+#### Step 1: Zero-Install or Global CLI
+Choose between immediate execution with `uvx` (recommended for MCP clients) or global CLI installation:
+
 ```bash
-uv pip install writing-context-rtfm
+# Option A: Zero-install via uvx (temporary runtime, no environment clutter)
+uvx writing-context-rtfm doctor
+
+# Option B: Global tool install via uv
+uv tool install writing-context-rtfm
+
+# Option C: Global tool install via pipx
+pipx install writing-context-rtfm
+```
+*(Note: `rtfm-ai[embeddings]>=0.46.1` is bundled as an automatic dependency; no manual secondary installation of `rtfm-ai` is required).*
+
+#### Step 2: One-Command Project Quickstart
+Navigate to your manuscript directory and run:
+```bash
+writing-context-rtfm init --quickstart
+```
+This automated command:
+1. Generates `.writing-context/config.yaml` with default token budgets and role weights.
+2. Generates `.writing-context/cards.overrides.yaml.example` for human-controlled guidance.
+3. Automatically appends the SQLite cache path to `.gitignore`.
+4. Registers the MCP server entry into `.mcp.json`.
+5. Injects AI safety rules into `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md`.
+6. Scans LaTeX files, parses `\input` structures, and scaffolds `.writing-context/cards.generated.yaml`.
+7. Initializes the RTFM index directory and executes the initial synchronization (`library.db`).
+
+*(If you prefer manual, step-by-step onboarding, run `writing-context-rtfm init`, then `writing-context-rtfm cards build`, followed by `writing-context-rtfm sync`).*
+
+#### Step 3: Verify Environment Health with `doctor`
+Run the diagnostic doctor to confirm everything is operational:
+```bash
+writing-context-rtfm doctor
+```
+Doctor validates:
+- **Python**: Ensures version >= 3.13.
+- **Dependencies**: Confirms core (`rtfm`, `mcp`, `yaml`, `pylatexenc`, `pathspec`) and optional packages.
+- **Index**: Inspects `library.db`, chunk count, book count, and vector embeddings.
+- **Zotero & BibTeX**: Discovers local `.bib` files, Zotero desktop storage, and `zotero-mcp` availability.
+- **API Keys**: Verifies stored or environment credentials (OpenAI, Hugging Face, Anthropic).
+- **Hardware & Models**: Detects CPU cores, GPU/Metal acceleration, and model caches.
+
+#### Step 4: Register MCP in Your AI Editor
+Configure your editor (Claude Desktop, Cursor, Cline, Claude Code) using `uvx writing-context-rtfm` or `writing-context-rtfm serve`.
+
+---
+
+### 2.2 Fluxo 2: Uso Diário (Daily Writing Workflow)
+
+During daily authoring, `writing-context-rtfm` operates mostly autonomously through your AI writing agent:
+
+#### 1. Invisible Context Retrieval
+When writing, revising, or checking consistency in your manuscript, your AI agent automatically triggers the appropriate MCP tool:
+- **Section Drafting / Revision**: The agent calls `get_writing_context_pack` passing the current task, target section file, and token budget. The server extracts the unbroken target section, snaps AST boundaries (equations, tables), discovers 1-hop cross-references (`\ref{}`), resolves local BibTeX/Zotero literature, and enforces terminology rules.
+- **Line-Level Proofreading**: When asking the agent to proofread a paragraph, it calls `get_proofreading_context_pack(target_file="...", line_start=X, line_end=Y)`. This delivers an isolated prompt slice with strict glossary rules, avoiding open-ended search noise.
+
+#### 2. Writing & LaTeX Safety
+The author writes and edits naturally. When the agent generates edits, it adheres to the LaTeX Safety rules included in the context pack to prevent deleting labels, formulas, or citation anchors.
+
+#### 3. Refreshing Context After Edits
+When you add new chapters, write substantial text, or update your `.bib` library:
+```bash
+# Update the SQLite full-text search and embeddings index
+writing-context-rtfm sync
+
+# Update section cards if section headers, files, or dependencies changed
+writing-context-rtfm cards update
+```
+*(Alternatively, ask your agent in chat to run the MCP `refresh_index` tool).*
+
+#### 4. Terminology Audits
+Before submitting your manuscript, check terminology consistency across all sections:
+```bash
+# Query a single term's definition and forbidden variants
+writing-context-rtfm get-term "Context Pack"
+
+# Or ask your agent to run audit_manuscript_terminology via MCP
 ```
 
-### Step 2: Initialize Configuration and Rules
-Run the initialization command at the root of your project:
+---
+
+### 2.3 Fluxo 3: Troubleshooting (Diagnóstico e Resolução de Problemas)
+
+When something fails or returns unexpected context, follow this diagnostic procedure:
+
+#### Step 1: Run Doctor
+The primary diagnostic tool is `doctor`:
 ```bash
-writing-context-rtfm init
-```
-This command non-destructively initializes:
-1. **`.writing-context/config.yaml`**: The main configuration pointing to your RTFM corpus.
-2. **`.writing-context/cards.overrides.yaml.example`**: A sample template containing overrides formatting (document title, global thesis, terminology glossaries, style constraints, and section overrides).
-3. **`.gitignore`**: Appends cache database files to keep run history untracked.
-4. **`.mcp.json`**: Editor server definition.
-5. **`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`**: Appends agent guidelines.
+# Human-readable report with actionable hints
+writing-context-rtfm doctor
 
-### Step 3: Scaffold Section Cards
-Scan your project to compile the section metadata:
-```bash
-writing-context-rtfm cards build
-```
-Under the hood, this scans your LaTeX files for hierarchy and cross-references, uses model-assisted inference to extract purposes and constraints, and saves them to `.writing-context/cards.generated.yaml`.
-
-* **Model Inference Fallback Chain**: If no OpenAI API key is configured, `cards build` automatically attempts to resolve card extraction using a model fallback chain (OpenAI API -> Hugging Face serverless API using `HF_TOKEN` -> local Ollama server running at `http://localhost:11434` -> deterministic offline scan of LaTeX cross-references).
-* **Refining Card Properties**: Copy `.writing-context/cards.overrides.yaml.example` to `.writing-context/cards.overrides.yaml` and add your custom guidelines or section tweaks. The server merges overrides on top of the generated file at runtime.
-
-### Step 4: Install the RTFM CLI (Retrieval Engine)
-Since this extension uses RTFM to search and index files, ensure you install `rtfm-ai` globally or in your virtual environment:
-```bash
-# Global installation (recommended)
-uv tool install "rtfm-ai[embeddings]"
-
-# Or in a local project environment
-uv pip install "rtfm-ai[embeddings]"
+# Machine-readable output for scripts or AI agents
+writing-context-rtfm doctor --json
 ```
 
-### Step 5: Initialize and Sync the RTFM Index
-To enable semantic and keyword retrieval, initialize the RTFM configuration and perform the initial file synchronization:
-```bash
-# 1. Initialize the RTFM directory (.rtfm/)
-rtfm init
+#### Step 2: Diagnostic & Resolution Matrix
 
-# 2. Sync the project files to generate the local chunk database and embeddings
-rtfm sync
-```
-* **Embedding Model**: By default, RTFM automatically generates embeddings for all document chunks. It uses a fast, lightweight multilingual model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) which runs completely locally on your CPU/GPU and downloads automatically from Hugging Face on the first sync. No external API keys are required.
-* **Customizing Models**: You can customize the model by running the embedding step explicitly with a model alias (e.g., `fast`, `balanced`, or `quality`) or any Hugging Face model path:
-  ```bash
-  # Generate embeddings using the balanced model (BAAI/bge-base-en-v1.5)
-  rtfm embed --embed-model balanced
-  ```
+| Symptom / Error | Root Cause | Safe Resolution |
+| :--- | :--- | :--- |
+| `[!] Python: Python 3.12 (Needs >= 3.13)` | Incompatible Python runtime | Install Python 3.13+ using `uv python install 3.13` or run with `uvx --python 3.13 writing-context-rtfm`. |
+| `[!] Index: library.db missing or 0 chunks` | Retrieval index not built | Run `writing-context-rtfm sync` to index the manuscript files. |
+| `[!] Cards: Target file does not exist` | Renamed or deleted LaTeX file | Run `writing-context-rtfm cards validate` to detect stale cards, or `writing-context-rtfm cards rebuild` to re-scan. |
+| `[!] Zotero: connection refused` | Zotero Desktop is closed or not responding | Ensure Zotero Desktop is open. Note: Local `.bib` files continue working offline even if Zotero is unavailable. |
+| `[!] Zotero: collection not found` | Typos in collection name in `config.yaml` | Check collection names under `providers.zotero.extra.collections`. Use the full `Parent / Child` path for nested collections. |
+| Degraded context pack status (`status: degraded`) | Requested token budget too small for target | Increase the budget (e.g. `--budget 4000`), or allow elastic scaling (default). |
+| Stale cached context packs | Manuscript files edited externally | Clear the cache with `writing-context-rtfm cache clear`. |
+| Lingering background worker | Orphaned subprocesses from previous runs | Run `writing-context-rtfm cleanup` to terminate lingering PID registrations. |
 
-### 2.1 Empty Repositories and Overleaf Workflows
+---
+
+### 2.4 Empty Repositories and Overleaf Workflows
 
 Because `writing-context-rtfm` analyzes the LaTeX file structure of your project, onboarding requires files to exist locally:
 
@@ -99,9 +159,14 @@ If your manuscript is hosted on Overleaf, you must bridge it to your local envir
    - *GitHub Sync (Free)*: Enable GitHub Sync inside Overleaf and clone the target GitHub repository locally.
    - *Manual Download*: Download the project ZIP from Overleaf, extract it, and run `git init` locally.
 2. **Setup the extension**:
-   - Run the onboarding sequence (`writing-context-rtfm init`, `cards build`, `rtfm init`, and `rtfm sync`) inside the local folder.
+   - Run the onboarding sequence (`writing-context-rtfm init --quickstart` or step-by-step) inside the local folder.
 3. **Synchronize Changes**:
    - Let your AI agent write files locally. Commit and push the changes back to Overleaf or GitHub to automatically sync your Overleaf project.
+
+---
+
+### 2.5 Architecture & Decoupling Reference
+For details on how `writing-context-rtfm` isolates the `rtfm-ai` engine using the `RetrievalEngine` protocol and contract testing suite, refer to the [Architecture Boundaries Specification](architecture_boundaries.md).
 
 ---
 

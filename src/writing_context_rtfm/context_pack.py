@@ -24,7 +24,7 @@ from writing_context_rtfm.hashing import (
 from writing_context_rtfm.local_models import SpanReranker
 from writing_context_rtfm.providers.base import BaseContextProvider
 from writing_context_rtfm.providers.bibtex import BibTeXProvider
-from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+from writing_context_rtfm.retrieval import RetrievalEngine
 from writing_context_rtfm.schemas import (
     FILTER_AVOID_PATTERN,
     FILTER_LOW_SCORE,
@@ -414,7 +414,7 @@ class ContextPackGenerator:
         self,
         config: AppConfig,
         section_cards: SectionCards | None,
-        adapter: RTFMAdapter,
+        adapter: RetrievalEngine,
         store: ExtensionStore,
         providers: list[BaseContextProvider] | None = None,
         reranker: SpanReranker | None = None,

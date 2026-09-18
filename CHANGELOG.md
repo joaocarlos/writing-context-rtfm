@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.20.0] - 2026-09-18
+
+### Added
+- **Zero-Friction MCP Execution (`uvx writing-context-rtfm`)**: CLI automatically defaults to the `serve` subcommand when spawned non-interactively (piped stdio), enabling zero-install MCP integration in Claude Desktop, Cursor, and Cline without additional arguments.
+- **One-Command Project Quickstart (`writing-context-rtfm init --quickstart`)**: Added `--quickstart` flag combining configuration initialization, section card discovery (`cards build`), and initial RTFM index synchronization (`library.db`) into a single step.
+- **Comprehensive Diagnostic Doctor (`writing-context-rtfm doctor`)**:
+  - Implemented 6-category diagnostic reporting: **Python** (version $\ge 3.13$), **Dependencies** (core and optional), **Index** (SQLite FTS5 chunks, books, vector embeddings), **Zotero & BibTeX** (offline `.bib` discovery and Zotero desktop storage), **API Keys** (masked OpenAI, Hugging Face, Anthropic), and **Local Models & Hardware** (CPU cores, Metal/CUDA acceleration, model cache directories).
+  - Added structured `--json` export for programmatic and agent consumption.
+  - Added actionable remediation hints for identified warnings or failures.
+- **Stable Anti-Corruption Layer (`RetrievalEngine`)**:
+  - Defined `@runtime_checkable` `RetrievalEngine` protocol in `writing_context_rtfm.retrieval` standardizing retrieval operations (`search`, `context`, `expand`, `sync`, `health_check`, `get_fingerprint`, `get_db_path`).
+  - Added structured `RetrievalEngineHealth` dataclass and typed `RetrievalEngineError` exception hierarchy.
+- **Dedicated RTFM Contract Test Suite (`tests/test_rtfm_contract.py`)**: Added upstream contract validation verifying CLI flags (`--help`, `search --help`, `sync --help`, `embed --help`), SQLite schemas (`chunks`, `books`, `chunks_fts`), protocol adherence, and failure isolation against the latest upstream RTFM release.
+- **Dedicated Doctor Test Suite (`tests/test_doctor.py`)**: Added unit tests covering all diagnostic checks, text formatting, and JSON serialization.
+- **Architecture Boundaries Specification (`docs/architecture_boundaries.md`)**: Documented domain separation, ownership matrix, Anti-Corruption Layer, and upstream continuous testing policies.
+
+### Changed
+- **Upstream Retrieval Engine Compatibility**: Upgraded `rtfm-ai[embeddings]` dependency to `>=0.46.1` and validated 100% test pass rate against upstream release `0.46.1`.
+- **Decoupled Internal Architecture**: Updated `ContextPackGenerator`, `ProofreadPackGenerator`, and MCP server tools to depend strictly on the `RetrievalEngine` protocol rather than concrete adapter classes.
+- **Refactored RTFM Adapter**: `RTFMAdapter` now formally implements `RetrievalEngine`, with query hygiene short-circuiting empty strings and robust fallback isolation.
+- **Canonical Three-Workflow Documentation**: Restructured `README.md` and `docs/writing-context-rtfm_workflow_guide.md` around three clear user flows: Primeiro Uso (First Use), Uso Diário (Daily Usage), and Troubleshooting.
+
+### Fixed
+- Fixed `tests/test_token_budget.py` offline fallback test to isolate `tiktoken` cleanly without relying on ambient virtual environment state.
+- Fixed query short-circuiting in `RTFMAdapter` for whitespace-only search strings.
+
 ## [0.11.5] - 2026-09-16
 
 ### Added

@@ -38,13 +38,22 @@ writing-context-rtfm pack \
 
 ---
 
-## Installation & Onboarding
+## Installation & Zero-Friction Setup
 
-`writing-context-rtfm` is published on PyPI and runs as a Model Context Protocol (MCP) server.
+`writing-context-rtfm` is designed for near-zero installation friction. It is published on PyPI, bundles `rtfm-ai[embeddings]` automatically, and can be used directly without manual virtual environment configuration.
 
-### 1. Install writing-context-rtfm
-You can install the package globally or in your virtual environment:
+### 1. Instant Execution with `uvx` (Zero Install)
+You can run `writing-context-rtfm` directly without installing anything permanently:
+```bash
+# Direct MCP server invocation (used by Claude Desktop / Cursor)
+uvx writing-context-rtfm
 
+# Diagnostic check on any repository
+uvx writing-context-rtfm doctor
+```
+
+### 2. Global CLI Installation
+If you prefer having the CLI command permanently available in your shell:
 ```bash
 # Using uv (recommended)
 uv tool install writing-context-rtfm
@@ -52,20 +61,93 @@ uv tool install writing-context-rtfm
 # Using pipx
 pipx install writing-context-rtfm
 ```
+*(Note: `writing-context-rtfm` automatically pulls in `rtfm-ai[embeddings]>=0.46.1` as a core dependency. No separate `rtfm-ai` installation step is needed).*
 
-### 2. Install the RTFM CLI (Retrieval Engine)
-Since `writing-context-rtfm` queries and relies on the `rtfm-ai` database, you must install the `rtfm-ai` command-line tool to initialize and synchronize your manuscript's retrieval index:
+---
 
-```bash
-# Using uv (recommended)
-uv tool install "rtfm-ai[embeddings]"
+## The Three Canonical Workflows
 
-# Using pipx
-pipx install "rtfm-ai[embeddings]"
-```
-*(Note: If you are setting up inside a local virtual environment, running `uv pip install "writing-context-rtfm[tiktoken]"` will automatically pull in `rtfm-ai[embeddings]` as a library dependency, but installing it globally ensures the `rtfm` binary is available on your PATH).*
+### Workflow 1: First Use (Primeiro Uso)
+Set up a new or existing manuscript project in under 10 seconds:
 
-### 3. Literature Grounding (Offline BibTeX & Zotero)
+1. **One-Command Quickstart**:
+   ```bash
+   cd your-manuscript-repo
+   writing-context-rtfm init --quickstart
+   ```
+   This non-destructively:
+   - Creates `.writing-context/config.yaml` and `.writing-context/cards.overrides.yaml.example`.
+   - Adds `.writing-context/context_cache.sqlite` to your `.gitignore`.
+   - Registers the MCP server automatically in `.mcp.json`.
+   - Injects **Agent Rules of Thumb** blocks into `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md`.
+   - Automatically scans and scaffolds section cards (`cards.generated.yaml`).
+   - Runs initial synchronization of the RTFM retrieval index (`library.db`).
+
+   *(If you prefer step-by-step setup without automatic syncing, use `writing-context-rtfm init` followed by `writing-context-rtfm cards build` and `writing-context-rtfm sync`).*
+
+2. **Verify System Health with Doctor**:
+   ```bash
+   writing-context-rtfm doctor
+   ```
+   Runs a comprehensive check across 6 categories: Python version (>=3.13), core/optional dependencies, SQLite index health, Zotero/BibTeX discovery, API keys, and local model hardware.
+
+3. **Register MCP in Your Editor**:
+   Add `writing-context-rtfm` to Claude Desktop, Cursor, or VS Code (see [MCP Server Integration](#mcp-server-integration)).
+
+---
+
+### Workflow 2: Daily Writing (Uso Diário)
+Once installed, `writing-context-rtfm` operates silently in the background:
+
+1. **Transparent Agent Retrieval**:
+   When writing or revising, your AI agent automatically invokes the MCP tools:
+   - `get_writing_context_pack(task="...", target="sections/methodology.tex", token_budget=4000)`: Extracts unbroken target text, snaps equation/table boundaries, traverses `\ref{}` links, pulls relevant local BibTeX/Zotero citations, and enforces glossary constraints.
+   - `get_proofreading_context_pack(target_file="sections/abstract.tex", line_start=1, line_end=20)`: Delivers an isolated context slice without open-ended search noise.
+2. **Writing & Revising**:
+   Author drafts and revises text naturally. Agents follow the embedded immutability rules to avoid corrupting LaTeX environments, equations, and citations.
+3. **Updating Context After Significant Changes**:
+   When you add new files, write extensive paragraphs, or change literature references, update the retrieval index:
+   ```bash
+   # Synchronize the RTFM index
+   writing-context-rtfm sync
+
+   # Refresh section card metadata if LaTeX headers changed
+   writing-context-rtfm cards update
+   ```
+   *(Or ask your AI agent to trigger the `refresh_index` MCP tool directly from chat).*
+4. **Terminology Audits**:
+   Inspect or audit project-wide terminology consistency before submitting:
+   ```bash
+   writing-context-rtfm get-term "Context Pack"
+   ```
+
+---
+
+### Workflow 3: Troubleshooting (Resolução de Problemas)
+When unexpected behavior occurs, use the built-in diagnostic and self-healing tools:
+
+1. **Run Doctor for Immediate Diagnosis**:
+   ```bash
+   writing-context-rtfm doctor
+   # Or for machine-readable JSON output:
+   writing-context-rtfm doctor --json
+   ```
+
+2. **Diagnostic Matrix (Symptom -> Cause -> Safe Fix)**:
+   - **`[!] Python: Python < 3.13`**:
+     *Fix*: `uv python install 3.13` or run with `uvx --python 3.13 writing-context-rtfm`.
+   - **`[!] Index: library.db missing or 0 chunks`**:
+     *Fix*: Run `writing-context-rtfm sync` to build the full-text search index.
+   - **`[!] Cards: Target file does not exist or stale references`**:
+     *Fix*: Run `writing-context-rtfm cards validate` to find issues, or `writing-context-rtfm cards rebuild` to re-scan.
+   - **`[!] Zotero: connection refused or collection not found`**:
+     *Fix*: Ensure Zotero Desktop is running locally, or verify collection names in `.writing-context/config.yaml`. Local `.bib` files remain 100% active offline even if Zotero is unreachable.
+   - **Cache Inconsistency or Orphaned Workers**:
+     *Fix*: Run `writing-context-rtfm cache clear` to flush context cache, or `writing-context-rtfm cleanup` to terminate lingering worker processes.
+
+---
+
+### Literature Grounding (Offline BibTeX & Zotero)
 `writing-context-rtfm` grounds your AI writing agent in your real bibliography and literature library, preventing citation key and claim hallucinations:
 
 * **Native Offline BibTeX Provider (Built-in)**: Automatically discovers and parses local `.bib` files (extracting titles, authors, years, abstracts, DOIs, and venues). Works 100% offline out-of-the-box with zero configuration or external dependencies.
@@ -98,40 +180,6 @@ pipx install "rtfm-ai[embeddings]"
   ```
 
   Collection entries form a union. A bare collection name is accepted only when it is unique in the selected library; otherwise use its full `Parent / Child` path. Citation-key lookups remain library-wide. Because Zotero's semantic result metadata does not expose collection membership, the provider performs a bounded semantic overfetch and strictly retains only item keys enumerated from the configured collections. Metadata searches are sent to each collection directly, and duplicate papers are removed by Zotero item key.
-
----
-
-### 4. Quick Project Onboarding
-To integrate the server into your manuscript repository, run the following commands:
-
-#### Step A: Initialize configuration and editor rules
-```bash
-writing-context-rtfm init
-```
-This command non-destructively:
-* Creates a self-documenting `.writing-context/config.yaml` file template showing how to tune token budgets and role weights.
-* Appends the cache database path to your `.gitignore`.
-* Updates your local `.mcp.json` to register the MCP server automatically.
-* Adds **Agent Rules of Thumb** blocks into `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` to guide AI agents on retrieving context first and respecting LaTeX boundaries.
-
-#### Step B: Auto-scaffold your section cards
-```bash
-writing-context-rtfm cards build
-```
-This scans your workspace for LaTeX files, parses `\input` structures, maps section dependencies, and uses model-assisted inference to automatically scaffold purposes, key terms, and constraints. It outputs the generated structure to `.writing-context/cards.generated.yaml`. 
-
-*(Note: If you do not have or want to use an OpenAI API key, `writing-context-rtfm` supports a model fallback chain for card scaffolding: OpenAI API -> Hugging Face Serverless Inference API (requires `HF_TOKEN`, defaults to `Qwen/Qwen2.5-Coder-7B-Instruct`) -> Local Ollama server (running at `http://localhost:11434`, defaults to `qwen2.5-coder` or `phi3`) -> Deterministic Offline Scan fallback).*
-
-#### Step C: Initialize, Sync and Setup Embeddings
-Initialize the RTFM index inside your repository and generate the semantic search embeddings:
-```bash
-# 1. Initialize RTFM configuration
-rtfm init
-
-# 2. Run the initial sync to build the index database
-rtfm sync
-```
-*(Note: `writing-context-rtfm init` only configures the writing-context settings, cards, and agent rules; it does not automatically initialize or sync the underlying RTFM database. This setup assumes you already have at least part of the `.tex` files in your repository—if starting from an empty repository or using Overleaf, ensure your files are placed locally first).*
 
 ##### Baseline Model Embeddings
 * **Default Local Model**: By default, RTFM automatically generates embeddings for all document chunks. It uses a fast, lightweight multilingual model (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`) which runs completely locally on your CPU/GPU and downloads automatically from Hugging Face on the first sync. No external API keys are required.
@@ -219,6 +267,21 @@ generator:
 ### 1. Claude Desktop
 Add this to your `claude_desktop_config.json` (on macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`):
 
+**Option A: Zero-install with `uvx` (Recommended)**
+```json
+{
+  "mcpServers": {
+    "writing-context-rtfm": {
+      "command": "uvx",
+      "args": [
+        "writing-context-rtfm"
+      ]
+    }
+  }
+}
+```
+
+**Option B: Using globally installed CLI**
 ```json
 {
   "mcpServers": {
@@ -237,7 +300,7 @@ Add this to your `claude_desktop_config.json` (on macOS: `~/Library/Application 
 2. Navigate to **Features** > **MCP** and click **+ Add New MCP Server**.
 3. **Name:** `writing-context-rtfm`
 4. **Type:** `command`
-5. **Command:** `writing-context-rtfm serve`
+5. **Command:** `uvx writing-context-rtfm` (or `writing-context-rtfm serve`)
 
 ### 3. VS Code Extensions (Cline, Roo Code)
 Update your MCP settings file (e.g., `cline_mcp_settings.json`):
@@ -246,9 +309,9 @@ Update your MCP settings file (e.g., `cline_mcp_settings.json`):
 {
   "mcpServers": {
     "writing-context-rtfm": {
-      "command": "writing-context-rtfm",
+      "command": "uvx",
       "args": [
-        "serve"
+        "writing-context-rtfm"
       ]
     }
   }
@@ -257,10 +320,10 @@ Update your MCP settings file (e.g., `cline_mcp_settings.json`):
 
 ### 4. Claude Code (Anthropic CLI Agent)
 ```bash
-# Global configuration
-claude mcp add --scope user --transport stdio writing-context-rtfm -- writing-context-rtfm serve
+# Global configuration (using uvx)
+claude mcp add --scope user --transport stdio writing-context-rtfm -- uvx writing-context-rtfm
 
-# Repository-local configuration
+# Local configuration (using installed CLI)
 claude mcp add --scope local --transport stdio writing-context-rtfm -- writing-context-rtfm serve
 ```
 
@@ -275,7 +338,9 @@ claude mcp add --scope local --transport stdio writing-context-rtfm -- writing-c
 | `rtfm-ai` | The Retrieval Layer | Indexes everything, runs FTS/Semantic search, returns raw hits. | 25 raw chunks |
 | `writing-context-rtfm` | The Curation Layer | Filters noise, applies constraints, ranks by structural priority. | 4 essential chunks |
 
-We do **not** replace or fork RTFM. We wrap it. RTFM is built to fetch memory. `writing-context-rtfm` is built to decide *what is enough memory to write a specific section*. 
+We do **not** replace or fork RTFM. We wrap it behind a clean, typed **Anti-Corruption Layer** (`RetrievalEngine`). RTFM is built to fetch raw memory; `writing-context-rtfm` is built to decide *what is enough memory to write a specific section*. 
+
+For a complete breakdown of component ownership, the `RetrievalEngine` protocol, and our continuous upstream contract testing policy, see the [Architecture Boundaries Specification](docs/architecture_boundaries.md). 
 
 ---
 

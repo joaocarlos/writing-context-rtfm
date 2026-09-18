@@ -21,6 +21,7 @@ from writing_context_rtfm.features import (
 from writing_context_rtfm.hashing import compute_rtfm_fingerprint
 from writing_context_rtfm.latex import build_reference_graph
 from writing_context_rtfm.proofread import ProofreadPackGenerator
+from writing_context_rtfm.retrieval import RetrievalEngine
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import (
     SectionCards,
@@ -885,7 +886,7 @@ _RUNTIME_CACHE = None
 
 
 def _load_runtime() -> tuple[
-    AppConfig, SectionCards | None, list[str], RTFMAdapter, ExtensionStore
+    AppConfig, SectionCards | None, list[str], RetrievalEngine, ExtensionStore
 ]:
     """Load config, section cards, adapter, store. Returns (config, cards, card_warnings, adapter, store).
 

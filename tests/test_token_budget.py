@@ -7,7 +7,10 @@ from writing_context_rtfm.token_budget import estimate_span_tokens, estimate_tok
 
 class TestTokenBudget(unittest.TestCase):
     def test_tokenizer_initialization_error_uses_offline_fallback(self):
-        with patch("tiktoken.get_encoding", side_effect=OSError("offline")):
+        import sys
+        mock_tiktoken = MagicMock()
+        mock_tiktoken.get_encoding.side_effect = OSError("offline")
+        with patch.dict(sys.modules, {"tiktoken": mock_tiktoken}):
             self.assertIsNone(token_budget._load_encoding())
 
     def test_estimate_span_tokens(self):

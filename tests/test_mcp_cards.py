@@ -129,15 +129,12 @@ class TestMCPCards(unittest.TestCase):
         res = json.loads(process_message(json.dumps(req)))
         tools = res["result"]["tools"]
         tool_names = [t["name"] for t in tools]
-        self.assertIn("review_card_candidates", tool_names)
-        self.assertIn("accept_card_candidate", tool_names)
-        self.assertIn("reject_card_candidate", tool_names)
-        self.assertIn("edit_card_field", tool_names)
-        self.assertIn("explain_card_candidate", tool_names)
-        self.assertIn("inspect_target_section", tool_names)
-        self.assertIn("get_card_field_diff", tool_names)
-        self.assertIn("get_section_card_history", tool_names)
-        self.assertEqual(len(tool_names), 19)
+        self.assertIn("manage_section_cards", tool_names)
+        self.assertIn("get_writing_context_pack", tool_names)
+        self.assertIn("get_proofreading_context_pack", tool_names)
+        self.assertIn("request_more_context", tool_names)
+        self.assertIn("submit_generation_feedback", tool_names)
+        self.assertEqual(len(tool_names), 5)
 
     def test_initialize_advertises_tools_and_prompts(self):
         req = {"jsonrpc": "2.0", "id": 8, "method": "initialize", "params": {}}
@@ -482,6 +479,148 @@ class TestMCPCards(unittest.TestCase):
         self.assertEqual(payload["confidence"], 0.95)
         self.assertEqual(payload["evidence"], "Rule-based acronym extraction")
         self.assertIn("Rule-based acronym extraction", payload["explanation"])
+
+    def test_manage_section_cards_unified_dispatch(self):
+        # 1. Error on missing action
+        req_err = {
+            "jsonrpc": "2.0",
+            "id": 101,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {},
+            },
+        }
+        res_err = json.loads(process_message(json.dumps(req_err)))
+        self.assertTrue(res_err["result"].get("isError"))
+        self.assertIn("Missing required argument: action", res_err["result"]["content"][0]["text"])
+
+        # 2. Error on unknown action
+        req_unk = {
+            "jsonrpc": "2.0",
+            "id": 102,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {"action": "nonexistent_action"},
+            },
+        }
+        res_unk = json.loads(process_message(json.dumps(req_unk)))
+        self.assertTrue(res_unk["result"].get("isError"))
+        self.assertIn("Unknown action", res_unk["result"]["content"][0]["text"])
+
+        # 3. Action 'review'
+        req_rev = {
+            "jsonrpc": "2.0",
+            "id": 103,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {"action": "review", "project_root": str(self.test_dir)},
+            },
+        }
+        res_rev = json.loads(process_message(json.dumps(req_rev)))
+        self.assertNotIn("isError", res_rev.get("result", {}))
+        rev_payload = json.loads(res_rev["result"]["content"][0]["text"])
+        self.assertIn("candidates", rev_payload)
+        values = [c["value"] for c in rev_payload["candidates"]]
+        self.assertIn("FLC", values)
+
+        # 4. Action 'explain' (using candidate provenance / rationale)
+        req_exp = {
+            "jsonrpc": "2.0",
+            "id": 104,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {
+                    "action": "explain",
+                    "section_id": "section_intro",
+                    "field": "key_terms",
+                    "value": "FLC",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res_exp = json.loads(process_message(json.dumps(req_exp)))
+        self.assertNotIn("isError", res_exp.get("result", {}))
+        exp_payload = json.loads(res_exp["result"]["content"][0]["text"])
+        self.assertEqual(exp_payload.get("confidence"), 0.95)
+
+        # 5. Action 'accept'
+        req_acc = {
+            "jsonrpc": "2.0",
+            "id": 105,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {
+                    "action": "accept",
+                    "section_id": "section_intro",
+                    "field": "key_terms",
+                    "value": "FLC",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res_acc = json.loads(process_message(json.dumps(req_acc)))
+        self.assertNotIn("isError", res_acc.get("result", {}))
+
+        # 6. Action 'edit' (alias: target -> section_id)
+        req_edit = {
+            "jsonrpc": "2.0",
+            "id": 106,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {
+                    "action": "edit",
+                    "target": "section_intro",
+                    "field": "purpose",
+                    "value": "Unified purpose via manage_section_cards",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res_edit = json.loads(process_message(json.dumps(req_edit)))
+        self.assertNotIn("isError", res_edit.get("result", {}))
+
+        # 7. Action 'diff'
+        req_diff = {
+            "jsonrpc": "2.0",
+            "id": 107,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {
+                    "action": "diff",
+                    "target": "section_intro",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res_diff = json.loads(process_message(json.dumps(req_diff)))
+        self.assertNotIn("isError", res_diff.get("result", {}))
+
+        # 8. Action 'history'
+        req_hist = {
+            "jsonrpc": "2.0",
+            "id": 108,
+            "method": "tools/call",
+            "params": {
+                "name": "manage_section_cards",
+                "arguments": {
+                    "action": "history",
+                    "target": "section_intro",
+                    "project_root": str(self.test_dir),
+                },
+            },
+        }
+        res_hist = json.loads(process_message(json.dumps(req_hist)))
+        self.assertNotIn("isError", res_hist.get("result", {}))
+        hist_payload = json.loads(res_hist["result"]["content"][0]["text"])
+        self.assertIn("history", hist_payload)
+        self.assertTrue(len(hist_payload["history"]) >= 1)
 
 
 if __name__ == "__main__":

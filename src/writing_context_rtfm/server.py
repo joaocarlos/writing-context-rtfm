@@ -362,6 +362,11 @@ def get_tools_list() -> dict[str, Any]:
                                 "it to preserve mandatory target context."
                             ),
                         },
+                        "include_diagnostics": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "When true, includes candidate trace diagnostics and funnel breakdown in pack.",
+                        },
                         "output_mode": {
                             "type": "string",
                             "enum": ["prompt", "structured", "both"],
@@ -370,88 +375,6 @@ def get_tools_list() -> dict[str, Any]:
                                 "Output rendering format: 'prompt' returns formatted_prompt without duplicating excerpts in source_spans; "
                                 "'structured' returns excerpt inside source_spans without prompt; 'both' returns both."
                             ),
-                        },
-                    },
-                    "required": ["task"],
-                },
-            },
-            {
-                "name": "explain_context_pack",
-                "description": (
-                    "Generate a writing context pack and return its complete diagnostic candidate trace and funnel. "
-                    "Explains candidate lifecycle (retrieved -> normalized -> deduplicated -> provider_owned -> "
-                    "exposed -> filtered -> eligible -> selected/rejected) along with bibliographic ownership audit "
-                    "records without altering generation behavior."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "Natural-language description of the writing task.",
-                        },
-                        "target": {
-                            "type": "string",
-                            "description": "section_id from .writing-context/section_cards.yaml.",
-                        },
-                        "token_budget": {
-                            "type": "integer",
-                            "description": "Soft cap on tokens spent on source_spans.",
-                        },
-                        "must_consider": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "Required evidence atoms: concrete concepts, facts, literals, or citation keys.",
-                        },
-                        "task_type": {
-                            "type": "string",
-                            "enum": [
-                                "write_new_section",
-                                "revise_existing_section",
-                                "proofread",
-                                "expand",
-                                "condense",
-                                "align_with_previous_sections",
-                                "review",
-                            ],
-                            "description": "The specific type of writing task.",
-                        },
-                        "line_start": {
-                            "type": "integer",
-                            "description": "Optional starting line range in the target file.",
-                        },
-                        "line_end": {
-                            "type": "integer",
-                            "description": "Optional ending line range in the target file.",
-                        },
-                        "pack_mode": {
-                            "type": "string",
-                            "enum": ["minimal", "standard", "deep"],
-                            "description": "Override context pack depth level/budget.",
-                        },
-                        "mode": {
-                            "type": "string",
-                            "enum": ["write", "rewrite", "adapt", "compress"],
-                            "description": (
-                                "Functional writing mode: 'write', 'rewrite', 'adapt', 'compress'. "
-                                "If omitted, automatically inferred."
-                            ),
-                        },
-                        "role_budgets": {
-                            "type": "object",
-                            "description": "Optional dictionary overriding default budget allocations.",
-                            "additionalProperties": {"type": "number"},
-                        },
-                        "strict_budget": {
-                            "type": "boolean",
-                            "default": False,
-                            "description": "When true, enforce token_budget as a hard cap.",
-                        },
-                        "output_mode": {
-                            "type": "string",
-                            "enum": ["prompt", "structured", "both"],
-                            "default": "prompt",
-                            "description": "Output rendering format.",
                         },
                     },
                     "required": ["task"],
@@ -517,49 +440,6 @@ def get_tools_list() -> dict[str, Any]:
                         },
                     },
                     "required": ["target_file", "line_start", "line_end"],
-                },
-            },
-            {
-                "name": "refresh_index",
-                "description": (
-                    "Re-sync the RTFM index against the manuscript files and invalidate cached context "
-                    "packs. Call this after meaningful edits to manuscript content so subsequent "
-                    "get_writing_context_pack / get_proofreading_context_pack calls reflect the new state. "
-                    "Returns {status: 'ok', cache_invalidated: bool} on success."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_root": {
-                            "type": "string",
-                            "description": (
-                                "Custom project root path (optional). Defaults to the workspace root."
-                            ),
-                        },
-                        "corpus": {
-                            "type": "string",
-                            "description": "RTFM corpus name to refresh. Defaults to the configured corpus (usually 'manuscript').",
-                        },
-                    },
-                },
-            },
-            {
-                "name": "initialize_section_cards",
-                "description": (
-                    "Inspect the manuscript structure and generate a starter .writing-context/section_cards.yaml "
-                    "and .writing-context/config.yaml file if they don't already exist. Safe to run: does NOT "
-                    "overwrite existing files."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_root": {
-                            "type": "string",
-                            "description": (
-                                "Custom project root path (optional). Defaults to current workspace."
-                            ),
-                        }
-                    },
                 },
             },
             {
@@ -634,265 +514,87 @@ def get_tools_list() -> dict[str, Any]:
                 },
             },
             {
-                "name": "get_target_feedback_summary",
+                "name": "manage_section_cards",
                 "description": (
-                    "Retrieve aggregated feedback metrics for a target section for offline inspection."
+                    "Unified management tool for section cards, candidate lifecycle, and manuscript structural inspection. "
+                    "Supported actions:\n"
+                    "  'init' — scaffold initial section_cards.yaml and config.yaml.\n"
+                    "  'review' — list pending candidate updates from manuscript AST.\n"
+                    "  'accept' — accept a candidate value into cards.overrides.yaml.\n"
+                    "  'reject' — reject a candidate value with rationale.\n"
+                    "  'edit' — manually update or override a card field.\n"
+                    "  'diff' — inspect diff between generated and overridden cards.\n"
+                    "  'history' — view append-only card decision log.\n"
+                    "  'explain' — retrieve model rationale and provenance for a candidate.\n"
+                    "  'inspect' — inspect target section metadata, constraints, and text.\n"
+                    "  'graph' — inspect manuscript reference and citation dependency graph.\n"
+                    "  'term' — look up term definitions, variants, and avoid list in glossary.\n"
+                    "  'audit' — audit manuscript terminology usage and drift."
                 ),
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "target": {
-                            "type": "string",
-                            "description": "Target section ID (e.g. 'section_methodology').",
-                        },
-                    },
-                    "required": ["target"],
-                },
-            },
-            {
-                "name": "audit_manuscript_terminology",
-                "description": (
-                    "Scan all section cards key terms and run searches against the RTFM index to analyze usage "
-                    "patterns, flagging undeclared usages, missing terms, and potential semantic drift."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_root": {
-                            "type": "string",
-                            "description": "Custom project root path (optional). Defaults to current workspace.",
-                        }
-                    },
-                },
-            },
-            {
-                "name": "get_term_context",
-                "description": (
-                    "Look up a term in the terminology glossary defined in section_cards.yaml. "
-                    "Returns the term definition, allowed variants, and phrases to avoid."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "term": {
-                            "type": "string",
-                            "description": "The term (canonical, variant, or avoid phrase) to look up.",
-                        },
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path.",
-                        },
-                    },
-                    "required": ["term"],
-                },
-            },
-            {
-                "name": "get_manuscript_reference_graph",
-                "description": (
-                    "Build and return the LaTeX cross-reference and dependency graph of the manuscript. "
-                    "This details defined labels, references to those labels, citations, and file inclusions."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional custom project root path. Defaults to the workspace root.",
-                        }
-                    },
-                },
-            },
-            {
-                "name": "inspect_target_section",
-                "description": (
-                    "Inspect the effective metadata, purpose, constraints, terminology, and "
-                    "dependencies for one section card."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "target": {"type": "string", "description": "Section card ID to inspect."},
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path.",
-                        },
-                    },
-                    "required": ["target"],
-                },
-            },
-            {
-                "name": "review_card_candidates",
-                "description": "List all pending section card candidates from cards.generated.yaml with status 'generated'.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace.",
-                        }
-                    },
-                },
-            },
-            {
-                "name": "accept_card_candidate",
-                "description": "Approve a candidate field value for a section. Writes the approved value to cards.overrides.yaml and updates the status to 'accepted' in lock.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "section_id": {
-                            "type": "string",
-                            "description": "The target section ID (e.g. 'section_introduction').",
-                        },
-                        "field": {
-                            "type": "string",
-                            "enum": ["purpose", "key_terms", "facts", "constraints"],
-                            "description": "The field of the candidate to accept.",
-                        },
-                        "value": {
-                            "type": "string",
-                            "description": "The specific candidate value to accept. For list fields, specifies the item value.",
-                        },
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace.",
-                        },
-                    },
-                    "required": ["section_id", "field", "value"],
-                },
-            },
-            {
-                "name": "reject_card_candidate",
-                "description": "Reject a candidate field value for a section. Marks the candidate status as 'rejected' in cards.lock.json and cards.generated.yaml.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "section_id": {"type": "string", "description": "The target section ID."},
-                        "field": {
-                            "type": "string",
-                            "enum": ["purpose", "key_terms", "facts", "constraints"],
-                            "description": "The field of the candidate to reject.",
-                        },
-                        "value": {
-                            "type": "string",
-                            "description": "The specific candidate value to reject. For list fields, specifies the item value.",
-                        },
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace.",
-                        },
-                    },
-                    "required": ["section_id", "field", "value"],
-                },
-            },
-            {
-                "name": "edit_card_field",
-                "description": "Directly modify or set a field value in cards.overrides.yaml for a specific section.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "section_id": {"type": "string", "description": "The target section ID."},
-                        "field": {
+                        "action": {
                             "type": "string",
                             "enum": [
-                                "purpose",
-                                "role",
-                                "key_terms",
-                                "depends_on",
-                                "must_preserve",
-                                "avoid",
-                                "constraints",
-                                "path",
-                                "title",
+                                "init",
+                                "review",
+                                "accept",
+                                "reject",
+                                "edit",
+                                "diff",
+                                "history",
+                                "explain",
+                                "inspect",
+                                "graph",
+                                "term",
+                                "audit",
                             ],
-                            "description": "The overrides field to update.",
-                        },
-                        "value": {
-                            "description": "The new value to assign to the overrides field. Can be a string or a list of strings depending on the field.",
-                            "anyOf": [
-                                {"type": "string"},
-                                {"type": "array", "items": {"type": "string"}},
-                                {"type": "null"},
-                            ],
+                            "description": "The card management or structural inspection action to perform.",
                         },
                         "project_root": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace.",
+                            "description": "Optional project root path (defaults to workspace root).",
                         },
-                    },
-                    "required": ["section_id", "field", "value"],
-                },
-            },
-            {
-                "name": "explain_card_candidate",
-                "description": "Provide extraction details/evidence/provenance for a specific card candidate.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "section_id": {"type": "string", "description": "The target section ID."},
+                        "target": {
+                            "type": "string",
+                            "description": "Section ID (for inspect, history, edit, diff) or file path.",
+                        },
+                        "section_id": {
+                            "type": "string",
+                            "description": "Section card ID (alias for target).",
+                        },
+                        "candidate_id": {
+                            "type": "string",
+                            "description": "Candidate ID (for accept, reject, explain).",
+                        },
                         "field": {
                             "type": "string",
-                            "enum": ["purpose", "key_terms", "facts", "constraints"],
-                            "description": "The candidate field.",
+                            "description": "Field name (e.g. 'purpose', 'constraints', 'key_terms').",
                         },
                         "value": {
-                            "type": "string",
-                            "description": "The specific candidate value to explain.",
+                            "description": "New value for the field (for edit, accept).",
                         },
-                        "project_root": {
+                        "reason": {
                             "type": "string",
-                            "description": "Optional project root path. Defaults to current workspace.",
+                            "description": "Rationale or comment for the action.",
                         },
-                    },
-                    "required": ["section_id", "field", "value"],
-                },
-            },
-            {
-                "name": "get_card_field_diff",
-                "description": (
-                    "Compare generated, human override, and effective values for every field "
-                    "in a section card."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "section_id": {
+                        "term": {
                             "type": "string",
-                            "description": "Section card ID to compare.",
-                        },
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path.",
-                        },
-                    },
-                    "required": ["section_id"],
-                },
-            },
-            {
-                "name": "get_section_card_history",
-                "description": (
-                    "Return the append-only accept, reject, edit, and delete history for a "
-                    "section card, together with its current decision snapshot."
-                ),
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "section_id": {
-                            "type": "string",
-                            "description": "Section card ID whose history should be returned.",
+                            "description": "Glossary term to look up (for action='term').",
                         },
                         "limit": {
                             "type": "integer",
                             "default": 50,
-                            "minimum": 1,
-                            "maximum": 100,
-                            "description": "Maximum number of most-recent events to return.",
+                            "description": "Maximum number of history entries to return (for action='history').",
                         },
-                        "project_root": {
-                            "type": "string",
-                            "description": "Optional project root path.",
+                        "force": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "Force overwrite during initialization (for action='init').",
                         },
                     },
-                    "required": ["section_id"],
+                    "required": ["action"],
                 },
             },
         ]
@@ -1046,6 +748,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     line_end = int(line_end_val) if line_end_val is not None else None
     output_mode = str(args.get("output_mode") or config.context.output_mode or "prompt")
     mode = args.get("mode")
+    include_diagnostics = bool(args.get("include_diagnostics", False))
 
     try:
         pack = generator.generate(
@@ -1061,6 +764,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             strict_budget=strict_budget,
             output_mode=output_mode,
             mode=mode,
+            include_diagnostics=include_diagnostics,
         )
     except Exception as e:
         logger.exception("Pack generation failed")
@@ -2147,6 +1851,63 @@ def handle_explain_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
         )
 
 
+def handle_manage_section_cards(args: dict[str, Any]) -> dict[str, Any]:
+    """Unified handler for managing section cards and structural manuscript inspection."""
+    if not args or "action" not in args:
+        return _error_response(ERROR_INVALID_INPUT, "Missing required argument: action")
+
+    action = str(args.get("action", "")).strip().lower()
+    call_args = dict(args)
+
+    # Harmonize target / section_id / card_id identifiers
+    ident = (
+        call_args.get("target")
+        or call_args.get("section_id")
+        or call_args.get("card_id")
+        or call_args.get("section")
+    )
+    if ident:
+        call_args["target"] = ident
+        call_args["section_id"] = ident
+        call_args["section"] = ident
+
+    # Harmonize reason / comment
+    if "reason" in call_args and "comment" not in call_args:
+        call_args["comment"] = call_args["reason"]
+    elif "comment" in call_args and "reason" not in call_args:
+        call_args["reason"] = call_args["comment"]
+
+    if action in ("init", "initialize"):
+        return handle_initialize_section_cards(call_args)
+    elif action in ("review", "list"):
+        return handle_review_card_candidates(call_args)
+    elif action == "accept":
+        return handle_accept_card_candidate(call_args)
+    elif action == "reject":
+        return handle_reject_card_candidate(call_args)
+    elif action in ("edit", "update"):
+        return handle_edit_card_field(call_args)
+    elif action == "explain":
+        return handle_explain_card_candidate(call_args)
+    elif action == "diff":
+        return handle_get_card_field_diff(call_args)
+    elif action == "history":
+        return handle_get_section_card_history(call_args)
+    elif action == "inspect":
+        return handle_inspect_target_section(call_args)
+    elif action == "graph":
+        return handle_get_manuscript_reference_graph(call_args)
+    elif action == "term":
+        return handle_get_term_context(call_args)
+    elif action == "audit":
+        return handle_audit_manuscript_terminology(call_args)
+    else:
+        return _error_response(
+            ERROR_INVALID_INPUT,
+            f"Unknown action: '{action}'. Expected one of: 'init', 'review', 'accept', 'reject', 'edit', 'explain', 'diff', 'history', 'inspect', 'graph', 'term', 'audit'.",
+        )
+
+
 def process_message(line: str) -> str | None:
     global WORKSPACE_ROOT, _RUNTIME_CACHE
     try:
@@ -2410,6 +2171,8 @@ def process_message(line: str) -> str | None:
                 call_args = params.get("arguments", {})
                 if name == "get_writing_context_pack":
                     result = handle_get_writing_context_pack(call_args)
+                elif name == "manage_section_cards":
+                    result = handle_manage_section_cards(call_args)
                 elif name == "explain_context_pack":
                     result = handle_explain_context_pack(call_args)
                 elif name == "get_proofreading_context_pack":

@@ -8,25 +8,11 @@
 
 | Tool Name | Primary Purpose | Category |
 | :--- | :--- | :--- |
-| [`get_writing_context_pack`](#1-get_writing_context_pack) | Retrieve surgical context pack for drafting/rewriting sections. | Core Writing |
-| [`explain_context_pack`](#2-explain_context_pack) | Retrieve writing context pack with complete candidate lifecycle diagnostics and funnel. | Observability & Diagnostics |
-| [`get_proofreading_context_pack`](#3-get_proofreading_context_pack) | Retrieve context and immutability rules for proofreading/polishing text. | Proofreading |
-| [`request_more_context`](#4-request_more_context) | Paginate and fetch additional background spans for a previous run. | Pagination |
-| [`submit_generation_feedback`](#5-submit_generation_feedback) | Submit evaluation feedback on retrieved context to optimize cache. | Evaluation |
-| [`audit_manuscript_terminology`](#6-audit_manuscript_terminology) | Detect undeclared term usage, drift, and glossary mismatches across drafts. | Terminology |
-| [`get_term_context`](#7-get_term_context) | Look up term definitions, variants, and words to avoid. | Terminology |
-| [`get_manuscript_reference_graph`](#8-get_manuscript_reference_graph) | Inspect `\label`, `\ref`, and `\cite` cross-reference dependency graph. | Graph & AST |
-| [`inspect_target_section`](#9-inspect_target_section) | Inspect metadata, purpose, constraints, and dependencies for a section. | Cards & Structure |
-| [`initialize_section_cards`](#10-initialize_section_cards) | Scan workspace and scaffold `cards.generated.yaml`. | Card Management |
-| [`review_card_candidates`](#11-review_card_candidates) | List pending generated candidates for human/agent review. | Card Management |
-| [`accept_card_candidate`](#12-accept_card_candidate) | Accept a candidate value into `cards.overrides.yaml`. | Card Management |
-| [`reject_card_candidate`](#13-reject_card_candidate) | Reject a candidate value and record reason in `cards.lock.json`. | Card Management |
-| [`edit_card_field`](#14-edit_card_field) | Manually edit or override a specific field in section cards. | Card Management |
-| [`explain_card_candidate`](#15-explain_card_candidate) | Retrieve model rationale, confidence, and provenance for a candidate. | Card Management |
-| [`get_card_field_diff`](#16-get_card_field_diff) | Inspect changes between generated and overridden section cards. | Card Management |
-| [`get_section_card_history`](#17-get_section_card_history) | View modification history and candidate decisions for a section. | Card Management |
-| [`get_target_feedback_summary`](#18-get_target_feedback_summary) | Retrieve aggregated feedback metrics for a target section for offline inspection. | Evaluation |
-| [`refresh_index`](#19-refresh_index) | Re-sync RTFM retrieval index and invalidate stale cache entries. | Maintenance |
+| [`get_writing_context_pack`](#1-get_writing_context_pack) | Retrieve surgical context pack for drafting/rewriting sections (supports write, rewrite, adapt, compress, and include_diagnostics). | Core Writing |
+| [`get_proofreading_context_pack`](#2-get_proofreading_context_pack) | Retrieve context and immutability rules for proofreading/polishing text. | Proofreading |
+| [`request_more_context`](#3-request_more_context) | Paginate and fetch additional background spans for a previous run. | Pagination |
+| [`submit_generation_feedback`](#4-submit_generation_feedback) | Submit evaluation feedback on retrieved context to optimize cache. | Evaluation |
+| [`manage_section_cards`](#5-manage_section_cards) | Unified management for cards, candidates, diffs, history, and structural manuscript inspection (init, review, accept, reject, edit, explain, diff, history, inspect, graph, term, audit). | Card & Structure Management |
 
 
 ---

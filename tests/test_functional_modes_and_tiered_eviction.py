@@ -285,3 +285,27 @@ def test_server_handlers_forward_mode(monkeypatch, test_env):
     assert not res_exp.get("isError")
     exp_data = json.loads(res_exp["content"][0]["text"])
     assert exp_data.get("mode") == "compress"
+
+
+def test_server_handler_include_diagnostics(monkeypatch, test_env):
+    """MCP server handler supports include_diagnostics=True in get_writing_context_pack."""
+    workspace, config, cards, mock_adapter, mock_store = test_env
+
+    monkeypatch.setattr(
+        "writing_context_rtfm.server._load_runtime",
+        lambda: (config, cards, [], mock_adapter, mock_store),
+    )
+
+    args = {
+        "task": "Test diagnostics retrieval",
+        "target": "section_intro",
+        "include_diagnostics": True,
+        "output_mode": "structured",
+    }
+    res = handle_get_writing_context_pack(args)
+    assert not res.get("isError")
+    pack_data = json.loads(res["content"][0]["text"])
+    assert "diagnostics" in pack_data
+    assert pack_data["diagnostics"] is not None
+    assert "candidates" in pack_data["diagnostics"]
+    assert "funnel" in pack_data["diagnostics"]

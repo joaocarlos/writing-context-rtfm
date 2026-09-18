@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.22.0] - 2026-09-18
+
+### Changed
+- **MCP Tool Catalog Consolidation (Single Front-Door Pattern)**:
+  - Compressed the runtime MCP tool catalog (`tools/list`) from 19 disparate tools down to **5 essential tools**, eliminating LLM tool choice paralysis and slashing static schema token bloat in agent prompts by ~75% (<1,000 tokens):
+    1. `get_writing_context_pack`: Main front-door tool for drafting/revising text, consolidating functional modes (`write`, `rewrite`, `adapt`, `compress`) and on-demand explainability diagnostics (`include_diagnostics: true`).
+    2. `get_proofreading_context_pack`: Surgical paragraph/line-level proofreading with strict LaTeX/Pandoc environment preservation.
+    3. `request_more_context`: Context expansion and pagination via `run_id`.
+    4. `submit_generation_feedback`: Retrieval evaluation feedback for cache scoring.
+    5. `manage_section_cards`: Unified governance and structural inspection tool consolidating 12 previous tools into a single action-based interface (`init`, `review`, `accept`, `reject`, `edit`, `diff`, `history`, `explain`, `inspect`, `graph`, `term`, `audit`).
+  - Implemented parameter harmonization in `manage_section_cards` (aliases for `target`/`section_id`/`card_id` and `reason`/`comment`).
+  - Added `include_diagnostics` flag to `get_writing_context_pack`, cleanly superseding `explain_context_pack`.
+- **Dependency Environment Synchronization**:
+  - Upgraded lockfile and virtual environment to latest upstream dependencies on PyPI, notably `rtfm-ai==0.46.1`, `mcp==2.2.0`, `torch==2.14.0`, and `pytest==9.1.1`.
+  - Validated 100% test pass rate (422 passed) against `rtfm-ai 0.46.1` in runtime with 0 regressions.
+
+### Documentation & Guidelines
+- Updated `docs/mcp_tools_reference.md` to reflect the 5-tool catalog matrix.
+- Updated agent rules of thumb in `AGENTS.md` and `GEMINI.md` to guide agents toward `manage_section_cards` and consolidated modes.
+
 ## [0.21.0] - 2026-09-18
 
 ### Added

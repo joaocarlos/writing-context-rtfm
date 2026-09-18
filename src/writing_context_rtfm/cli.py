@@ -773,7 +773,7 @@ def _render_pack_preview(pack: ContextPack, config: Any, no_color: bool = False)
         lines.append("-" * w)
         for idx, s in enumerate(pack.source_spans, 1):
             role_tier = s.source_role
-            if (s.metadata or {}).get("tier") is not None:
+            if s.metadata and s.metadata.get("tier") is not None:
                 role_tier += f" [T{s.metadata['tier']}]"
             elif getattr(s, "is_explicit_citation", False):
                 role_tier += " [Tier 1]"
@@ -796,10 +796,10 @@ def _render_pack_preview(pack: ContextPack, config: Any, no_color: bool = False)
     if pack.diagnostics and pack.diagnostics.funnel:
         fn = pack.diagnostics.funnel
         lines.append(
-            f"DIAGNOSTIC FUNNEL: {fn.get('retrieved', 0)} retrieved -> "
-            f"{fn.get('deduplicated', 0)} deduplicated -> "
-            f"{fn.get('eligible', 0)} eligible -> "
-            f"{fn.get('selected', 0)} selected"
+            f"DIAGNOSTIC FUNNEL: {fn.retrieved} retrieved -> "
+            f"{fn.deduplicated} deduplicated -> "
+            f"{fn.eligible} eligible -> "
+            f"{fn.selected} selected"
         )
         if pack.diagnostics.rejections_by_reason:
             rej_items = [f"{k}: {v}" for k, v in pack.diagnostics.rejections_by_reason.items()]

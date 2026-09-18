@@ -5,7 +5,7 @@ from typing import Any
 
 def _load_encoding() -> Any | None:
     try:
-        import tiktoken  # type: ignore[import-not-found]
+        import tiktoken
 
         return tiktoken.get_encoding("cl100k_base")
     except Exception:

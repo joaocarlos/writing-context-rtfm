@@ -1400,6 +1400,9 @@ class ContextPackGenerator:
                 token_budget = auto_budget
 
         # --- Query expansion & telemetry ---
+        query_specs: list[QuerySpec]
+        dep_cards: list[SectionCard]
+        query_type_map: dict[str, str]
         if inferred_mode == "compress":
             query_specs, dep_cards, query_type_map = [], [], {}
         else:

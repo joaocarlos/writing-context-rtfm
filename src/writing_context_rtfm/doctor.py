@@ -806,11 +806,8 @@ def run_doctor_fix(project_root: str | Path = ".") -> list[str]:
                 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 
                 adapter = RTFMAdapter(project_root=str(root))
-                sync_res = adapter.sync(str(root), corpus=config.rtfm.corpus)
-                status = (
-                    sync_res.get("status", "synced") if isinstance(sync_res, dict) else "synced"
-                )
-                actions.append(f"Synchronized RTFM retrieval index ({status})")
+                adapter.sync(str(root), corpus=config.rtfm.corpus)
+                actions.append("Synchronized RTFM retrieval index (synced)")
             except Exception as e:
                 actions.append(f"Attempted RTFM sync: {e}")
 

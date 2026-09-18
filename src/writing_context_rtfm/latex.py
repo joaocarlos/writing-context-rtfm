@@ -189,3 +189,107 @@ def build_reference_graph(project_root: str) -> dict[str, Any]:
         "citations": citations,
         "file_dependencies": file_dependencies,
     }
+
+
+def extract_latex_macros(text: str) -> dict[str, str]:
+    """Extract custom LaTeX macro and operator definitions from text or preamble.
+
+    Supports:
+    - \\newcommand{\\macro}{def} / \\newcommand\\macro{def}
+    - \\renewcommand / \\providecommand
+    - \\DeclareMathOperator{\\op}{name} / \\DeclareMathOperator*{\\op}{name}
+    - \\def\\macro{def} / \\def\\macro#1{def}
+    """
+    macros: dict[str, str] = {}
+    preamble = text.split(r"\begin{document}")[0] if r"\begin{document}" in text else text
+
+    # 1. \newcommand, \renewcommand, \providecommand, \DeclareMathOperator
+    p1 = re.compile(
+        r"\\(?:newcommand|renewcommand|providecommand|DeclareMathOperator)\*?\s*"
+        r"(?:\{\s*\\([a-zA-Z@]+)\s*\}|\\([a-zA-Z@]+))\s*"
+        r"(?:\[(\d+)\])?\s*"
+        r"\{((?:[^{}]|\{[^{}]*\})*)\}"
+    )
+    for m in p1.finditer(preamble):
+        name = m.group(1) or m.group(2)
+        args_count = m.group(3)
+        body = m.group(4).strip()
+        macro_key = f"\\{name}"
+        if args_count:
+            macros[macro_key] = f"[{args_count}] {body}"
+        else:
+            macros[macro_key] = body
+
+    # 2. \def
+    p2 = re.compile(r"\\def\s*\\([a-zA-Z@]+)\s*([^{]*)\s*\{((?:[^{}]|\{[^{}]*\})*)\}")
+    for m in p2.finditer(preamble):
+        name = m.group(1)
+        params = m.group(2).strip()
+        body = m.group(3).strip()
+        macro_key = f"\\{name}"
+        if macro_key not in macros:
+            macros[macro_key] = f"{params} {body}".strip() if params else body
+
+    return macros
+
+
+_PREAMBLE_MACRO_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+
+
+def find_preamble_macros(project_root: str | Path) -> dict[str, str]:
+    """Discover preamble and macro files in project_root and extract all author-defined macros.
+
+    Scans common macro files (macros.tex, preamble.tex, defs.tex, notation.tex)
+    as well as the preambles of entry-point .tex files (main.tex, paper.tex).
+    Results are cached by file modification timestamps.
+    """
+    global _PREAMBLE_MACRO_CACHE
+    root = Path(project_root).resolve()
+
+    # Priority candidate files
+    candidate_names = (
+        "macros.tex",
+        "preamble.tex",
+        "defs.tex",
+        "definitions.tex",
+        "notation.tex",
+        "commands.tex",
+        "main.tex",
+        "paper.tex",
+        "thesis.tex",
+    )
+
+    found_files: list[Path] = []
+    for name in candidate_names:
+        p = root / name
+        if p.is_file():
+            found_files.append(p)
+
+    # If no standard entry/macro files found, inspect all top-level .tex files
+    if not found_files:
+        for p in root.glob("*.tex"):
+            if p.is_file():
+                found_files.append(p)
+
+    all_macros: dict[str, str] = {}
+    for f in found_files:
+        cache_key = str(f)
+        try:
+            mtime = f.stat().st_mtime
+        except OSError:
+            continue
+
+        cached_entry = _PREAMBLE_MACRO_CACHE.get(cache_key)
+        if cached_entry is not None and cached_entry[0] == mtime:
+            all_macros.update(cached_entry[1])
+            continue
+
+        try:
+            content = f.read_text(encoding="utf-8", errors="replace")
+            file_macros = extract_latex_macros(content)
+            _PREAMBLE_MACRO_CACHE[cache_key] = (mtime, file_macros)
+            all_macros.update(file_macros)
+        except Exception:
+            continue
+
+    return all_macros

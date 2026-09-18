@@ -42,7 +42,17 @@ class BibEntry:
     def abstract(self) -> str:
         return self.fields.get("abstract", "")
 
-    def format_snippet(self) -> str:
+    @property
+    def notes(self) -> str:
+        return (
+            self.fields.get("notes")
+            or self.fields.get("note")
+            or self.fields.get("annote")
+            or self.fields.get("annotation")
+            or ""
+        )
+
+    def format_snippet(self, companion_notes: str | None = None) -> str:
         """Format entry into a clean, markdown-formatted citation snippet."""
         lines = [f"## {self.title or self.citekey}"]
         lines.append(f"**Citation Key:** `{self.citekey}` ({self.entry_type})")
@@ -61,6 +71,12 @@ class BibEntry:
             lines.append(f"**DOI:** {self.fields['doi']}")
         if self.abstract:
             lines.append(f"\n### Abstract\n{self.abstract}")
+
+        # Author Reading Notes from BibTeX fields or companion markdown notes
+        combined_notes = companion_notes or self.notes
+        if combined_notes:
+            lines.append(f"\n### Author Reading Notes\n{combined_notes.strip()}")
+
         return "\n".join(lines)
 
 
@@ -222,15 +238,6 @@ class BibTeXProvider(BaseContextProvider):
             all_entries.update(entries)
         return all_entries
 
-    @staticmethod
-    def _entry_metadata(entry: BibEntry) -> dict[str, str]:
-        return {
-            "snippet": entry.format_snippet(),
-            "citekey": entry.citekey,
-            "doi": entry.fields.get("doi", ""),
-            "title": entry.title,
-        }
-
     def entries_for_source_span(
         self,
         path: str,
@@ -257,6 +264,35 @@ class BibTeXProvider(BaseContextProvider):
             and entry.line_start <= line_end
             and entry.line_end >= line_start
         ]
+
+    def _find_companion_note(self, citekey: str) -> str | None:
+        """Find repository-local companion Markdown reading notes for a citation key."""
+        root = Path(self.config.rtfm.project_root).resolve()
+        candidate_rel_paths = [
+            Path("notes") / f"{citekey}.md",
+            Path("annotations") / f"{citekey}.md",
+            Path("literature") / f"{citekey}.md",
+            Path(".writing-context") / "notes" / f"{citekey}.md",
+        ]
+        for rel_p in candidate_rel_paths:
+            note_file = root / rel_p
+            if note_file.is_file():
+                try:
+                    content = note_file.read_text(encoding="utf-8", errors="replace").strip()
+                    if content:
+                        return content
+                except OSError:
+                    pass
+        return None
+
+    def _entry_metadata(self, entry: BibEntry) -> dict[str, str]:
+        companion_notes = self._find_companion_note(entry.citekey)
+        return {
+            "snippet": entry.format_snippet(companion_notes=companion_notes),
+            "citekey": entry.citekey,
+            "doi": entry.fields.get("doi", ""),
+            "title": entry.title,
+        }
 
     def reconstruct_entry(self, entry: BibEntry, *, score: float) -> SourceSpan:
         """Represent a parsed entry as provider-owned evidence with source provenance."""

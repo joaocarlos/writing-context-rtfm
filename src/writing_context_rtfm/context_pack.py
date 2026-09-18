@@ -992,6 +992,7 @@ class ContextPackGenerator:
         output_mode: str | None = None,
         include_diagnostics: bool = False,
         mode: str | None = None,
+        git_diff: bool = False,
     ) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
@@ -1056,6 +1057,7 @@ class ContextPackGenerator:
             role_budgets=role_budgets,
             output_mode=output_mode,
             mode=inferred_mode,
+            git_diff=git_diff,
         )
 
         # Calculate real config file content hash
@@ -1258,6 +1260,56 @@ class ContextPackGenerator:
                 warnings.append(f"Failed to read target file '{target_path}': {e}")
                 if has_explicit_line_range:
                     status = "degraded"
+
+        # --- Git-diff modified ranges collection ---
+        git_modified_ranges: dict[str, list[tuple[int, int]]] = {}
+        if git_diff:
+            from writing_context_rtfm.git_utils import get_git_modified_ranges
+
+            git_modified_ranges = get_git_modified_ranges(pr)
+            if git_modified_ranges:
+                quality.git_diff_active = True
+                quality.git_modified_files = list(git_modified_ranges.keys())
+                for rel_p, ranges in git_modified_ranges.items():
+                    full_p = Path(pr) / rel_p
+                    if full_p.is_file():
+                        try:
+                            f_lines = full_p.read_text(
+                                encoding="utf-8", errors="replace"
+                            ).splitlines()
+                            for start, end in ranges:
+                                if start <= len(f_lines):
+                                    snippet_lines = f_lines[
+                                        max(0, start - 1) : min(len(f_lines), end)
+                                    ]
+                                    snippet = "\n".join(snippet_lines)
+                                    if snippet.strip():
+                                        diff_span = SourceSpan(
+                                            path=rel_p,
+                                            line_start=start,
+                                            line_end=min(len(f_lines), end),
+                                            reason="Git-diff modified lines",
+                                            score=0.98,
+                                            priority="essential",
+                                            source_role=(
+                                                "target_text"
+                                                if target_path and _path_matches(rel_p, target_path)
+                                                else "local_context"
+                                            ),
+                                            metadata={
+                                                "snippet": snippet,
+                                                "git_modified": True,
+                                            },
+                                        )
+                                        all_candidates.append(diff_span)
+                                        if tracker is not None:
+                                            tracker.record_retrieved(
+                                                diff_span,
+                                                query="git_diff",
+                                                stream_key="git_modified",
+                                            )
+                        except OSError:
+                            pass
 
         # --- Baseline Tokens & Strict Overflow Check (Stop before retrieval) ---
         essential_tokens = sum(
@@ -1779,6 +1831,7 @@ class ContextPackGenerator:
             target_path=target_path,
             line_start=line_start,
             line_end=line_end,
+            git_modified_ranges=git_modified_ranges,
         )
 
         # --- Apply MMR Diversity Re-ranking ---
@@ -2107,6 +2160,20 @@ class ContextPackGenerator:
                 "citações originais, fórmulas e resultados empíricos, adequando o nível de abstração, rigor e didatismo ao documento destino."
             )
 
+        # LaTeX custom macro preservation
+        from writing_context_rtfm.latex import find_preamble_macros
+
+        preamble_macros = find_preamble_macros(pr)
+        if preamble_macros:
+            quality.custom_macros = preamble_macros
+            macro_sample = ", ".join(list(preamble_macros.keys())[:10])
+            if len(preamble_macros) > 10:
+                macro_sample += f" (and {len(preamble_macros) - 10} more)"
+            constraints.append(
+                f"PRESERVAÇÃO DE MACROS LATEX: Preserve estritamente as macros e operadores customizados definidos pelo autor: "
+                f"{macro_sample}. Não redefina, expanda ou substitua por sintaxe LaTeX alternativa."
+            )
+
         # Include constraint serialization in token estimate
         constraint_tokens = estimate_tokens("\n".join(constraints)) if constraints else 0
         if doc_thesis:
@@ -2390,6 +2457,7 @@ class ContextPackGenerator:
         target_path: str | None = None,
         line_start: int | None = None,
         line_end: int | None = None,
+        git_modified_ranges: dict[str, list[tuple[int, int]]] | None = None,
     ) -> list[SourceSpan]:
         """Assign priority: essential | supporting | background and source_role: target_text | local_context | dependency | reference."""
         if not spans:
@@ -2405,9 +2473,23 @@ class ContextPackGenerator:
 
         result = []
         for span in spans:
-            span.path.replace("\\", "/")
-            is_target = _path_matches(span.path, target_path_val)
-            is_dep = any(_path_matches(span.path, dp) for dp in dep_paths)
+            norm_span_path = span.path.replace("\\", "/")
+            is_target = _path_matches(norm_span_path, target_path_val)
+            is_dep = any(_path_matches(norm_span_path, dp) for dp in dep_paths)
+
+            # Check if span overlaps with git modified ranges
+            is_git_modified = False
+            if git_modified_ranges:
+                for g_path, g_ranges in git_modified_ranges.items():
+                    if _path_matches(norm_span_path, g_path):
+                        span_s = span.line_start or 1
+                        span_e = span.line_end or span_s + 30
+                        for start, end in g_ranges:
+                            if max(start, span_s) <= min(end, span_e):
+                                is_git_modified = True
+                                break
+                    if is_git_modified:
+                        break
 
             # Determine source_role
             if span.source_role in ("target_text", "local_context"):
@@ -2446,16 +2528,26 @@ class ContextPackGenerator:
             if span.priority == "essential":
                 priority = "essential"
 
+            span_score = span.score
+            span_reason = span.reason
+            updated_meta = dict(span.metadata or {})
+            if is_git_modified:
+                priority = "essential"
+                span_score = min(1.0, round(span_score * 1.3 + 0.25, 4))
+                if "[git-diff modified]" not in span_reason:
+                    span_reason = f"{span_reason} [git-diff modified]"
+                updated_meta["git_modified"] = True
+
             result.append(
                 SourceSpan(
                     path=span.path,
                     line_start=span.line_start,
                     line_end=span.line_end,
-                    reason=span.reason,
-                    score=span.score,
+                    reason=span_reason,
+                    score=span_score,
                     priority=priority,
                     query=span.query,
-                    metadata=span.metadata,
+                    metadata=updated_meta,
                     source_role=role,
                 )
             )

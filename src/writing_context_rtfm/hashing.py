@@ -27,6 +27,7 @@ def compute_task_hash(
     retrieval_policy_version: int = 2,
     must_consider: list[str] | None = None,
     mode: str | None = None,
+    git_diff: bool = False,
 ) -> str:
     sorted_role_budgets = tuple(sorted(role_budgets.items())) if role_budgets else ()
     normalized_must_consider = tuple(item.strip() for item in (must_consider or []) if item.strip())
@@ -44,6 +45,7 @@ def compute_task_hash(
         output_mode,
         str(retrieval_policy_version),
         str(mode or ""),
+        str(git_diff),
     )
 
 

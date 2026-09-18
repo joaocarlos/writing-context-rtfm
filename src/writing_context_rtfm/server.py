@@ -51,12 +51,28 @@ def _format_write_section_prompt(pack: Any) -> str:
         "\n".join(f"- {c}" for c in pack.constraints) if pack.constraints else "None"
     )
 
+    custom_macros_block = ""
+    quality = getattr(pack, "quality", None)
+    macros = (
+        quality.get("custom_macros")
+        if isinstance(quality, dict)
+        else getattr(quality, "custom_macros", None)
+    )
+    if macros and isinstance(macros, dict):
+        macro_lines = [f"- `{m}`: {defn}" for m, defn in sorted(macros.items())[:20]]
+        custom_macros_block = (
+            "\n[Author Defined LaTeX Macros (Do NOT redefine or alter)]:\n"
+            + "\n".join(macro_lines)
+            + "\n"
+        )
+
     return (
         f"You are writing/editing a manuscript section. Follow the task instructions below and stay aligned with the manuscript's thesis and constraints.\n\n"
         f"Task: {pack.task}\n"
         f"Target Section: {pack.target or 'Unknown'}\n\n"
         f"[Manuscript Thesis]:\n{pack.document_thesis or 'None'}\n\n"
-        f"[Constraints & Rules]:\n{constraints_joined}\n\n"
+        f"[Constraints & Rules]:\n{constraints_joined}\n"
+        f"{custom_macros_block}\n"
         f"[Prior Source Spans (Surgical Context)]:\n{source_spans_joined}\n\n"
         f"Instruction: Draft or revise the section based strictly on the provided context spans and constraints above. Maintain academic tone and LaTeX/Markdown formatting consistency."
     )
@@ -374,6 +390,14 @@ def get_tools_list() -> dict[str, Any]:
                             "description": (
                                 "Output rendering format: 'prompt' returns formatted_prompt without duplicating excerpts in source_spans; "
                                 "'structured' returns excerpt inside source_spans without prompt; 'both' returns both."
+                            ),
+                        },
+                        "git_diff": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "When true, inspects uncommitted git changes and boosts line ranges "
+                                "that were recently edited into high-priority candidate context."
                             ),
                         },
                     },
@@ -749,6 +773,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     output_mode = str(args.get("output_mode") or config.context.output_mode or "prompt")
     mode = args.get("mode")
     include_diagnostics = bool(args.get("include_diagnostics", False))
+    git_diff = bool(args.get("git_diff", False))
 
     try:
         pack = generator.generate(
@@ -765,6 +790,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             output_mode=output_mode,
             mode=mode,
             include_diagnostics=include_diagnostics,
+            git_diff=git_diff,
         )
     except Exception as e:
         logger.exception("Pack generation failed")

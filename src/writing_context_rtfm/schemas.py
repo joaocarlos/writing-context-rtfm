@@ -86,6 +86,9 @@ class PackQuality:
     atomic_coverage: dict[str, Any] | None = None
     reason: str | None = None
     budget_overflow_details: dict[str, Any] | None = None
+    custom_macros: dict[str, str] | None = None
+    git_diff_active: bool = False
+    git_modified_files: list[str] | None = None
 
 
 # --- Canonical Reason Taxonomy ---------------------------------------------

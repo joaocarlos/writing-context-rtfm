@@ -724,6 +724,7 @@ def pack_command(args: argparse.Namespace) -> None:
             role_budgets=role_budgets,
             include_diagnostics=include_diagnostics,
             mode=getattr(args, "mode", None),
+            git_diff=getattr(args, "git_diff", False),
         )
     if include_diagnostics:
         _print_pack_explanation(pack, as_json=getattr(args, "json", False))
@@ -754,6 +755,12 @@ def _render_pack_preview(pack: ContextPack, config: Any, no_color: bool = False)
         lines.append(f"Token Budget: {budget_val}  (Estimated Tokens: {pack.estimated_tokens})")
     else:
         lines.append(f"Tokens:       {pack.estimated_tokens} estimated")
+    if (pack.quality or {}).get("git_diff_active"):
+        mod_files = (pack.quality or {}).get("git_modified_files") or []
+        lines.append(f"Git-Diff:     Active ({len(mod_files)} modified file(s))")
+    if (pack.quality or {}).get("custom_macros"):
+        macro_count = len((pack.quality or {}).get("custom_macros") or {})
+        lines.append(f"LaTeX Macros: {macro_count} custom macro(s) protected")
     lines.append("-" * w)
 
     if pack.document_thesis:
@@ -866,6 +873,7 @@ def preview_pack_command(args: argparse.Namespace) -> None:
             role_budgets=role_budgets,
             include_diagnostics=True,
             mode=getattr(args, "mode", None),
+            git_diff=getattr(args, "git_diff", False),
         )
 
     if getattr(args, "raw", False):
@@ -1289,6 +1297,11 @@ def main() -> None:
         help="Execution profile preset (fast, balanced, thorough)",
     )
     parser_pack.add_argument(
+        "--git-diff",
+        action="store_true",
+        help="Prioritize and boost lines modified in active git branch/working tree",
+    )
+    parser_pack.add_argument(
         "--explain",
         action="store_true",
         help="Print structured diagnostic funnel and candidate explanation",
@@ -1340,6 +1353,11 @@ def main() -> None:
         help="Execution profile preset (fast, balanced, thorough)",
     )
     parser_exp_pack.add_argument(
+        "--git-diff",
+        action="store_true",
+        help="Prioritize and boost lines modified in active git branch/working tree",
+    )
+    parser_exp_pack.add_argument(
         "--json", action="store_true", help="Output full JSON containing diagnostics"
     )
 
@@ -1387,6 +1405,11 @@ def main() -> None:
         "--profile",
         choices=["fast", "balanced", "thorough"],
         help="Execution profile preset (fast, balanced, thorough)",
+    )
+    parser_preview.add_argument(
+        "--git-diff",
+        action="store_true",
+        help="Prioritize and boost lines modified in active git branch/working tree",
     )
     parser_preview.add_argument(
         "--raw",

@@ -10,8 +10,8 @@ exclude = [
 
 [project]
 name = "writing-context-rtfm"
-version = "0.20.0"
-description = "MCP extension for writing-context retrieval relying on RTFM"
+version = "0.21.0"
+description = "Context engine prioritizing RTFM search results into compact context packs"
 readme = "README.md"
 requires-python = ">=3.13"
 authors = [

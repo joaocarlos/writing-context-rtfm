@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.21.0] - 2026-09-18
+
+### Added
+- **Tiered Eviction & Explicit Citation Protection (Tier 1)**:
+  - References explicitly cited in target text or task (e.g. `\cite{...}` or `@citekey`) bypass provider quota caps even under strict budgeting.
+  - Implemented Quota Spillover in budget allocation: non-reference roles (dependencies, local context) claim needed tokens first, and remaining unallocated budget cleanly spills over to general reference candidates, eliminating prompt token vacancy.
+  - Added structured `budget_overflow` status with `quality.budget_overflow_details` (reporting missing spans, missing token counts, and suggested budgets).
+- **Task-Specific Writing Modes (`mode`)**:
+  - Added functional writing modes: `write` (new sections from scratch with previous-section transition bridges), `rewrite` (targeted revision), `adapt` (cross-genre/audience adaptation with citation and formula preservation), and `compress` (non-destructive volume reduction targeting ~15% word reduction while strictly preserving citations, formulas, numbers, and technical terms).
+  - Implemented automatic mode inference when `mode` is omitted, inspecting task semantics and file existence.
+  - Added `--mode` parameter to CLI commands `pack` and `explain-pack`, and `mode` argument to MCP tool `get_writing_context_pack` and prompt `write_section`.
+- **LaTeX AST Equation & Cross-Reference Resolution**:
+  - Extended native `pylatexenc` AST traversal in `latex.py` and `virtual_doc.py` to recognize `\eqref{...}`, `\pageref{...}`, and `\vref{...}` macros, connecting equation targets directly into the 1-hop reference graph.
+- **Dedicated Test Suite**:
+  - Added `tests/test_functional_modes_and_tiered_eviction.py` validating Tier 1 protection, spillover, budget overflow telemetry, and all task modes.
+
 ## [0.20.0] - 2026-09-18
 
 ### Added

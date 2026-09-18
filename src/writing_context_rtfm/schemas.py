@@ -85,6 +85,7 @@ class PackQuality:
     card_uncertainties: dict[str, Any] | None = None
     atomic_coverage: dict[str, Any] | None = None
     reason: str | None = None
+    budget_overflow_details: dict[str, Any] | None = None
 
 
 # --- Canonical Reason Taxonomy ---------------------------------------------
@@ -192,6 +193,7 @@ class ContextPack:
     cache: CacheDiagnostics | None = None
     task_type: str | None = None
     pack_mode: str | None = None
+    mode: str | None = None
     diagnostics: ContextPackDiagnostics | None = None
 
 

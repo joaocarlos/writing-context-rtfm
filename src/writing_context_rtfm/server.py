@@ -336,6 +336,15 @@ def get_tools_list() -> dict[str, Any]:
                             "enum": ["minimal", "standard", "deep"],
                             "description": "Override context pack depth level/budget.",
                         },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["write", "rewrite", "adapt", "compress"],
+                            "description": (
+                                "Functional writing mode: 'write' (new section), 'rewrite' (refactor narrative), "
+                                "'adapt' (paper <-> chapter/thesis), 'compress' (prune redundancies to fit page limits). "
+                                "If omitted, automatically inferred from target file and task."
+                            ),
+                        },
                         "role_budgets": {
                             "type": "object",
                             "description": (
@@ -419,6 +428,14 @@ def get_tools_list() -> dict[str, Any]:
                             "type": "string",
                             "enum": ["minimal", "standard", "deep"],
                             "description": "Override context pack depth level/budget.",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["write", "rewrite", "adapt", "compress"],
+                            "description": (
+                                "Functional writing mode: 'write', 'rewrite', 'adapt', 'compress'. "
+                                "If omitted, automatically inferred."
+                            ),
                         },
                         "role_budgets": {
                             "type": "object",
@@ -1028,6 +1045,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     line_start = int(line_start_val) if line_start_val is not None else None
     line_end = int(line_end_val) if line_end_val is not None else None
     output_mode = str(args.get("output_mode") or config.context.output_mode or "prompt")
+    mode = args.get("mode")
 
     try:
         pack = generator.generate(
@@ -1042,6 +1060,7 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             role_budgets=role_budgets,
             strict_budget=strict_budget,
             output_mode=output_mode,
+            mode=mode,
         )
     except Exception as e:
         logger.exception("Pack generation failed")
@@ -1099,6 +1118,7 @@ def handle_explain_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     line_start = int(line_start_val) if line_start_val is not None else None
     line_end = int(line_end_val) if line_end_val is not None else None
     output_mode = str(args.get("output_mode") or config.context.output_mode or "prompt")
+    mode = args.get("mode")
 
     try:
         pack = generator.generate(
@@ -1114,6 +1134,7 @@ def handle_explain_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             strict_budget=strict_budget,
             output_mode=output_mode,
             include_diagnostics=True,
+            mode=mode,
         )
     except Exception as e:
         logger.exception("Pack generation failed in explain_context_pack")
@@ -2223,6 +2244,12 @@ def process_message(line: str) -> str | None:
                                     "required": False,
                                     "type": "string",
                                 },
+                                {
+                                    "name": "mode",
+                                    "description": "Functional writing mode: write, rewrite, adapt, compress",
+                                    "required": False,
+                                    "type": "string",
+                                },
                             ],
                         },
                         {
@@ -2275,6 +2302,7 @@ def process_message(line: str) -> str | None:
                     line_start_val = arguments.get("line_start")
                     line_end_val = arguments.get("line_end")
                     pack_mode = arguments.get("pack_mode")
+                    mode = arguments.get("mode")
                     try:
                         config, cards, card_warnings, adapter, store = _load_runtime()
                         budget = (
@@ -2307,6 +2335,7 @@ def process_message(line: str) -> str | None:
                             line_start=line_start,
                             line_end=line_end,
                             pack_mode=pack_mode,
+                            mode=mode,
                         )
                         prompt_text = _format_write_section_prompt(pack)
                         result = {

@@ -15,7 +15,9 @@ from pylatexenc.latexwalker import (  # type: ignore
 
 from writing_context_rtfm.ast_utils import get_braced_arg
 
-MACRO_NAME_PAT = re.compile(r"^(cite[a-zA-Z]*|ref[a-zA-Z]*|label|cref|Cref|autoref)$")
+MACRO_NAME_PAT = re.compile(
+    r"^(cite[a-zA-Z]*|ref[a-zA-Z]*|eqref|label|cref|Cref|autoref|pageref|vref)$"
+)
 
 
 def scan_latex_commands(text: str) -> list[str]:

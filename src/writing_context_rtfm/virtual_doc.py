@@ -287,7 +287,15 @@ class VirtualDocumentParser:
                         key = get_braced_arg(node)
                         if key:
                             labels.append({"key": key, "pos": node.pos})
-                    elif macro in ("ref", "cref", "Cref", "autoref") or macro.startswith("ref"):
+                    elif macro in (
+                        "ref",
+                        "cref",
+                        "Cref",
+                        "autoref",
+                        "eqref",
+                        "pageref",
+                        "vref",
+                    ) or macro.startswith("ref"):
                         key_str = get_braced_arg(node)
                         if key_str:
                             keys = [k.strip() for k in key_str.split(",") if k.strip()]

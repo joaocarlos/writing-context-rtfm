@@ -71,6 +71,7 @@ AGENTS.md
 CLAUDE.md
 
 # Private real-corpus benchmark inputs and outputs
+benchmark/*.pdf
 benchmark/*.zip
 benchmark/*.local.yaml
 benchmark/*.local.yml
@@ -82,3 +83,7 @@ benchmark/**/*prompt*.json
 benchmark/**/*generation*.json
 benchmark/**/*judgment*.json
 !benchmark/schemas/judgment.schema.json
+
+# Local unversioned roadmaps and notes
+*.local.md
+

@@ -25,7 +25,7 @@ class TestLatexParser(unittest.TestCase):
     def test_scan_latex_commands(self):
         # Basic scan test
         text = r"""
-        This is a reference to \ref{sec:intro} and a citation \cite{smith2020}.
+        This is a reference to \ref{sec:intro}, formula \eqref{eq:quad}, and a citation \cite{smith2020}.
         % This is a comment containing \label{commented_label} and \ref{commented_ref}.
         And an environment:
         \begin{equation}
@@ -37,6 +37,7 @@ class TestLatexParser(unittest.TestCase):
 
         # Verify macros found
         self.assertIn(r"\ref{sec:intro}", cmds)
+        self.assertIn(r"\eqref{eq:quad}", cmds)
         self.assertIn(r"\cite{smith2020}", cmds)
         self.assertIn(r"\label{eq:quad}", cmds)
 

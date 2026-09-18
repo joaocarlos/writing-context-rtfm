@@ -717,6 +717,7 @@ def pack_command(args: argparse.Namespace) -> None:
             pack_mode=getattr(args, "pack_mode", None),
             role_budgets=role_budgets,
             include_diagnostics=include_diagnostics,
+            mode=getattr(args, "mode", None),
         )
     if include_diagnostics:
         _print_pack_explanation(pack, as_json=getattr(args, "json", False))
@@ -1118,6 +1119,11 @@ def main() -> None:
     )
     parser_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
     parser_pack.add_argument(
+        "--mode",
+        choices=["write", "rewrite", "adapt", "compress"],
+        help="Functional writing mode (write, rewrite, adapt, compress)",
+    )
+    parser_pack.add_argument(
         "--explain",
         action="store_true",
         help="Print structured diagnostic funnel and candidate explanation",
@@ -1158,6 +1164,11 @@ def main() -> None:
         "--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode"
     )
     parser_exp_pack.add_argument("--role-budgets", help="Role budgets JSON string override")
+    parser_exp_pack.add_argument(
+        "--mode",
+        choices=["write", "rewrite", "adapt", "compress"],
+        help="Functional writing mode (write, rewrite, adapt, compress)",
+    )
     parser_exp_pack.add_argument(
         "--json", action="store_true", help="Output full JSON containing diagnostics"
     )

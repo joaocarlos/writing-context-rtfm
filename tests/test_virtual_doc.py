@@ -26,7 +26,7 @@ class TestVirtualDocumentParser(unittest.TestCase):
             e = mc^2
             \end{equation}
             \subsection{Details}
-            Details text.
+            Details text referring to \eqref{eq:1}.
             \section{Conclusion}
             End text.
             \end{document}
@@ -51,6 +51,7 @@ class TestVirtualDocumentParser(unittest.TestCase):
         self.assertEqual(intro.title, "Introduction")
         self.assertEqual(intro.selector, "sec:intro")
         self.assertIn("eq:1", intro.equations)
+        self.assertIn("eq:1", intro.references)
         self.assertEqual(intro.level, 2)  # section
 
         conclusion = nodes["section_conclusion"]

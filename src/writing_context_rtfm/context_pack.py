@@ -455,6 +455,65 @@ class ContextPackGenerator:
         except OSError:
             return fallback_val
 
+    @staticmethod
+    def _infer_writing_mode(
+        mode: str | None,
+        task: str,
+        target: str | None,
+        target_path: str | None,
+        pr: str,
+        target_card: SectionCard | None,
+    ) -> str:
+        """Infer functional writing mode: write, rewrite, adapt, compress."""
+        if mode and mode.lower() != "auto":
+            clean = mode.lower().strip()
+            if clean in ("write", "rewrite", "adapt", "compress"):
+                return clean
+
+        task_lower = task.lower()
+        if any(
+            k in task_lower
+            for k in (
+                "comprimir",
+                "compress",
+                "reduzir",
+                "enxugar",
+                "shorten",
+                "cut",
+                "page limit",
+                "caber",
+            )
+        ):
+            return "compress"
+        if any(
+            k in task_lower
+            for k in (
+                "adaptar",
+                "adapt",
+                "tese para artigo",
+                "artigo para tese",
+                "paper to chapter",
+                "chapter to paper",
+                "dissertação",
+            )
+        ):
+            return "adapt"
+
+        if target_path:
+            full = Path(pr) / target_path
+            if not full.exists():
+                return "write"
+            try:
+                content = full.read_text(encoding="utf-8", errors="replace").strip()
+                if not content:
+                    return "write"
+            except Exception:
+                return "write"
+        elif target_card and not target_card.path:
+            return "write"
+
+        return "rewrite"
+
     def _resolve_target(
         self, target: str | None, pr: str
     ) -> tuple[str | None, SectionCard | None, str | None]:
@@ -932,6 +991,7 @@ class ContextPackGenerator:
         strict_budget: bool | None = None,
         output_mode: str | None = None,
         include_diagnostics: bool = False,
+        mode: str | None = None,
     ) -> ContextPack:
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
@@ -942,6 +1002,17 @@ class ContextPackGenerator:
             output_mode or getattr(self.config.context, "output_mode", "prompt") or "prompt"
         )
         obligations = _build_atomic_obligations(task, must_consider)
+
+        # Target resolution & mode inference
+        resolved_key, target_card, target_path = self._resolve_target(target, pr)
+        inferred_mode = self._infer_writing_mode(
+            mode=mode,
+            task=task,
+            target=target,
+            target_path=target_path,
+            pr=pr,
+            target_card=target_card,
+        )
 
         # Apply pack mode defaults / overrides
         if pack_mode == "minimal":
@@ -984,6 +1055,7 @@ class ContextPackGenerator:
             strict_budget=is_strict,
             role_budgets=role_budgets,
             output_mode=output_mode,
+            mode=inferred_mode,
         )
 
         # Calculate real config file content hash
@@ -1045,13 +1117,12 @@ class ContextPackGenerator:
                     cache=cd,
                     task_type=cached.get("task_type"),
                     pack_mode=cached.get("pack_mode"),
+                    mode=cached.get("mode") or inferred_mode,
                 )
 
         tracker = CandidateTraceTracker() if include_diagnostics else None
 
         # --- Target Line Range Resolution (Phase 2 & Phase 5) ---
-        resolved_key, target_card, target_path = self._resolve_target(target, pr)
-
         all_candidates: list[SourceSpan] = []
         initial_token_budget = token_budget
         has_explicit_line_range = line_start is not None and line_end is not None
@@ -1329,14 +1400,17 @@ class ContextPackGenerator:
                 token_budget = auto_budget
 
         # --- Query expansion & telemetry ---
-        query_specs, target_card, dep_cards, query_type_map = self._build_queries(
-            task,
-            resolved_key or target,
-            must_consider,
-            task_type=task_type,
-            pack_mode=pack_mode,
-            has_line_range=has_explicit_line_range,
-        )
+        if inferred_mode == "compress":
+            query_specs, dep_cards, query_type_map = [], [], {}
+        else:
+            query_specs, target_card, dep_cards, query_type_map = self._build_queries(
+                task,
+                resolved_key or target,
+                must_consider,
+                task_type=task_type,
+                pack_mode=pack_mode,
+                has_line_range=has_explicit_line_range,
+            )
         queries = [qs.text for qs in query_specs]
         quality.queries_issued = len(queries)
         quality.card_uncertainties = {
@@ -1351,9 +1425,12 @@ class ContextPackGenerator:
         # --- Retrieval & Stream Fusion ---
         stream_candidates: dict[str, list[SourceSpan]] = defaultdict(list)
         enable_rrf = getattr(self.config.context, "enable_rrf", False)
-        active_providers = [
-            provider for provider in self.providers if provider.is_available(self.config)
-        ]
+        if inferred_mode == "compress":
+            active_providers = []
+        else:
+            active_providers = [
+                provider for provider in self.providers if provider.is_available(self.config)
+            ]
         structured_bibtex_active = any(
             provider.provider_id == "bibtex" for provider in active_providers
         )
@@ -1790,6 +1867,32 @@ class ContextPackGenerator:
                 (span.metadata or {}).get("provider_id")
             )
 
+        # Extract explicit citation keys mentioned in target text, task, or must_consider (Tier 1)
+        explicit_citation_keys: set[str] = set()
+        for text_source in (fixed_packet_text, task):
+            for match in re.findall(r"\\cite(?:[a-zA-Z]*)\{([^}]+)\}", text_source):
+                for k in match.split(","):
+                    clean_k = k.strip()
+                    if clean_k:
+                        explicit_citation_keys.add(clean_k)
+            for match in re.findall(r"@([a-zA-Z0-9_\-]+)", text_source):
+                clean_k = match.strip()
+                if clean_k:
+                    explicit_citation_keys.add(clean_k)
+
+        def is_explicit_citation(span: SourceSpan) -> bool:
+            if span.source_role != "reference":
+                return False
+            meta = span.metadata or {}
+            citekey = meta.get("citekey") or meta.get("citation_key")
+            if citekey and citekey in explicit_citation_keys:
+                return True
+            reason_str = span.reason or ""
+            for key in explicit_citation_keys:
+                if f"'{key}'" in reason_str or f"bibtex:{key}" == span.path:
+                    return True
+            return False
+
         # Pass 1: Strict allocation based on role fractions (soft guidance)
         pass2_candidates: list[SourceSpan] = []
         selection_rejections: dict[str, list[SourceSpan]] = defaultdict(list)
@@ -1797,8 +1900,14 @@ class ContextPackGenerator:
             role = span.source_role
             est = self._estimate_tokens(span)
             role_limit = int(resolved_budgets.get(role, 0.0) * usable_budget)
+            is_explicit = is_explicit_citation(span)
+            fits_global = current_tokens + est <= token_budget
 
-            if len(selected) < max_spans and tokens_by_role.get(role, 0) + est <= role_limit:
+            if (
+                len(selected) < max_spans
+                and fits_global
+                and (tokens_by_role.get(role, 0) + est <= role_limit or is_explicit)
+            ):
                 selected.append(span)
                 tokens_by_role[role] = tokens_by_role.get(role, 0) + est
                 if is_provider_reference(span):
@@ -1809,9 +1918,16 @@ class ContextPackGenerator:
             else:
                 pass2_candidates.append(span)
 
-        # Pass 2: Fill remaining spans up to max_spans with strict ceiling bounding
+        # Pass 2: Fill remaining spans up to max_spans with strict ceiling bounding & quota spillover.
+        # Prioritize non-reference candidates and explicit citations first,
+        # so remaining general reference candidates cleanly spill over into leftover tokens.
+        pass2_candidates.sort(
+            key=lambda s: 0 if (s.source_role != "reference" or is_explicit_citation(s)) else 1
+        )
         budget_dropped = 0
         cap_truncated = False
+        overflow_essential_spans: list[SourceSpan] = []
+
         for span in pass2_candidates:
             if len(selected) >= max_spans:
                 cap_truncated = True
@@ -1823,16 +1939,16 @@ class ContextPackGenerator:
 
             est = self._estimate_tokens(span)
             role_limit = int(resolved_budgets.get(span.source_role, 0.0) * usable_budget)
-            if (
-                is_strict
-                and is_provider_reference(span)
-                and provider_reference_tokens + est > provider_reference_limit
-            ):
+            exceeds_quota = provider_reference_tokens + est > provider_reference_limit
+            is_explicit = is_explicit_citation(span)
+
+            if is_strict and is_provider_reference(span) and exceeds_quota and not is_explicit:
                 budget_dropped += 1
                 selection_rejections["provider_reference_quota"].append(span)
                 if tracker is not None:
                     tracker.record_rejected(span, reason=REJECT_PROVIDER_REFERENCE_QUOTA)
                 continue
+
             fits_budget = current_tokens + est <= token_budget
             if not fits_budget and not is_strict and not selected:
                 max_budget = getattr(self.config.context, "max_token_budget", 32000)
@@ -1856,8 +1972,25 @@ class ContextPackGenerator:
             else:
                 budget_dropped += 1
                 selection_rejections["token_budget"].append(span)
+                if is_explicit or span.priority == "essential":
+                    overflow_essential_spans.append(span)
                 if tracker is not None:
                     tracker.record_rejected(span, reason=REJECT_TOKEN_BUDGET)
+
+        if overflow_essential_spans:
+            status = "budget_overflow"
+            quality.reason = "budget_overflow"
+            missing_tokens = sum(self._estimate_tokens(s) for s in overflow_essential_spans)
+            quality.budget_overflow_details = {
+                "missing_essential_spans": [s.path for s in overflow_essential_spans],
+                "missing_tokens": missing_tokens,
+                "suggested_budget": token_budget + missing_tokens,
+            }
+            warnings.append(
+                f"Budget overflow: {len(overflow_essential_spans)} essential citation/evidence span(s) "
+                f"could not fit in the requested token budget ({token_budget}). "
+                f"Suggested minimum budget: {token_budget + missing_tokens} tokens."
+            )
 
         quality.dropped_for_budget = budget_dropped
         quality.truncated = cap_truncated or (budget_dropped > 0)
@@ -1900,7 +2033,8 @@ class ContextPackGenerator:
             "minimum_coverage_tokens": minimum_atomic_tokens,
         }
         if uncovered_ids:
-            quality.reason = "atomic_coverage_incomplete"
+            if quality.reason != "budget_overflow":
+                quality.reason = "atomic_coverage_incomplete"
             warnings.append(
                 "Atomic evidence coverage is incomplete for "
                 f"{', '.join(uncovered_ids)}. Use request_more_context or a direct-read "
@@ -1945,6 +2079,30 @@ class ContextPackGenerator:
             if target_card:
                 constraints.extend(target_card.constraints or [])
                 constraints.extend(target_card.must_preserve or [])
+
+        # Mode-specific functional constraints
+        if inferred_mode == "compress":
+            target_spans = [s for s in all_candidates if s.source_role == "target_text"]
+            snippet_texts = [str((s.metadata or {}).get("snippet") or "") for s in target_spans]
+            combined_text = "\n".join(snippet_texts)
+            words = len(combined_text.split())
+            target_words = max(1, int(words * 0.85))
+            constraints.append(
+                f"PODA NÃO-DESTRUTIVA (Modo compress): Reduza a extensão do texto em ~15% "
+                f"(de ~{words} para ~{target_words} palavras) mantendo a estrutura original. "
+                "Preserve 100% de citações (\\cite), referências (\\ref, \\eqref), números e termos técnicos. "
+                "Elimine estritamente pleonasmos, nominalizações pesadas, voz passiva e orações de preenchimento."
+            )
+        elif inferred_mode == "write":
+            constraints.append(
+                "NOVA SEÇÃO (Modo write): Desenvolva o conteúdo a partir das diretrizes da tese e das dependências declaradas, "
+                "garantindo um gancho de transição fluido com a seção anterior."
+            )
+        elif inferred_mode == "adapt":
+            constraints.append(
+                "ADAPTAÇÃO NARRATIVA (Modo adapt): Recontextualize o material fonte preservando integralmente todas as "
+                "citações originais, fórmulas e resultados empíricos, adequando o nível de abstração, rigor e didatismo ao documento destino."
+            )
 
         # Include constraint serialization in token estimate
         constraint_tokens = estimate_tokens("\n".join(constraints)) if constraints else 0
@@ -2016,10 +2174,16 @@ class ContextPackGenerator:
         has_degrading = any(
             not w.startswith("LaTeX Safety:")
             and not w.startswith("Note:")
+            and not w.startswith("Budget overflow:")
             and "candidate span(s) were dropped" not in w
             for w in warnings
         )
-        status_str = "degraded" if (has_degrading or status == "degraded") else "complete"
+        if status == "budget_overflow":
+            status_str = "budget_overflow"
+        elif has_degrading or status == "degraded":
+            status_str = "degraded"
+        else:
+            status_str = "complete"
 
         diagnostics = (
             tracker.build_diagnostics(ownership_audit=ownership_records)
@@ -2051,6 +2215,7 @@ class ContextPackGenerator:
             ),
             task_type=task_type,
             pack_mode=pack_mode,
+            mode=inferred_mode,
             diagnostics=diagnostics,
         )
 

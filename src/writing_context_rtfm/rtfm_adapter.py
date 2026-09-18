@@ -312,4 +312,3 @@ class RTFMAdapter(RetrievalEngine):
             has_embeddings=has_embeddings,
             details="; ".join(details),
         )
-

@@ -33,9 +33,7 @@ class TestRetrievalEngineProtocolContract:
 
     def test_custom_engine_satisfies_protocol(self):
         class MockEngine:
-            def search(
-                self, query: str, *, corpus: str, limit: int = 10
-            ) -> list[RTFMResult]:
+            def search(self, query: str, *, corpus: str, limit: int = 10) -> list[RTFMResult]:
                 return []
 
             def context(self, path: str, line_start: int, line_end: int) -> str:
@@ -176,11 +174,15 @@ class TestRTFMDatabaseSchemaContract:
         cursor.execute(
             "CREATE VIRTUAL TABLE chunks_fts USING fts5(content, content='chunks', content_rowid='id')"
         )
-        cursor.execute("INSERT INTO books (id, title, filename) VALUES (1, 'Alt Book', 'paper.tex')")
+        cursor.execute(
+            "INSERT INTO books (id, title, filename) VALUES (1, 'Alt Book', 'paper.tex')"
+        )
         cursor.execute(
             "INSERT INTO chunks VALUES (1, 1, 'Algorithmic context selection', 5, 15, 'Methods')"
         )
-        cursor.execute("INSERT INTO chunks_fts(rowid, content) VALUES (1, 'Algorithmic context selection')")
+        cursor.execute(
+            "INSERT INTO chunks_fts(rowid, content) VALUES (1, 'Algorithmic context selection')"
+        )
         conn.commit()
         conn.close()
 

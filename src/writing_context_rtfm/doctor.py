@@ -702,3 +702,116 @@ def format_text_report(report: DoctorReport) -> str:
             lines.append(f"  {idx}. {rem}")
 
     return "\n".join(lines)
+
+
+def run_doctor_fix(project_root: str | Path = ".") -> list[str]:
+    """Execute safe, non-destructive automatic repairs on the extension environment.
+
+    Actions performed:
+    1. Ensures .writing-context/ directory exists.
+    2. Creates default config.yaml if missing.
+    3. Auto-scaffolds section cards (cards.generated.yaml / section_cards.yaml) if none exist.
+    4. Initializes SQLite cache DB schema if missing or corrupted.
+    5. Synchronizes RTFM library index if library.db is absent or empty.
+
+    Returns a list of human-readable descriptions of repairs performed.
+    """
+    root = Path(project_root).resolve()
+    actions: list[str] = []
+
+    # 1. Directory
+    wc_dir = root / ".writing-context"
+    wc_dir.mkdir(parents=True, exist_ok=True)
+
+    # 2. Config repair
+    config_file = wc_dir / "config.yaml"
+    if not config_file.exists():
+        default_config = (
+            "# writing-context-rtfm Configuration File\n"
+            "version: 1\n\n"
+            "profile: fast\n\n"
+            "rtfm:\n"
+            "  corpus: default\n"
+            "  project_root: .\n"
+            "  sync_before_pack: false\n"
+        )
+        config_file.write_text(default_config, encoding="utf-8")
+        actions.append("Created default configuration at .writing-context/config.yaml")
+
+    config = load_config(str(root))
+
+    # 3. Section cards repair (only if none exist, never overwriting overrides)
+    split_gen = wc_dir / "cards.generated.yaml"
+    sc_file = wc_dir / "section_cards.yaml"
+    if not split_gen.exists() and not sc_file.exists():
+        try:
+            from writing_context_rtfm.features import initialize_section_cards
+
+            initialize_section_cards(str(root))
+            actions.append("Auto-scaffolded section cards for manuscript entry files")
+        except Exception as e:
+            actions.append(f"Card initialization skipped: {e}")
+
+    # 4. Cache DB repair
+    cache_path = Path(config.cache.path)
+    if not cache_path.is_absolute():
+        cache_path = root / cache_path
+    db_existed = cache_path.exists()
+    try:
+        store = ExtensionStore(str(cache_path))
+        if not db_existed:
+            store.init_db()
+            actions.append("Initialized SQLite cache database schema")
+        else:
+            with sqlite3.connect(str(cache_path)) as conn:
+                cur = conn.cursor()
+                tables = {
+                    row[0]
+                    for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                }
+                if "context_pack_runs" not in tables or "context_pack_sources" not in tables:
+                    store.init_db()
+                    actions.append("Initialized SQLite cache database schema")
+    except Exception:
+        backup_path = cache_path.with_suffix(".sqlite.bak")
+        try:
+            if cache_path.exists():
+                shutil.move(cache_path, backup_path)
+            store = ExtensionStore(str(cache_path))
+            store.init_db()
+            actions.append(f"Recovered corrupted cache DB (backed up to {backup_path.name})")
+        except Exception as err:
+            actions.append(f"Failed to recover cache DB: {err}")
+
+    # 5. RTFM Index sync if DB is missing or empty, but only if .rtfm exists in project root
+    rtfm_dir = root / ".rtfm"
+    if rtfm_dir.exists():
+        db_path = resolve_rtfm_db_path(root)
+        needs_sync = False
+        if not db_path.exists():
+            needs_sync = True
+        else:
+            try:
+                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT count(*) FROM chunks")
+                    count = cur.fetchone()[0]
+                    if count == 0:
+                        needs_sync = True
+            except Exception:
+                needs_sync = True
+
+        if needs_sync:
+            try:
+                from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+
+                adapter = RTFMAdapter(project_root=str(root))
+                sync_res = adapter.sync(str(root), corpus=config.rtfm.corpus)
+                status = (
+                    sync_res.get("status", "synced") if isinstance(sync_res, dict) else "synced"
+                )
+                actions.append(f"Synchronized RTFM retrieval index ({status})")
+            except Exception as e:
+                actions.append(f"Attempted RTFM sync: {e}")
+
+    return actions

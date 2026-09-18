@@ -671,6 +671,12 @@ def pack_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
 
+    # Override profile from CLI if provided
+    if getattr(args, "profile", None):
+        from writing_context_rtfm.config import apply_profile
+
+        config = apply_profile(config, args.profile)
+
     # Override corpus from CLI if provided
     if getattr(args, "corpus", None):
         config = replace(config, rtfm=replace(config.rtfm, corpus=args.corpus))
@@ -729,6 +735,145 @@ def explain_pack_command(args: argparse.Namespace) -> None:
     pack_command(args)
 
 
+def _render_pack_preview(pack: ContextPack, config: Any, no_color: bool = False) -> None:
+    from writing_context_rtfm.server import _format_write_section_prompt
+
+    lines: list[str] = []
+    w = 80
+
+    lines.append("=" * w)
+    lines.append("WRITING CONTEXT PACK PREVIEW".center(w))
+    lines.append("=" * w)
+    lines.append(f"Task:         {pack.task}")
+    lines.append(f"Target:       {pack.target or 'General / Whole Document'}")
+    lines.append(f"Mode:         {pack.mode}")
+    lines.append(f"Profile:      {config.profile}")
+    lines.append(f"Status:       {pack.status}")
+    budget_val = (pack.quality or {}).get("budget")
+    if budget_val:
+        lines.append(f"Token Budget: {budget_val}  (Estimated Tokens: {pack.estimated_tokens})")
+    else:
+        lines.append(f"Tokens:       {pack.estimated_tokens} estimated")
+    lines.append("-" * w)
+
+    if pack.document_thesis:
+        lines.append(f"Thesis:       {pack.document_thesis}")
+    target_role = getattr(pack, "target_role", None)
+    if target_role:
+        lines.append(f"Section Role: {target_role}")
+    if pack.constraints:
+        lines.append(f"Constraints ({len(pack.constraints)}):")
+        for c in pack.constraints:
+            lines.append(f"  • {c}")
+    lines.append("-" * w)
+
+    lines.append(f"SOURCE SPANS ({len(pack.source_spans)} selected):")
+    if pack.source_spans:
+        lines.append(f"{'#':<3} {'Role / Tier':<22} {'Lines':<10} {'Tokens':<8} {'Path & Reason'}")
+        lines.append("-" * w)
+        for idx, s in enumerate(pack.source_spans, 1):
+            role_tier = s.source_role
+            if (s.metadata or {}).get("tier") is not None:
+                role_tier += f" [T{s.metadata['tier']}]"
+            elif getattr(s, "is_explicit_citation", False):
+                role_tier += " [Tier 1]"
+            elif s.source_role == "target_text":
+                role_tier += " [Tier 0]"
+
+            lines_str = f"L{s.line_start}-L{s.line_end}" if s.line_start else "-"
+            tokens_val = (
+                getattr(s, "tokens", None)
+                or (s.metadata or {}).get("tokens")
+                or (s.metadata or {}).get("estimated_tokens", "-")
+            )
+            tokens_str = str(tokens_val)
+            path_reason = f"{s.path} ({s.reason})"
+            lines.append(f"{idx:<3} {role_tier:<22} {lines_str:<10} {tokens_str:<8} {path_reason}")
+    else:
+        lines.append("  (No source spans included)")
+    lines.append("-" * w)
+
+    if pack.diagnostics and pack.diagnostics.funnel:
+        fn = pack.diagnostics.funnel
+        lines.append(
+            f"DIAGNOSTIC FUNNEL: {fn.get('retrieved', 0)} retrieved -> "
+            f"{fn.get('deduplicated', 0)} deduplicated -> "
+            f"{fn.get('eligible', 0)} eligible -> "
+            f"{fn.get('selected', 0)} selected"
+        )
+        if pack.diagnostics.rejections_by_reason:
+            rej_items = [f"{k}: {v}" for k, v in pack.diagnostics.rejections_by_reason.items()]
+            lines.append(f"Rejections: {', '.join(rej_items)}")
+        lines.append("-" * w)
+
+    lines.append("RENDERED LLM PROMPT PREVIEW:")
+    lines.append("-" * w)
+    prompt_text = _format_write_section_prompt(pack)
+    lines.append(prompt_text)
+    lines.append("=" * w)
+
+    print("\n".join(lines))
+
+
+def preview_pack_command(args: argparse.Namespace) -> None:
+    from writing_context_rtfm.config import apply_profile
+    from writing_context_rtfm.server import _format_write_section_prompt
+
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+
+    # Override profile from CLI if provided
+    if getattr(args, "profile", None):
+        config = apply_profile(config, args.profile)
+
+    # Override corpus from CLI if provided
+    if getattr(args, "corpus", None):
+        config = replace(config, rtfm=replace(config.rtfm, corpus=args.corpus))
+
+    sc_path = config.section_cards.path
+    cards = load_section_cards(sc_path, required=config.section_cards.required)
+
+    adapter = RTFMAdapter(project_root=str(Path(project_root).resolve()))
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
+        from writing_context_rtfm.providers import get_active_providers, get_active_reranker
+
+        providers = get_active_providers(config)
+        reranker = get_active_reranker(config)
+        generator = ContextPackGenerator(
+            config, cards, adapter, store, providers=providers, reranker=reranker
+        )
+
+        role_budgets = None
+        if getattr(args, "role_budgets", None):
+            try:
+                role_budgets = json.loads(args.role_budgets)
+                role_budgets = {str(k): float(v) for k, v in role_budgets.items()}
+            except Exception as e:
+                print(f"Error parsing --role-budgets JSON: {e}", file=sys.stderr)
+                sys.exit(1)
+
+        pack = generator.generate(
+            task=args.task,
+            target=getattr(args, "target", None),
+            token_budget=getattr(args, "budget", config.context.default_token_budget),
+            must_consider=getattr(args, "must_consider", None) or [],
+            project_root=project_root,
+            task_type=getattr(args, "task_type", None),
+            line_start=getattr(args, "line_start", None),
+            line_end=getattr(args, "line_end", None),
+            pack_mode=getattr(args, "pack_mode", None),
+            role_budgets=role_budgets,
+            include_diagnostics=True,
+            mode=getattr(args, "mode", None),
+        )
+
+    if getattr(args, "raw", False):
+        print(_format_write_section_prompt(pack))
+    else:
+        _render_pack_preview(pack, config, no_color=getattr(args, "no_color", False))
+
+
 def proofread_pack_command(args: argparse.Namespace) -> None:
     project_root = getattr(args, "project_root", ".")
     config = load_config(project_root)
@@ -774,9 +919,24 @@ def serve_command(args: argparse.Namespace) -> None:
 
 
 def doctor_command(args: argparse.Namespace) -> None:
-    from writing_context_rtfm.doctor import format_text_report, run_diagnostics
+    from writing_context_rtfm.doctor import (
+        format_text_report,
+        run_diagnostics,
+        run_doctor_fix,
+    )
 
     project_root = Path(getattr(args, "project_root", ".")).resolve()
+
+    if getattr(args, "fix", False):
+        actions = run_doctor_fix(project_root)
+        if actions:
+            print("Doctor Auto-Repair Applied:")
+            for act in actions:
+                print(f"  [+] {act}")
+            print()
+        else:
+            print("No auto-repairs were needed.\n")
+
     report = run_diagnostics(project_root)
 
     if getattr(args, "json", False) is True:
@@ -1124,6 +1284,11 @@ def main() -> None:
         help="Functional writing mode (write, rewrite, adapt, compress)",
     )
     parser_pack.add_argument(
+        "--profile",
+        choices=["fast", "balanced", "thorough"],
+        help="Execution profile preset (fast, balanced, thorough)",
+    )
+    parser_pack.add_argument(
         "--explain",
         action="store_true",
         help="Print structured diagnostic funnel and candidate explanation",
@@ -1170,7 +1335,68 @@ def main() -> None:
         help="Functional writing mode (write, rewrite, adapt, compress)",
     )
     parser_exp_pack.add_argument(
+        "--profile",
+        choices=["fast", "balanced", "thorough"],
+        help="Execution profile preset (fast, balanced, thorough)",
+    )
+    parser_exp_pack.add_argument(
         "--json", action="store_true", help="Output full JSON containing diagnostics"
+    )
+
+    # preview-pack
+    parser_preview = subparsers.add_parser(
+        "preview-pack", help="Preview the exact formatted context pack and prompt rendered for LLMs"
+    )
+    parser_preview.add_argument(
+        "--project-root", default=".", help="Project root (resolves config and section_cards)"
+    )
+    parser_preview.add_argument("--corpus", default=None, help="Override corpus name")
+    parser_preview.add_argument("--task", required=True, help="Writing task description")
+    parser_preview.add_argument("--target", help="Target section ID")
+    parser_preview.add_argument("--budget", type=int, default=6000, help="Token budget")
+    parser_preview.add_argument(
+        "--must-consider",
+        nargs="*",
+        help="Required concepts, facts, literals, or citation keys the context must cover",
+    )
+    parser_preview.add_argument(
+        "--task-type",
+        choices=[
+            "write_new_section",
+            "revise_existing_section",
+            "proofread",
+            "expand",
+            "condense",
+            "align_with_previous_sections",
+            "review",
+        ],
+        help="Writing task type",
+    )
+    parser_preview.add_argument("--line-start", type=int, help="Target start line range")
+    parser_preview.add_argument("--line-end", type=int, help="Target end line range")
+    parser_preview.add_argument(
+        "--pack-mode", choices=["minimal", "standard", "deep"], help="Context pack mode"
+    )
+    parser_preview.add_argument("--role-budgets", help="Role budgets JSON string override")
+    parser_preview.add_argument(
+        "--mode",
+        choices=["write", "rewrite", "adapt", "compress"],
+        help="Functional writing mode (write, rewrite, adapt, compress)",
+    )
+    parser_preview.add_argument(
+        "--profile",
+        choices=["fast", "balanced", "thorough"],
+        help="Execution profile preset (fast, balanced, thorough)",
+    )
+    parser_preview.add_argument(
+        "--raw",
+        action="store_true",
+        help="Output raw prompt text without inspection decorations",
+    )
+    parser_preview.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI styling in terminal preview",
     )
 
     # proofread-pack
@@ -1211,6 +1437,11 @@ def main() -> None:
         "--json",
         action="store_true",
         help="Output diagnostic report in JSON format",
+    )
+    p_doc.add_argument(
+        "--fix",
+        action="store_true",
+        help="Safely auto-repair missing configs, section cards, cache DB, and sync index",
     )
 
     # inspect-target
@@ -1310,11 +1541,12 @@ def main() -> None:
                 f"Writing Context RTFM v{__version__} — Surgical Context for Writing Agents\n\n"
                 "Usage: writing-context-rtfm <command> [options]\n\n"
                 "Key Commands:\n"
-                "  doctor        Diagnose Python, dependencies, index, Zotero, API keys, models\n"
+                "  doctor        Diagnose Python, dependencies, index, Zotero, API keys, models (--fix to auto-repair)\n"
                 "  init          Initialize configuration (--quickstart for complete 1-step bootstrap)\n"
                 "  sync          Synchronize manuscript files into RTFM retrieval index\n"
                 "  cards         Manage section cards (build, update, validate)\n"
                 "  pack          Generate a targeted writing context pack\n"
+                "  preview-pack  Preview exact formatted context pack and prompt rendered for LLMs\n"
                 "  serve         Start MCP server (STDIO mode for Claude Desktop / Cursor)\n\n"
                 "Tip: Run 'writing-context-rtfm --help' for full command list."
             )
@@ -1327,6 +1559,7 @@ def main() -> None:
         "sync": sync_command,
         "pack": pack_command,
         "explain-pack": explain_pack_command,
+        "preview-pack": preview_pack_command,
         "proofread-pack": proofread_pack_command,
         "serve": serve_command,
         "cache": cache_command,

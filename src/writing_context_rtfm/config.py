@@ -1,6 +1,6 @@
 """Configuration schema and loading."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import yaml
@@ -66,6 +66,7 @@ class AppConfig:
     section_cards: SectionCardsConfig
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     generator: GeneratorConfig = field(default_factory=GeneratorConfig)
+    profile: str = "fast"
 
 
 def load_config(project_root: str = ".") -> AppConfig:
@@ -202,6 +203,36 @@ def load_config(project_root: str = ".") -> AppConfig:
         )
 
     generator_data = dict(data.get("generator") or {})
+    raw_profile = data.get("profile")
+
+    if raw_profile is not None:
+        raw_profile_str = str(raw_profile).strip().lower()
+        cfg = AppConfig(
+            version=data.get("version", 1),
+            rtfm=RTFMConfig(**rtfm_data),
+            context=ContextConfig(**context_data),
+            cache=CacheConfig(**cache_data) if cache_data else defaults.cache,
+            section_cards=SectionCardsConfig(**sc_data) if sc_data else defaults.section_cards,
+            providers=parsed_providers,
+            generator=GeneratorConfig(**generator_data) if generator_data else defaults.generator,
+            profile=raw_profile_str,
+        )
+        return apply_profile(cfg, raw_profile_str)
+
+    # If profile was not explicitly defined in config, preserve explicitly configured providers
+    has_rr = bool(
+        parsed_providers.get("local_reranker") and parsed_providers["local_reranker"].enabled
+    )
+    has_emb = bool(
+        (parsed_providers.get("local_embeddings") and parsed_providers["local_embeddings"].enabled)
+        or (parsed_providers.get("openai_semantic") and parsed_providers["openai_semantic"].enabled)
+    )
+    if has_rr:
+        inferred_profile = "thorough"
+    elif has_emb:
+        inferred_profile = "balanced"
+    else:
+        inferred_profile = "fast"
 
     return AppConfig(
         version=data.get("version", 1),
@@ -211,4 +242,59 @@ def load_config(project_root: str = ".") -> AppConfig:
         section_cards=SectionCardsConfig(**sc_data) if sc_data else defaults.section_cards,
         providers=parsed_providers,
         generator=GeneratorConfig(**generator_data) if generator_data else defaults.generator,
+        profile=inferred_profile,
     )
+
+
+def apply_profile(config: AppConfig, profile_name: str | None = None) -> AppConfig:
+    """Apply an execution profile preset (fast, balanced, thorough) to AppConfig.
+
+    - fast (default): Pure keyword BM25 + AST graph. Neural embeddings and rerankers
+      are disabled for zero latency overhead and zero heavy dependencies.
+    - balanced: Enables local embedding search (sentence-transformers/fastembed) if configured.
+    - thorough: Enables local embedding search and neural Cross-Encoder reranker.
+    """
+    profile = (profile_name or config.profile or "fast").strip().lower()
+    if profile not in ("fast", "balanced", "thorough"):
+        raise ValueError(
+            f"Unknown profile '{profile}'. Expected 'fast', 'balanced', or 'thorough'."
+        )
+
+    new_providers = dict(config.providers)
+
+    if profile == "fast":
+        if "local_embeddings" in new_providers:
+            new_providers["local_embeddings"] = replace(
+                new_providers["local_embeddings"], enabled=False
+            )
+        if "local_reranker" in new_providers:
+            new_providers["local_reranker"] = replace(
+                new_providers["local_reranker"], enabled=False
+            )
+        if "openai_semantic" in new_providers:
+            new_providers["openai_semantic"] = replace(
+                new_providers["openai_semantic"], enabled=False
+            )
+    elif profile == "balanced":
+        curr_emb = new_providers.get("local_embeddings")
+        if curr_emb is not None:
+            new_providers["local_embeddings"] = replace(curr_emb, enabled=True)
+        else:
+            new_providers["local_embeddings"] = ProviderConfig(enabled=True)
+        if "local_reranker" in new_providers:
+            new_providers["local_reranker"] = replace(
+                new_providers["local_reranker"], enabled=False
+            )
+    elif profile == "thorough":
+        curr_emb = new_providers.get("local_embeddings")
+        if curr_emb is not None:
+            new_providers["local_embeddings"] = replace(curr_emb, enabled=True)
+        else:
+            new_providers["local_embeddings"] = ProviderConfig(enabled=True)
+        curr_rr = new_providers.get("local_reranker")
+        if curr_rr is not None:
+            new_providers["local_reranker"] = replace(curr_rr, enabled=True)
+        else:
+            new_providers["local_reranker"] = ProviderConfig(enabled=True)
+
+    return replace(config, profile=profile, providers=new_providers)

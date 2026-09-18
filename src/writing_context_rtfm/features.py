@@ -87,9 +87,7 @@ def initialize_section_cards(project_root: str | None = None) -> dict[str, Any]:
             d
             for d in dirnames
             if d not in exclude_dirs
-            and not is_path_ignored(
-                (Path(dirpath) / d).relative_to(root), ignore_spec, is_dir=True
-            )
+            and not is_path_ignored((Path(dirpath) / d).relative_to(root), ignore_spec, is_dir=True)
         ]
         for fname in filenames:
             if fname.endswith((".tex", ".md")) and fname not in ("README.md", "GEMINI.md"):

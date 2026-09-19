@@ -21,6 +21,34 @@ class MockAdapter(RTFMAdapter):
         self.project_root = "."
 
     def search(self, query: str, corpus: str = "default", limit: int = 10) -> list[RTFMResult]:
+        if "acknowledgment" in query.lower():
+            return [
+                RTFMResult(
+                    path="acknowledgments.tex",
+                    line_start=1,
+                    line_end=15,
+                    snippet="We thank our funding sponsors and colleagues for invaluable feedback.",
+                    score=0.92,
+                    metadata={"chunk_id": "ack_1"},
+                ),
+                RTFMResult(
+                    path="chapter_1.tex",
+                    line_start=1,
+                    line_end=15,
+                    snippet="Introductory text without funding details.",
+                    score=0.35,
+                    metadata={"chunk_id": "intro_1"},
+                ),
+                RTFMResult(
+                    path="chapter_2.tex",
+                    line_start=1,
+                    line_end=15,
+                    snippet="General methodology overview.",
+                    score=0.20,
+                    metadata={"chunk_id": "meth_1"},
+                ),
+            ]
+
         # 16 candidates: only spans 5 and 11 contain the exact mathematical proof for convergence
         results: list[RTFMResult] = []
         for i in range(16):
@@ -74,11 +102,14 @@ cfg_thorough = apply_profile(base_cfg, "thorough")
 
 
 class SemanticCrossEncoder:
+    def __init__(self) -> None:
+        self.call_count = 0
+
     def predict(self, pairs: Sequence[tuple[str, str]], **kwargs: Any) -> list[float]:
+        self.call_count += 1
         scores: list[float] = []
         for _query, snippet in pairs:
             s_low = snippet.lower()
-            # Deep semantic match on convergence manifold theorem
             score = 0.15
             if "lipschitz" in s_low or "manifold" in s_low:
                 score += 0.50
@@ -88,48 +119,57 @@ class SemanticCrossEncoder:
         return scores
 
 
+model_mock = SemanticCrossEncoder()
 reranker = LocalCrossEncoderReranker(
-    "Alibaba-NLP/gte-reranker-modernbert-base", model=SemanticCrossEncoder(), blend_weight=0.75
+    "Alibaba-NLP/gte-reranker-modernbert-base", model=model_mock, blend_weight=0.75, store=store
 )
-store2 = ExtensionStore(str(Path(tmpdir) / "cache2.sqlite"))
-store2.init_db()
-gen_thorough = ContextPackGenerator(cfg_thorough, None, adapter, store2, reranker=reranker)
+gen_thorough = ContextPackGenerator(cfg_thorough, None, adapter, store, reranker=reranker)
 
+# 1st run: Cold reranking (neural predict invoked)
 t0 = time.perf_counter()
-pack_thorough = gen_thorough.generate(
+pack_thorough_cold = gen_thorough.generate(
     task="Extract asymptotic convergence proof for the optimization manifold",
     target=None,
     token_budget=1200,
     mode="write",
 )
-t_thorough = (time.perf_counter() - t0) * 1000
+t_thorough_cold = (time.perf_counter() - t0) * 1000
+predict_calls_after_cold = model_mock.call_count
 
-print("========================================================================")
-print("BENCHMARK EXECUTIVO: SBERT / BM25 (Fast) vs. CROSS-ENCODER (Thorough)")
-print("========================================================================")
-print(f"Tempo de Pipeline - Perfil Fast (BM25 Puro):       {t_fast:.2f} ms")
-print(f"Tempo de Pipeline - Perfil Thorough (Reranker):    {t_thorough:.2f} ms")
-print(f"Overhead Adicional do Reranker Neural:             +{t_thorough - t_fast:.2f} ms")
-print("------------------------------------------------------------------------")
+# 2nd run: Warm reranking (semantic invariance cache hit in SQLite)
+t0 = time.perf_counter()
+pack_thorough_warm = gen_thorough.generate(
+    task="Extract asymptotic convergence proof for the optimization manifold",
+    target=None,
+    token_budget=1200,
+    mode="write",
+)
+t_thorough_warm = (time.perf_counter() - t0) * 1000
+predict_calls_after_warm = model_mock.call_count
 
-print("Top-3 Spans Selecionados - Fast (BM25):")
-for idx, s in enumerate(pack_fast.source_spans[:3], 1):
-    snip = (s.metadata or {}).get("snippet", "")
-    is_gold = "lipschitz" in snip.lower()
-    print(
-        f"  #{idx} {s.path} (L{s.line_start}) | Score={s.score:.3f} | Gold Evidence={is_gold} | {snip[:65]}..."
-    )
+# AUTO PROFILE (Dynamic escalation)
+cfg_auto = apply_profile(base_cfg, "auto")
+gen_auto = ContextPackGenerator(cfg_auto, None, adapter, store, reranker=reranker)
 
-print()
-print("Top-3 Spans Selecionados - Thorough (Cross-Encoder):")
-for idx, s in enumerate(pack_thorough.source_spans[:3], 1):
-    snip = (s.metadata or {}).get("snippet", "")
-    rr_score = (s.metadata or {}).get("reranker_score", 0)
-    base_score = (s.metadata or {}).get("base_score", 0)
-    is_gold = "lipschitz" in snip.lower()
-    print(
-        f"  #{idx} {s.path} (L{s.line_start}) | Final={s.score:.3f} (Reranker={rr_score:.2f}, Base={base_score:.2f}) | Gold Evidence={is_gold} | {snip[:65]}..."
-    )
+# Auto case 1: General task without mathematical cues -> stays on BM25
+t0 = time.perf_counter()
+pack_auto_simple = gen_auto.generate(
+    task="General acknowledgment section and contributor overview",
+    target=None,
+    token_budget=1200,
+    mode="write",
+)
+t_auto_simple = (time.perf_counter() - t0) * 1000
+
+# Auto case 2: Mathematical task -> automatically escalates to Cross-Encoder
+t0 = time.perf_counter()
+pack_auto_math = gen_auto.generate(
+    task="Extract asymptotic convergence proof for the optimization manifold",
+    target=None,
+    token_budget=1200,
+    mode="write",
+)
+t_auto_math = (time.perf_counter() - t0) * 1000
 
 p3_fast = (
     sum(
@@ -142,16 +182,31 @@ p3_fast = (
 p3_thorough = (
     sum(
         1
-        for s in pack_thorough.source_spans[:3]
+        for s in pack_thorough_cold.source_spans[:3]
+        if "lipschitz" in (s.metadata or {}).get("snippet", "").lower()
+    )
+    / 3.0
+)
+p3_auto = (
+    sum(
+        1
+        for s in pack_auto_math.source_spans[:3]
         if "lipschitz" in (s.metadata or {}).get("snippet", "").lower()
     )
     / 3.0
 )
 
 print("========================================================================")
-print("Precision@3 (Evidências cruciais capturadas no Top-3):")
-print(f"  Fast (BM25):             {p3_fast * 100:.1f}%")
-print(
-    f"  Thorough (Cross-Encoder):{p3_thorough * 100:.1f}%  (+{(p3_thorough - p3_fast) * 100:+.1f}%)"
-)
+print("AUDITORIA SPRINT 5: AUTO PROFILE & CACHE DE INVARIÂNCIA SEMÂNTICA")
+print("========================================================================")
+print(f"1. Fast Profile (BM25 Puro):                       {t_fast:.2f} ms")
+print(f"2. Thorough Profile - Cold (com Reranker Neural):  {t_thorough_cold:.2f} ms")
+print(f"3. Thorough Profile - Warm (Cache Invariante SQLite):{t_thorough_warm:.2f} ms (Predict calls delta: {predict_calls_after_warm - predict_calls_after_cold})")
+print(f"4. Auto Profile - Tarefa Simples (Mantém BM25):    {t_auto_simple:.2f} ms (Escalated={pack_auto_simple.quality.get('auto_escalation', {}).get('escalated')})")
+print(f"5. Auto Profile - Tarefa Matemática (Auto-Escala): {t_auto_math:.2f} ms (Escalated={pack_auto_math.quality.get('auto_escalation', {}).get('escalated')})")
+print("------------------------------------------------------------------------")
+print("PRECISÃO@3 (Captura das Provas Matemáticas dos Teoremas 5 e 11):")
+print(f"  Fast (BM25 Puro):             {p3_fast * 100:.1f}%")
+print(f"  Thorough (Cross-Encoder):     {p3_thorough * 100:.1f}% (+{(p3_thorough - p3_fast) * 100:+.1f}%)")
+print(f"  Auto (Escalação Dinâmica):   {p3_auto * 100:.1f}% (+{(p3_auto - p3_fast) * 100:+.1f}%)")
 print("========================================================================")

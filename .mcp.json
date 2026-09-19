@@ -7,6 +7,15 @@
         "writing-context-rtfm",
         "serve"
       ]
+    },
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "cwd": "/Users/joaocarlos/Developer/Projects/writing-context-rtfm",
+      "type": "stdio"
     }
   }
 }

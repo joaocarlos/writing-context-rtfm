@@ -41,7 +41,7 @@ def _provider_extra(config: AppConfig, provider_id: str) -> dict[str, Any]:
     return dict(provider.extra or {})
 
 
-def get_active_reranker(config: AppConfig) -> SpanReranker | None:
+def get_active_reranker(config: AppConfig, store: Any = None) -> SpanReranker | None:
     provider = config.providers.get("local_reranker")
     enabled = bool(
         provider.get("enabled", False)
@@ -56,8 +56,9 @@ def get_active_reranker(config: AppConfig) -> SpanReranker | None:
         device=str(extra.get("device", "auto")),
         batch_size=int(extra.get("batch_size", 8)),
         max_length=int(extra.get("max_length", 512)),
-        candidate_limit=int(extra.get("candidate_limit", 40)),
+        candidate_limit=int(extra.get("candidate_limit", 20)),
         blend_weight=float(extra.get("blend_weight", 0.25)),
         revision=str(extra["revision"]) if extra.get("revision") else None,
         torch_threads=int(extra.get("torch_threads", 4)),
+        store=store,
     )

@@ -131,11 +131,12 @@ class LocalCrossEncoderReranker:
         device: str = "auto",
         batch_size: int = 8,
         max_length: int = 512,
-        candidate_limit: int = 40,
+        candidate_limit: int = 20,
         blend_weight: float = 0.25,
         revision: str | None = None,
         torch_threads: int = 4,
         model: Any | None = None,
+        store: Any | None = None,
     ):
         if not 0.0 <= blend_weight <= 1.0:
             raise ValueError("blend_weight must be between 0 and 1")
@@ -150,6 +151,7 @@ class LocalCrossEncoderReranker:
         self.revision = revision
         self.torch_threads = torch_threads
         self._model = model
+        self.store = store
 
     def get_fingerprint(self) -> str:
         return stable_hash(
@@ -206,18 +208,54 @@ class LocalCrossEncoderReranker:
         if not scored:
             return protected + overflow + no_text
 
-        pairs = [(query, str((span.metadata or {})["snippet"])) for span in scored]
-        raw_scores = self._load().predict(
-            pairs,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
+        # Task and model hashing for semantic invariance cache
+        model_key = stable_hash(
+            "cross-encoder-model", self.model_id, self.revision or "", str(self.max_length)
         )
-        scores = np.asarray(raw_scores, dtype=np.float32).reshape(-1)
-        if len(scores) != len(scored):
-            raise RuntimeError("Cross-encoder returned an unexpected score count")
+        task_hash = stable_hash("task-query", query)
+
+        snippet_hashes: list[str] = [
+            stable_hash("snippet", str((span.metadata or {}).get("snippet") or ""))
+            for span in scored
+        ]
+
+        cached_scores: dict[str, float] = {}
+        if self.store is not None:
+            with contextlib.suppress(Exception):
+                cached_scores = self.store.get_reranker_scores(
+                    model_key, task_hash, snippet_hashes
+                )
+
+        # Identify missing pairs that need neural inference
+        missing_indices: list[int] = []
+        missing_pairs: list[tuple[str, str]] = []
+        for idx, (span, shash) in enumerate(zip(scored, snippet_hashes, strict=True)):
+            if shash not in cached_scores:
+                missing_indices.append(idx)
+                missing_pairs.append((query, str((span.metadata or {}).get("snippet") or "")))
+
+        if missing_pairs:
+            raw_scores = self._load().predict(
+                missing_pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+            scores_arr = np.asarray(raw_scores, dtype=np.float32).reshape(-1)
+            new_to_store: dict[str, float] = {}
+            for m_idx, raw_val in zip(missing_indices, scores_arr, strict=True):
+                shash = snippet_hashes[m_idx]
+                val = float(raw_val)
+                cached_scores[shash] = val
+                new_to_store[shash] = val
+
+            if self.store is not None and new_to_store:
+                with contextlib.suppress(Exception):
+                    self.store.store_reranker_scores(model_key, task_hash, new_to_store)
+
+        final_scores = [cached_scores[shash] for shash in snippet_hashes]
 
         reranked: list[SourceSpan] = []
-        for span, raw_score in zip(scored, scores, strict=True):
+        for span, raw_score in zip(scored, final_scores, strict=True):
             reranker_score = float(raw_score)
             blended = (1.0 - self.blend_weight) * span.score + self.blend_weight * reranker_score
             reranked.append(

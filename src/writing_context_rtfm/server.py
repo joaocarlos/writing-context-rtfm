@@ -400,6 +400,16 @@ def get_tools_list() -> dict[str, Any]:
                                 "that were recently edited into high-priority candidate context."
                             ),
                         },
+                        "profile": {
+                            "type": "string",
+                            "enum": ["fast", "balanced", "thorough", "auto"],
+                            "description": (
+                                "Execution profile preset: 'fast' (pure BM25, lowest latency), "
+                                "'balanced' (dense embeddings), 'thorough' (neural Cross-Encoder reranking), "
+                                "or 'auto' (dynamically escalates to Cross-Encoder when task complexity or "
+                                "lexical ambiguity warrants it)."
+                            ),
+                        },
                     },
                     "required": ["task"],
                 },
@@ -750,10 +760,18 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             ERROR_CONFIG, "Failed to load configuration or section cards.", str(e)
         )
 
+    from writing_context_rtfm.config import apply_profile
     from writing_context_rtfm.providers import get_active_providers, get_active_reranker
 
+    profile_override = args.get("profile")
+    if profile_override:
+        try:
+            config = apply_profile(config, str(profile_override))
+        except ValueError as e:
+            return _error_response(ERROR_INVALID_INPUT, str(e))
+
     providers = get_active_providers(config)
-    reranker = get_active_reranker(config)
+    reranker = get_active_reranker(config, store=store)
     generator = ContextPackGenerator(
         config, cards, adapter, store, providers=providers, reranker=reranker
     )
@@ -827,10 +845,18 @@ def handle_explain_context_pack(args: dict[str, Any]) -> dict[str, Any]:
             ERROR_CONFIG, "Failed to load configuration or section cards.", str(e)
         )
 
+    from writing_context_rtfm.config import apply_profile
     from writing_context_rtfm.providers import get_active_providers, get_active_reranker
 
+    profile_override = args.get("profile")
+    if profile_override:
+        try:
+            config = apply_profile(config, str(profile_override))
+        except ValueError as e:
+            return _error_response(ERROR_INVALID_INPUT, str(e))
+
     providers = get_active_providers(config)
-    reranker = get_active_reranker(config)
+    reranker = get_active_reranker(config, store=store)
     generator = ContextPackGenerator(
         config, cards, adapter, store, providers=providers, reranker=reranker
     )
@@ -2105,7 +2131,7 @@ def process_message(line: str) -> str | None:
                         )
 
                         providers = get_active_providers(config)
-                        reranker = get_active_reranker(config)
+                        reranker = get_active_reranker(config, store=store)
                         generator = ContextPackGenerator(
                             config,
                             cards,

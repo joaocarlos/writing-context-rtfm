@@ -247,17 +247,19 @@ def load_config(project_root: str = ".") -> AppConfig:
 
 
 def apply_profile(config: AppConfig, profile_name: str | None = None) -> AppConfig:
-    """Apply an execution profile preset (fast, balanced, thorough) to AppConfig.
+    """Apply an execution profile preset (fast, balanced, thorough, auto) to AppConfig.
 
     - fast (default): Pure keyword BM25 + AST graph. Neural embeddings and rerankers
       are disabled for zero latency overhead and zero heavy dependencies.
     - balanced: Enables local embedding search (sentence-transformers/fastembed) if configured.
     - thorough: Enables local embedding search and neural Cross-Encoder reranker.
+    - auto: Dynamically decides whether to escalate from BM25 to Cross-Encoder reranking
+      based on task complexity (formal/mathematical reasoning cues) and lexical score uncertainty.
     """
     profile = (profile_name or config.profile or "fast").strip().lower()
-    if profile not in ("fast", "balanced", "thorough"):
+    if profile not in ("fast", "balanced", "thorough", "auto"):
         raise ValueError(
-            f"Unknown profile '{profile}'. Expected 'fast', 'balanced', or 'thorough'."
+            f"Unknown profile '{profile}'. Expected 'fast', 'balanced', 'thorough', or 'auto'."
         )
 
     new_providers = dict(config.providers)
@@ -296,5 +298,21 @@ def apply_profile(config: AppConfig, profile_name: str | None = None) -> AppConf
             new_providers["local_reranker"] = replace(curr_rr, enabled=True)
         else:
             new_providers["local_reranker"] = ProviderConfig(enabled=True)
+    elif profile == "auto":
+        # In auto mode, enable local_reranker so it can be dynamically triggered
+        # on ambiguous or complex tasks without forcing dense embeddings upfront.
+        curr_rr = new_providers.get("local_reranker")
+        if curr_rr is not None:
+            new_providers["local_reranker"] = replace(curr_rr, enabled=True)
+        else:
+            new_providers["local_reranker"] = ProviderConfig(enabled=True)
+        if "local_embeddings" in new_providers:
+            new_providers["local_embeddings"] = replace(
+                new_providers["local_embeddings"], enabled=False
+            )
+        if "openai_semantic" in new_providers:
+            new_providers["openai_semantic"] = replace(
+                new_providers["openai_semantic"], enabled=False
+            )
 
     return replace(config, profile=profile, providers=new_providers)

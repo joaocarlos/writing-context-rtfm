@@ -49,6 +49,15 @@ def test_apply_profile_presets():
     assert thorough.providers["local_embeddings"].enabled is True
     assert thorough.providers["local_reranker"].enabled is True
 
+    # Auto: enable reranker for dynamic escalation, disable dense embeddings
+    auto_profile = apply_profile(base, "auto")
+    assert auto_profile.profile == "auto"
+    assert auto_profile.providers["local_reranker"].enabled is True
+    assert (
+        auto_profile.providers.get("local_embeddings") is None
+        or not auto_profile.providers["local_embeddings"].enabled
+    )
+
     # Unknown profile raises ValueError
     with pytest.raises(ValueError, match="Unknown profile"):
         apply_profile(base, "hyperdrive")

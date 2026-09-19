@@ -89,6 +89,7 @@ class PackQuality:
     custom_macros: dict[str, str] | None = None
     git_diff_active: bool = False
     git_modified_files: list[str] | None = None
+    auto_escalation: dict[str, Any] | None = None
 
 
 # --- Canonical Reason Taxonomy ---------------------------------------------

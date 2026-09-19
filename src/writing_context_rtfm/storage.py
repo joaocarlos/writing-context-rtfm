@@ -206,6 +206,22 @@ class ExtensionStore:
             PRIMARY KEY (chunk_id, model_key)
         );
         """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reranker_scores (
+            model_key TEXT NOT NULL,
+            task_hash TEXT NOT NULL,
+            snippet_hash TEXT NOT NULL,
+            score REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (model_key, task_hash, snippet_hash)
+        );
+        """)
+
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_reranker_scores_lookup
+        ON reranker_scores(model_key, task_hash);
+        """)
         conn.commit()
 
     def _compress(self, data: str) -> bytes:
@@ -724,3 +740,58 @@ class ExtensionStore:
                 }
             )
         return missing
+
+    def get_reranker_scores(
+        self,
+        model_key: str,
+        task_hash: str,
+        snippet_hashes: list[str],
+    ) -> dict[str, float]:
+        """Fetch cached cross-encoder reranker scores for a task and a list of snippet hashes."""
+        if not snippet_hashes:
+            return {}
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in snippet_hashes)
+            cursor.execute(
+                f"""
+                SELECT snippet_hash, score
+                FROM reranker_scores
+                WHERE model_key = ? AND task_hash = ? AND snippet_hash IN ({placeholders})
+                """,
+                [model_key, task_hash, *snippet_hashes],
+            )
+            return {str(row["snippet_hash"]): float(row["score"]) for row in cursor.fetchall()}
+
+    def store_reranker_scores(
+        self,
+        model_key: str,
+        task_hash: str,
+        scores: dict[str, float],
+    ) -> None:
+        """Persist cross-encoder reranker scores for (model_key, task_hash, snippet_hash)."""
+        if not scores:
+            return
+        with self._connect() as conn:
+            data = [
+                {
+                    "model_key": model_key,
+                    "task_hash": task_hash,
+                    "snippet_hash": snippet_hash,
+                    "score": score,
+                }
+                for snippet_hash, score in scores.items()
+            ]
+            conn.executemany(
+                """
+                INSERT INTO reranker_scores (
+                    model_key, task_hash, snippet_hash, score, created_at
+                )
+                VALUES (:model_key, :task_hash, :snippet_hash, :score, CURRENT_TIMESTAMP)
+                ON CONFLICT(model_key, task_hash, snippet_hash) DO UPDATE SET
+                    score=excluded.score,
+                    created_at=CURRENT_TIMESTAMP
+                """,
+                data,
+            )
+            conn.commit()

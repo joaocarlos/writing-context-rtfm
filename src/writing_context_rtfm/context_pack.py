@@ -428,6 +428,9 @@ class ContextPackGenerator:
         self.store = store
         self.providers = providers or []
         self.reranker = reranker
+        if self.reranker is not None and getattr(self.reranker, "store", None) is None:
+            with contextlib.suppress(Exception):
+                self.reranker.store = self.store  # type: ignore[attr-defined]
         self.diagnostic_recorder = diagnostic_recorder
         self.query_stream_retriever = query_stream_retriever
         self.bibliography_handoff = bibliography_handoff
@@ -889,6 +892,151 @@ class ContextPackGenerator:
         return merged_candidates
 
     # -----------------------------------------------------------------------
+    # Dynamic Auto-Escalation & Pre-Reranker Candidate Prioritization
+    # -----------------------------------------------------------------------
+    def _should_auto_escalate(
+        self,
+        task: str,
+        target_card: SectionCard | None,
+        candidates: Sequence[SourceSpan],
+    ) -> tuple[bool, str]:
+        """Determine whether to dynamically escalate from BM25 to Cross-Encoder reranking.
+
+        Escalation occurs when:
+        1. Task involves formal, mathematical, or theoretical structures (proofs, theorems, asymptotics, equations)
+           where lexical repetition in surveys frequently confuses BM25.
+        2. Lexical uncertainty is high: top BM25 score is low (< 0.40) or candidate score dispersion is flat
+           (entropy is high / top candidates have nearly identical scores with delta < 0.05).
+        """
+        if self.reranker is None:
+            return False, "Reranker is not available or optional dependencies are missing"
+
+        # 1. Check for formal, mathematical, or theoretical reasoning cues
+        formal_cues_pat = re.compile(
+            r"\b("
+            r"proof|prove|proves|theorem|lemma|proposition|corollary|conjecture|"
+            r"bound|bounds|asymptot\w*|converg\w*|diverg\w*|extremum|optimi\w*|"
+            r"deriv\w*|formul\w*|complexit\w*|algorithm\w*|invari\w*|"
+            r"prova|provar|teorema|lema|proposiç\w*|limitant\w*|assintót\w*|convergênc\w*|"
+            r"otimiza\w*|complexidade|algoritmo\w*"
+            r")\b",
+            re.IGNORECASE,
+        )
+        match = formal_cues_pat.search(task)
+        if match:
+            return True, f"Escalated: task involves formal/theoretical reasoning ('{match.group(1)}')"
+
+        # Check for LaTeX mathematical notation or citations in task
+        latex_cues_pat = re.compile(
+            r"(\$[^$]+\$|\\begin\{(?:equation|align)\}|\\[a-zA-Z]*ref\{|\\cite\{)"
+        )
+        latex_match = latex_cues_pat.search(task)
+        if latex_match:
+            return (
+                True,
+                f"Escalated: task contains mathematical or citation syntax ('{latex_match.group(1)}')",
+            )
+
+        # 2. Check lexical score distribution among non-protected candidate spans
+        non_protected = [
+            s
+            for s in candidates
+            if s.priority != "essential"
+            and s.source_role != "target_text"
+            and (s.metadata or {}).get("snippet")
+        ]
+        if not non_protected:
+            return False, "No non-protected text candidate spans to rerank"
+
+        scores = [s.score for s in non_protected[:5]]
+        if max(scores) < 0.40:
+            return (
+                True,
+                f"Escalated: peak lexical retrieval score is low ({max(scores):.3f} < 0.40)",
+            )
+
+        if len(scores) >= 3 and (scores[0] - scores[-1]) < 0.05:
+            return (
+                True,
+                f"Escalated: lexical score distribution is flat (delta={scores[0] - scores[-1]:.3f} < 0.05)",
+            )
+
+        return False, "Lexical retrieval confidence is high with distinctive keyword separation"
+
+    def _prioritize_and_bound_reranker_candidates(
+        self,
+        spans: list[SourceSpan],
+        target_card: SectionCard | None,
+        dep_cards: list[SectionCard],
+        task: str,
+        limit: int = 20,
+    ) -> list[SourceSpan]:
+        """Partition and prioritize candidates for cross-encoder reranking based on graph dependencies and citations.
+
+        Anchors candidate selection so that spans matching target section dependencies, 1-hop AST links,
+        or citation keys/labels are prioritized into the top `limit` pool ahead of distant lexical noise.
+        """
+        protected: list[SourceSpan] = []
+        candidates_with_text: list[SourceSpan] = []
+        no_text: list[SourceSpan] = []
+
+        for s in spans:
+            if s.priority == "essential" or s.source_role == "target_text":
+                protected.append(s)
+            elif str((s.metadata or {}).get("snippet") or ""):
+                candidates_with_text.append(s)
+            else:
+                no_text.append(s)
+
+        if not candidates_with_text:
+            return spans
+
+        # Extract dependency paths and citation/ref anchors
+        dep_paths = {c.path for c in dep_cards if c.path}
+        if target_card and target_card.path:
+            dep_paths.add(target_card.path)
+
+        dep_ids: set[str] = set()
+        if target_card and target_card.depends_on:
+            dep_ids.update(target_card.depends_on)
+
+        citation_keys: set[str] = set()
+        if target_card and target_card.key_terms:
+            citation_keys.update(k.lower() for k in target_card.key_terms)
+
+        cite_pat = re.compile(r"(?:\\cite\{|\[@)([a-zA-Z0-9_:-]+)")
+        for m in cite_pat.finditer(task):
+            citation_keys.add(m.group(1).lower())
+
+        anchored: list[SourceSpan] = []
+        lexical: list[SourceSpan] = []
+
+        for span in candidates_with_text:
+            meta = span.metadata or {}
+            snippet_text = str(meta.get("snippet") or "")
+            snippet_lower = snippet_text.lower()
+
+            is_anchored = (
+                span.path in dep_paths
+                or meta.get("section_id") in dep_ids
+                or "dep" in span.reason.lower()
+                or "1-hop" in span.reason.lower()
+                or bool(citation_keys and any(k in snippet_lower for k in citation_keys))
+            )
+
+            if is_anchored:
+                anchored.append(span)
+            else:
+                lexical.append(span)
+
+        anchored.sort(key=lambda s: (-s.score, s.path, s.line_start or 0))
+        lexical.sort(key=lambda s: (-s.score, s.path, s.line_start or 0))
+
+        # Anchored candidates first, followed by best lexical candidates
+        combined = anchored + lexical
+        return protected + combined + no_text
+
+    # -----------------------------------------------------------------------
     # Fix 3: Score filtering with structural override
     # -----------------------------------------------------------------------
     def _filter_by_score(
@@ -1071,7 +1219,7 @@ class ContextPackGenerator:
 
         # Compute combined retrieval fingerprint (RTFM DB + provider fingerprints)
         rtfm_db = resolve_rtfm_db_path(Path(self.config.rtfm.project_root))
-        provider_fps = []
+        provider_fps = [f"profile:{self.config.profile}"]
         for p in self.providers:
             with contextlib.suppress(Exception):
                 fp = p.get_fingerprint(self.config)
@@ -1113,7 +1261,7 @@ class ContextPackGenerator:
                     estimated_tokens=cached.get("estimated_tokens", 0),
                     status=cached.get("status", "complete"),
                     warnings=cached.get("warnings", []),
-                    quality=cached.get("quality"),
+                    quality=cached.get("quality") or {},
                     summary=cached.get("summary"),
                     run_id=cached.get("run_id"),
                     cache=cd,
@@ -1795,10 +1943,34 @@ class ContextPackGenerator:
         deduped = self._deduplicate_spans(snapped_candidates, tracker=tracker)
         self._record_diagnostic("deduplicated", deduped)
 
-        # --- Optional bounded local cross-encoder reranking ---
-        if self.reranker is not None:
+        # --- Optional bounded local cross-encoder reranking & auto-escalation ---
+        active_reranker = self.reranker
+        auto_escalation_info: dict[str, Any] | None = None
+        if self.config.profile == "auto":
+            if self.reranker is not None:
+                should_escalate, esc_reason = self._should_auto_escalate(task, target_card, deduped)
+                auto_escalation_info = {
+                    "profile": "auto",
+                    "escalated": should_escalate,
+                    "reason": esc_reason,
+                }
+                if not should_escalate:
+                    active_reranker = None
+            else:
+                auto_escalation_info = {
+                    "profile": "auto",
+                    "escalated": False,
+                    "reason": "Reranker not available or dependencies missing",
+                }
+            quality.auto_escalation = auto_escalation_info
+            self._record_diagnostic("auto_escalation", [auto_escalation_info])  # type: ignore[list-item]
+
+        if active_reranker is not None:
             try:
-                deduped = self.reranker.rerank(task, deduped)
+                deduped = self._prioritize_and_bound_reranker_candidates(
+                    deduped, target_card, dep_cards, task, limit=20
+                )
+                deduped = active_reranker.rerank(task, deduped)
             except Exception as e:
                 warnings.append(f"Local reranker failed: {e}")
                 status = "degraded"

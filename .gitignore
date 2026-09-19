@@ -87,3 +87,5 @@ benchmark/**/*judgment*.json
 # Local unversioned roadmaps and notes
 *.local.md
 
+# Added by code-review-graph
+.code-review-graph/

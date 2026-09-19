@@ -690,7 +690,7 @@ def pack_command(args: argparse.Namespace) -> None:
         from writing_context_rtfm.providers import get_active_providers, get_active_reranker
 
         providers = get_active_providers(config)
-        reranker = get_active_reranker(config)
+        reranker = get_active_reranker(config, store=store)
         generator = ContextPackGenerator(
             config, cards, adapter, store, providers=providers, reranker=reranker
         )
@@ -846,7 +846,7 @@ def preview_pack_command(args: argparse.Namespace) -> None:
         from writing_context_rtfm.providers import get_active_providers, get_active_reranker
 
         providers = get_active_providers(config)
-        reranker = get_active_reranker(config)
+        reranker = get_active_reranker(config, store=store)
         generator = ContextPackGenerator(
             config, cards, adapter, store, providers=providers, reranker=reranker
         )
@@ -1293,8 +1293,8 @@ def main() -> None:
     )
     parser_pack.add_argument(
         "--profile",
-        choices=["fast", "balanced", "thorough"],
-        help="Execution profile preset (fast, balanced, thorough)",
+        choices=["fast", "balanced", "thorough", "auto"],
+        help="Execution profile preset (fast, balanced, thorough, auto)",
     )
     parser_pack.add_argument(
         "--git-diff",
@@ -1349,8 +1349,8 @@ def main() -> None:
     )
     parser_exp_pack.add_argument(
         "--profile",
-        choices=["fast", "balanced", "thorough"],
-        help="Execution profile preset (fast, balanced, thorough)",
+        choices=["fast", "balanced", "thorough", "auto"],
+        help="Execution profile preset (fast, balanced, thorough, auto)",
     )
     parser_exp_pack.add_argument(
         "--git-diff",
@@ -1403,8 +1403,8 @@ def main() -> None:
     )
     parser_preview.add_argument(
         "--profile",
-        choices=["fast", "balanced", "thorough"],
-        help="Execution profile preset (fast, balanced, thorough)",
+        choices=["fast", "balanced", "thorough", "auto"],
+        help="Execution profile preset (fast, balanced, thorough, auto)",
     )
     parser_preview.add_argument(
         "--git-diff",

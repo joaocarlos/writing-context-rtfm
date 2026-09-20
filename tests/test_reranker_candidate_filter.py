@@ -114,3 +114,36 @@ def test_prioritize_and_bound_reranker_candidates():
 
     # 4. Spans with no text snippet are retained at the end
     assert prioritized[-1].path == "sections/appendix.tex"
+
+
+def test_prioritize_and_bound_reranker_candidates_enforces_limit():
+    cfg = load_config("nonexistent.yaml")
+    store = ExtensionStore(":memory:")
+    generator = ContextPackGenerator(cfg, None, MagicMock(), store)
+
+    # Create 30 raw candidate spans with snippets
+    spans = [
+        SourceSpan(
+            path=f"file_{i}.tex",
+            line_start=1,
+            line_end=10,
+            reason="BM25",
+            score=0.1 * i,
+            metadata={"snippet": f"Snippet text {i}"},
+        )
+        for i in range(30)
+    ]
+
+    bounded = generator._prioritize_and_bound_reranker_candidates(
+        spans,
+        target_card=None,
+        dep_cards=[],
+        task="Some writing task",
+        limit=20,
+    )
+
+    # Must be bounded to exactly 20 candidates
+    assert len(bounded) == 20
+    # Top scores should be preserved (score 2.9 down to 1.0)
+    assert bounded[0].path == "file_29.tex"
+    assert bounded[-1].path == "file_10.tex"

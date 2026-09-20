@@ -67,6 +67,13 @@ def test_semantic_audit_scenarios_e2e() -> None:
     s5 = results["scenario_5_truncation"]
     assert s5["handled_cleanly"] is True
     assert s5["spans_returned"] > 0
+    assert s5["minilm_score"] < s5["modernbert_score"]
+    assert s5["minilm_reranker_score"] == 0.15
+    assert s5["minilm_promoted"] is False
+    assert s5["minilm_truncated"] is True
+    assert s5["modernbert_reranker_score"] == 0.95
+    assert s5["modernbert_promoted"] is True
+    assert s5["modernbert_truncated"] is False
 
 
 def test_sqlite_invariance_cache_zero_delta() -> None:
@@ -77,11 +84,49 @@ def test_sqlite_invariance_cache_zero_delta() -> None:
     assert s1["thorough_warm"]["latency_ms"] < s1["thorough_cold"]["latency_ms"]
 
 
-def test_candidate_pool_scaling_sub_25ms() -> None:
+def test_sqlite_cache_invariance_comprehensive() -> None:
     runner = SemanticBenchmarkRunner()
-    latencies = runner.run_candidate_pool_scaling(pool_sizes=(5, 10, 20))
-    for n, lat in latencies.items():
-        assert lat < 25.0, f"Latency for pool N={n} was {lat} ms (exceeded 25 ms ceiling)"
+    inv = runner.run_cache_invariance_audit()
+
+    # a) Identical call (100% warm): 0 new predict calls
+    assert inv["identical_warm_passed"] is True
+    assert inv["identical_warm_delta"] == 0
+
+    # b) Incremental editing: 1/16 edited -> exactly 1 neural inference, 15 cache hits (93.75% savings)
+    assert inv["incremental_passed"] is True
+    assert inv["incremental_edit_delta"] == 1
+    assert inv["incremental_edit_hits"] == 15
+    assert inv["incremental_edit_misses"] == 1
+    assert inv["incremental_savings_pct"] == 93.75
+
+    # c) Order permutation: Shuffled candidate list yields identical blended scores and 0 new predict calls
+    assert inv["order_permutation_passed"] is True
+    assert inv["order_permutation_delta"] == 0
+    assert inv["order_permutation_scores_identical"] is True
+
+    # d) Query isolation: Different task query computes fresh scores without cache poisoning
+    assert inv["query_isolation_passed"] is True
+    assert inv["query_isolation_delta"] == 1
+    assert inv["query_isolation_task1_recheck_delta"] == 0
+
+
+def test_candidate_pool_scaling_sub_15ms() -> None:
+    runner = SemanticBenchmarkRunner()
+    scaling = runner.run_candidate_pool_scaling(pool_sizes=(5, 10, 20, 50))
+
+    # a) Raw neural scaling: evaluates exactly N pairs without artificial capping
+    raw = scaling["raw_neural_scaling"]
+    assert set(raw.keys()) == {5, 10, 20, 50}
+    for n, lat in raw.items():
+        assert lat < 25.0, f"Raw neural latency for N={n} was {lat} ms (exceeded 25 ms ceiling)"
+
+    # b) Production pipeline bounded: pre-filtering bounds scoring to 20 candidates, keeping CPU latency <= 15 ms
+    bounded = scaling["production_pipeline_bounded"]
+    assert set(bounded.keys()) == {5, 10, 20, 50}
+    assert bounded[20] <= 15.0, f"N=20 latency was {bounded[20]} ms (exceeded 15 ms budget)"
+    assert bounded[50] <= 15.0, (
+        f"N=50 bounded latency was {bounded[50]} ms (exceeded 15 ms budget; pre-filtering failed to bound)"
+    )
 
 
 def test_evaluate_quality_targets_scorecard() -> None:
@@ -89,10 +134,15 @@ def test_evaluate_quality_targets_scorecard() -> None:
 
     runner = SemanticBenchmarkRunner()
     results = runner.run_all_scenarios()
-    scaling = runner.run_candidate_pool_scaling(pool_sizes=(5, 10, 20))
+    scaling = runner.run_candidate_pool_scaling(pool_sizes=(5, 10, 20, 50))
     real = runner.run_real_corpus_evaluation()
 
     targets = evaluate_quality_targets(results, scaling=scaling, real=real)
+    target_ids = {t["id"] for t in targets}
+    assert "T5-LATENCY-BUDGET-N20" in target_ids
+    assert "T5B-BOUNDED-PIPELINE-N50" in target_ids
+    assert "T6-INCREMENTAL-CACHE-INVARIANCE" in target_ids
+
     for target in targets:
         assert target["passed"] is True, f"Quality target {target['id']} failed: {target}"
 

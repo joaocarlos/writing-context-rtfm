@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
 from writing_context_rtfm.config import load_config
 from writing_context_rtfm.context_pack import ContextPackGenerator
@@ -270,3 +271,83 @@ def test_context_pack_applies_injected_reranker_before_selection(tmp_path: Path)
     assert reranker.queries == ["draft calibration"]
     assert pack.source_spans[0].path == "semantic.tex"
     assert pack.source_spans[0].metadata["reranker_score"] == 0.95
+
+
+def test_cross_encoder_adaptive_max_length_defaults() -> None:
+    # ModernBERT defaults to 2048
+    reranker_mb = LocalCrossEncoderReranker(
+        "Alibaba-NLP/gte-reranker-modernbert-base",
+        model=FakeCrossEncoder(),
+    )
+    assert reranker_mb.max_length == 2048
+
+    # Non-ModernBERT defaults to 512
+    reranker_minilm = LocalCrossEncoderReranker(
+        "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model=FakeCrossEncoder(),
+    )
+    assert reranker_minilm.max_length == 512
+
+    # Explicit override
+    reranker_custom = LocalCrossEncoderReranker(
+        "Alibaba-NLP/gte-reranker-modernbert-base",
+        model=FakeCrossEncoder(),
+        max_length=1024,
+    )
+    assert reranker_custom.max_length == 1024
+
+    # Invalid max_length <= 0 raises ValueError
+    with pytest.raises(ValueError, match="max_length must be positive"):
+        LocalCrossEncoderReranker(
+            "Alibaba-NLP/gte-reranker-modernbert-base",
+            max_length=0,
+        )
+
+
+def test_cross_encoder_truncation_detection_metadata() -> None:
+    class DummyPredictor:
+        def predict(self, pairs: list[tuple[str, str]], **kwargs: Any) -> np.ndarray:
+            return np.asarray([0.8 for _ in pairs], dtype=np.float32)
+
+    # 600 words snippet
+    long_snippet = "word " * 600
+    short_snippet = "short snippet"
+
+    span_long = SourceSpan(
+        path="long.tex",
+        line_start=1,
+        line_end=100,
+        reason="test",
+        score=0.5,
+        metadata={"snippet": long_snippet},
+    )
+    span_short = SourceSpan(
+        path="short.tex",
+        line_start=1,
+        line_end=10,
+        reason="test",
+        score=0.5,
+        metadata={"snippet": short_snippet},
+    )
+
+    # MiniLM (max_length=512) -> long is truncated, short is not
+    reranker_minilm = LocalCrossEncoderReranker(
+        "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model=DummyPredictor(),
+    )
+    reranked_minilm = reranker_minilm.rerank("query", [span_long, span_short])
+    long_res_minilm = next(s for s in reranked_minilm if s.path == "long.tex")
+    short_res_minilm = next(s for s in reranked_minilm if s.path == "short.tex")
+
+    assert long_res_minilm.metadata.get("reranker_truncated") is True
+    assert short_res_minilm.metadata.get("reranker_truncated") is not True
+
+    # ModernBERT (max_length=2048) -> long is NOT truncated
+    reranker_mb = LocalCrossEncoderReranker(
+        "Alibaba-NLP/gte-reranker-modernbert-base",
+        model=DummyPredictor(),
+    )
+    reranked_mb = reranker_mb.rerank("query", [span_long, span_short])
+    long_res_mb = next(s for s in reranked_mb if s.path == "long.tex")
+
+    assert long_res_mb.metadata.get("reranker_truncated") is not True

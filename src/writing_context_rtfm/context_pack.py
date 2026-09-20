@@ -1044,8 +1044,8 @@ class ContextPackGenerator:
         anchored.sort(key=lambda s: (-s.score, s.path, s.line_start or 0))
         lexical.sort(key=lambda s: (-s.score, s.path, s.line_start or 0))
 
-        # Anchored candidates first, followed by best lexical candidates
-        combined = anchored + lexical
+        # Anchored candidates first, followed by best lexical candidates, bounded to limit
+        combined = (anchored + lexical)[:limit] if limit > 0 else (anchored + lexical)
         return protected + combined + no_text
 
     # -----------------------------------------------------------------------
@@ -2044,8 +2044,9 @@ class ContextPackGenerator:
 
         if active_reranker is not None:
             try:
+                candidate_limit = getattr(active_reranker, "candidate_limit", 20)
                 deduped = self._prioritize_and_bound_reranker_candidates(
-                    deduped, target_card, dep_cards, task, limit=20
+                    deduped, target_card, dep_cards, task, limit=candidate_limit
                 )
                 deduped = active_reranker.rerank(task, deduped)
             except Exception as e:

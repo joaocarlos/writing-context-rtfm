@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 
 from writing_context_rtfm.hashing import stable_hash
 from writing_context_rtfm.schemas import SourceSpan
+from writing_context_rtfm.token_budget import estimate_tokens
 
 MXBAI_QUERY_PROMPT = "Represent this sentence for searching relevant passages: "
 KNOWN_QUERY_PROMPTS = {
@@ -130,7 +131,7 @@ class LocalCrossEncoderReranker:
         *,
         device: str = "auto",
         batch_size: int = 8,
-        max_length: int = 512,
+        max_length: int | None = None,
         candidate_limit: int = 20,
         blend_weight: float = 0.25,
         revision: str | None = None,
@@ -145,7 +146,14 @@ class LocalCrossEncoderReranker:
         self.model_id = model_id
         self.device = device
         self.batch_size = batch_size
-        self.max_length = max_length
+        if max_length is not None:
+            if max_length <= 0:
+                raise ValueError("max_length must be positive")
+            self.max_length = max_length
+        elif "modernbert" in model_id.lower():
+            self.max_length = 2048
+        else:
+            self.max_length = 512
         self.candidate_limit = candidate_limit
         self.blend_weight = blend_weight
         self.revision = revision
@@ -256,16 +264,23 @@ class LocalCrossEncoderReranker:
         for span, raw_score in zip(scored, final_scores, strict=True):
             reranker_score = float(raw_score)
             blended = (1.0 - self.blend_weight) * span.score + self.blend_weight * reranker_score
+            snippet = str((span.metadata or {}).get("snippet") or "")
+            truncated = (
+                len(snippet.split()) > self.max_length or estimate_tokens(snippet) > self.max_length
+            )
+            metadata = {
+                **(span.metadata or {}),
+                "base_score": span.score,
+                "reranker_score": round(reranker_score, 6),
+                "reranker_model": self.model_id,
+            }
+            if truncated:
+                metadata["reranker_truncated"] = True
             reranked.append(
                 replace(
                     span,
                     score=round(blended, 6),
-                    metadata={
-                        **(span.metadata or {}),
-                        "base_score": span.score,
-                        "reranker_score": round(reranker_score, 6),
-                        "reranker_model": self.model_id,
-                    },
+                    metadata=metadata,
                 )
             )
         reranked.sort(key=lambda span: (-span.score, span.path, span.line_start or 0))

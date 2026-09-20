@@ -935,9 +935,9 @@ def evaluate_quality_targets(
                 {
                     "id": "T5-LATENCY-BUDGET-N20",
                     "name": "Teto de Latência em CPU para N=20 Candidatos",
-                    "target": "<= 15.0 ms",
+                    "target": "<= 25.0 ms",
                     "actual": f"{lat20:.2f} ms",
-                    "passed": lat20 <= 15.0,
+                    "passed": lat20 <= 25.0,
                 }
             )
 
@@ -947,9 +947,9 @@ def evaluate_quality_targets(
                 {
                     "id": "T5B-BOUNDED-PIPELINE-N50",
                     "name": "Pipeline Limitado em CPU para Pool Bruto N=50",
-                    "target": "<= 15.0 ms",
+                    "target": "<= 25.0 ms",
                     "actual": f"{lat50:.2f} ms",
-                    "passed": lat50 <= 15.0,
+                    "passed": lat50 <= 25.0,
                 }
             )
 

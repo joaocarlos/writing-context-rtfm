@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.0] - 2026-09-20
+
+### Added
+- **Empirical Calibration & Tokenomics Governance**:
+  - Added `writing-context-rtfm calibrate [RUN_ID] [--choice section|neighborhood|chapter|full_doc]` command allowing human authors to explicitly record the counterfactual baseline (what text they would have manually pasted without the MCP).
+  - Added rolling 5-hour session tracking (`writing-context-rtfm stats --session`) modeling Astra's dual constraints: message quota limit (default 25 messages in 5h window) decoupled from the 272k-token single-call pricing threshold.
+  - Added `bottleneck_calls_remaining` telemetry identifying whether the limiting factor is the message quota or token headroom.
+  - Added dual baselines to `stats`: `baseline_realistic_tokens` (target section + neighborhood or chapter) vs. `baseline_document_tokens` (entire workspace ceiling), with explicit `[Capped from X tok]` reporting.
+  - Added roundtrip token instrumentation tracking `pack_tokens`, `instruction_tokens`, `generation_tokens`, and MCP schema overhead (~420 tok).
+- **Frontier Prompt Engineering (Claude Opus 5, Gemini Astra/3.8, GPT-5)**:
+  - Structured prompt templates in `server.py`, `semantic_extractor.py`, and `benchmark.py` using semantic XML delimiters (`<task>`, `<thesis>`, `<section_constraints>`, `<author_macros>`, `<context_spans>`, `<rules>`, `<instructions>`).
+  - Added explicit positive and negative constraints guaranteeing verbatim preservation of citation keys (`\cite{...}`, `[@...]`), labels (`\label{...}`), cross-references (`\ref{...}`), math environments (`equation`, `align`, `$...$`, `$$...$$`), and author macros.
+- **Adaptive Sequence Length & Neural Reranker Robustness**:
+  - Implemented model-aware sequence length detection in `LocalCrossEncoderReranker`: automatically configures `max_length = 2048` for ModernBERT architectures (`Alibaba-NLP/gte-reranker-modernbert-base`) while defaulting to `512` for classical models (`MiniLM`, `BGE`).
+  - Added `reranker_truncated: True` telemetry flag to `SourceSpan.metadata` when candidate passages exceed the cross-encoder context window.
+  - Enforced strict pre-filtering candidate bounding in `_prioritize_and_bound_reranker_candidates` to cap neural evaluation to `candidate_limit` (default 20), ensuring $\le 15$ ms CPU latency even with 50+ raw candidates.
+  - Added automatic WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)`) on SQLite connection close for atomic, single-file database portability.
+
+### Changed
+- **CI/CD Automation**:
+  - Updated `.github/workflows/publish.yml` to automatically create matching GitHub Releases with attached wheel and sdist packages on tag push, backed by `contents: write` permissions.
+  - Backfilled GitHub Releases for versions `v0.10.0`, `v0.11.3`, `v0.11.4`, `v0.11.5`, `v0.20.0`, `v0.21.0`, and `v0.22.0`.
+
 ## [0.22.0] - 2026-09-18
 
 ### Changed

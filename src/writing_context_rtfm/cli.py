@@ -92,15 +92,14 @@ def _update_markdown_rules(root: Path, file_name: str, default_title: str) -> No
     rules = (
         f"{anchor_start}\n"
         "## Agent Rules of Thumb for Writing Context\n\n"
-        "1. **Retrieve Curated Context First**: Call `get_writing_context_pack` or `get_proofreading_context_pack` before writing, rewriting, expanding, or proofreading text to obtain section constraints, thesis, terminology definitions, and 1-hop reference graph snippets.\n"
+        "1. **Retrieve Curated Context First**: Call `get_writing_context_pack` or `get_proofreading_context_pack` before writing, rewriting, expanding, adapting, or compressing text to obtain section constraints, thesis, terminology definitions, and 1-hop reference graph snippets.\n"
         "2. **Autonomous Direct-Read Fallback**: If you need continuous prose flow, full-chapter narrative context, or the returned context pack is truncated, you are fully authorized to read the target and dependency files directly after inspecting the pack.\n"
-        "3. **Specify Task & Depth**: Use `task_type` and `pack_mode` parameters when calling `get_writing_context_pack` to optimize context weightings and token budgets.\n"
+        "3. **Specify Task, Mode & Depth**: Use `mode` (`write`, `rewrite`, `adapt`, `compress`), `task_type`, `pack_mode`, and `include_diagnostics` parameters when calling `get_writing_context_pack` to optimize context weightings and token budgets.\n"
         "4. **Respect Formatting Boundaries**: Pay attention to safety warnings in the pack. Never alter detected LaTeX citations (`\\cite`), Pandoc keys (`[@key]`), labels (`\\label`), references (`\\ref`), or math environments (`align`, `$$`).\n"
-        "5. **Use Terminology Lookup**: Use `get_term_context` or `audit_manuscript_terminology` to retrieve definitions, variants, and words to avoid for specific terms.\n"
-        "6. **Handle Pagination**: If you need extra background spans, call `request_more_context` with the `run_id`.\n"
-        "7. **Log Feedback**: Always evaluate retrieved context using `submit_generation_feedback` so subsequent caching is optimized.\n"
-        "8. **Initialize & Review Cards**: Use `initialize_section_cards`, `review_card_candidates`, `accept_card_candidate`, `reject_card_candidate`, or `edit_card_field` to scaffold and refine cards.\n"
-        "9. **Inspect Graph & Section Details**: Use `get_manuscript_reference_graph`, `inspect_target_section`, `get_card_field_diff`, `get_section_card_history`, or `explain_card_candidate` for deep section inspection.\n"
+        '5. **Card Management & Terminology**: Use `manage_section_cards` with `action="term"` or `action="audit"` for glossary lookups, and `action="init"`, `action="review"`, `action="accept"`, `action="reject"`, or `action="edit"` to scaffold and maintain section cards.\n'
+        '6. **Inspect Graph & Section Details**: Use `manage_section_cards` with `action="inspect"` (section details), `action="graph"` (reference graph), `action="diff"` (overrides diff), `action="history"` (audit log), or `action="explain"` (candidate provenance).\n'
+        "7. **Handle Pagination**: If you need extra background spans, call `request_more_context` with the `run_id`.\n"
+        "8. **Log Feedback**: Always evaluate retrieved context using `submit_generation_feedback` so subsequent caching is optimized.\n"
         f"{anchor_end}"
     )
 

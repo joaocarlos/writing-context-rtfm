@@ -1266,31 +1266,49 @@ class ProductionRetrievalBackend:
 
 SYSTEM_INSTRUCTION = (
     "You are an academic writing assistant. Write only the requested manuscript section using "
-    "the supplied evidence. Do not invent evidence, citations, results, labels, or numerical values."
+    "the supplied evidence. Do not invent evidence, citations, results, labels, or numerical values. "
+    "Preserve all citation keys, LaTeX labels, and math environments verbatim."
 )
 
 
 def render_generation_prompt(case: CaseManifest, evidence: dict[str, Any]) -> str:
     """Render the sole benchmark-owned generation template for every strategy."""
     lines = [
-        f"SYSTEM\n{SYSTEM_INSTRUCTION}",
-        f"TASK\n{case.task}",
-        f"TARGET\n{case.target_selector}",
+        f"SYSTEM\n<system_instruction>\n{SYSTEM_INSTRUCTION}\n</system_instruction>",
+        f"TASK\n<task>\n{case.task}\n</task>",
+        f"TARGET\n<target_selector>\n{case.target_selector}\n</target_selector>",
         (
             "OUTPUT RANGE\n"
+            "<output_constraints>\n"
             f"{case.expected_output_range[0]}-{case.expected_output_range[1]} words; "
-            f"hard ceiling {case.output_tokens} tokens"
+            f"hard ceiling {case.output_tokens} tokens\n"
+            "</output_constraints>"
         ),
     ]
     pack_metadata = evidence.get("pack_metadata") or {}
     if pack_metadata:
-        lines.append("PACK GUIDANCE\n" + canonical_json(pack_metadata))
+        lines.append(
+            "PACK GUIDANCE\n<pack_guidance>\n"
+            + canonical_json(pack_metadata)
+            + "\n</pack_guidance>"
+        )
     span_blocks = []
     for span in evidence.get("spans", []):
         location = f"{span['path']}:{span.get('line_start')}-{span.get('line_end')}"
-        span_blocks.append(f"[{span['id']}] {location}\n{span['text']}")
-    lines.append("EVIDENCE\n" + "\n\n".join(span_blocks))
-    lines.append("OUTPUT\nReturn only the manuscript section body.")
+        span_blocks.append(
+            f'<context_span id="{span["id"]}" location="{location}">\n'
+            f"[{span['id']}] {location}\n{span['text']}\n"
+            f"</context_span>"
+        )
+    lines.append("EVIDENCE\n<evidence_spans>\n" + "\n\n".join(span_blocks) + "\n</evidence_spans>")
+    lines.append(
+        "OUTPUT\n"
+        "<generation_rules>\n"
+        "Return only the manuscript section body. "
+        "Strictly adhere to the provided evidence without inventing ungrounded claims, citations, labels, or math formulas. "
+        "Preserve academic tone and LaTeX formatting integrity.\n"
+        "</generation_rules>"
+    )
     return "\n\n".join(lines)
 
 
@@ -2565,11 +2583,17 @@ def render_judge_prompt(
         "Evaluate the blinded candidate only against the task, rubric, and condition evidence. "
         "Do not infer missing evidence. Return only strict JSON.\n\n"
         f"CANDIDATE ID\n{candidate_id}\n\n"
-        f"TASK\n{case.task}\n\n"
+        f"TASK\n<task>\n{case.task}\n</task>\n\n"
         f"RUBRIC\n{canonical_json(case.rubric_for_judge())}\n\n"
         f"EVIDENCE PACKET\n{canonical_json(packet)}\n\n"
-        f"CANDIDATE OUTPUT\n{output}\n\n"
-        f"RESPONSE SCHEMA\n{canonical_json(schema)}"
+        f"CANDIDATE OUTPUT\n<candidate_output>\n{output}\n</candidate_output>\n\n"
+        f"RESPONSE SCHEMA\n{canonical_json(schema)}\n\n"
+        "<evaluation_rules>\n"
+        "1. Rate each criterion from 0 to 4 strictly based on the rubric criteria.\n"
+        "2. Do not reward hallucinated facts, citations, or formulas not supported by the evidence packet.\n"
+        "3. In 'evidence_span_ids', include only valid span IDs from the supplied evidence packet.\n"
+        "4. Respond with valid JSON only, without markdown formatting or commentary.\n"
+        "</evaluation_rules>"
     )
 
 

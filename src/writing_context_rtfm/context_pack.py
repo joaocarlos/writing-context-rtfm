@@ -3,6 +3,7 @@
 import contextlib
 import hashlib
 import re
+import time
 import uuid
 from collections import defaultdict
 from collections.abc import Callable, Sequence
@@ -45,10 +46,18 @@ from writing_context_rtfm.section_cards import (
     normalize_terminology,
 )
 from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.token_budget import estimate_span_tokens, estimate_tokens
+from writing_context_rtfm.token_budget import (
+    compute_counterfactual_savings,
+    count_tokens,
+    estimate_span_tokens,
+    estimate_tokens,
+    preflight_budget_check,
+)
 from writing_context_rtfm.utils import (
     extract_keywords,
     is_allowed_source,
+    is_path_ignored,
+    load_ignore_spec,
     resolve_rtfm_db_path,
     scan_latex_commands,
 )
@@ -924,7 +933,10 @@ class ContextPackGenerator:
         )
         match = formal_cues_pat.search(task)
         if match:
-            return True, f"Escalated: task involves formal/theoretical reasoning ('{match.group(1)}')"
+            return (
+                True,
+                f"Escalated: task involves formal/theoretical reasoning ('{match.group(1)}')",
+            )
 
         # Check for LaTeX mathematical notation or citations in task
         latex_cues_pat = re.compile(
@@ -1141,7 +1153,9 @@ class ContextPackGenerator:
         include_diagnostics: bool = False,
         mode: str | None = None,
         git_diff: bool = False,
+        model_family: str | None = None,
     ) -> ContextPack:
+        t0 = time.perf_counter()
         must_consider = must_consider or []
         pr = project_root or self.config.rtfm.project_root or "."
         task_type = task_type or "write_new_section"
@@ -1151,6 +1165,19 @@ class ContextPackGenerator:
             output_mode or getattr(self.config.context, "output_mode", "prompt") or "prompt"
         )
         obligations = _build_atomic_obligations(task, must_consider)
+
+        # Model family resolution
+        if model_family is None:
+            gen_model = getattr(getattr(self.config, "generator", None), "model", "openai")
+            model_str = str(gen_model).lower() if gen_model else "openai"
+            if "gemini" in model_str:
+                model_family = "gemini"
+            elif any(k in model_str for k in ("claude", "opus", "sonnet")):
+                model_family = "anthropic"
+            elif any(k in model_str for k in ("gpt", "o1", "o3", "o4", "openai")):
+                model_family = "openai"
+            else:
+                model_family = "generic"
 
         # Target resolution & mode inference
         resolved_key, target_card, target_path = self._resolve_target(target, pr)
@@ -1276,6 +1303,7 @@ class ContextPackGenerator:
         all_candidates: list[SourceSpan] = []
         initial_token_budget = token_budget
         has_explicit_line_range = line_start is not None and line_end is not None
+        target_snippet: str | None = None
 
         if has_explicit_line_range and not target_path:
             warnings.append(
@@ -1408,6 +1436,55 @@ class ContextPackGenerator:
                 warnings.append(f"Failed to read target file '{target_path}': {e}")
                 if has_explicit_line_range:
                     status = "degraded"
+
+        # 5-hour rolling session token & message limit awareness
+        session_tokens_used = 0
+        session_calls_used = 0
+        if self.store is not None:
+            with contextlib.suppress(Exception):
+                s_info = self.store.get_session_tokenomics(window_hours=5)
+                if isinstance(s_info, dict):
+                    val = s_info.get("session_tokens_used", 0)
+                    if isinstance(val, (int, float)):
+                        session_tokens_used = int(val)
+                    c_val = s_info.get("session_calls_used", 0)
+                    if isinstance(c_val, (int, float)):
+                        session_calls_used = int(c_val)
+
+        # Pre-flight budget evaluation
+        preflight = preflight_budget_check(
+            budget=token_budget,
+            target_text=target_snippet or "",
+            thesis=(
+                self.section_cards.document.thesis
+                if (
+                    self.section_cards
+                    and self.section_cards.document
+                    and self.section_cards.document.thesis
+                )
+                else ""
+            ),
+            constraints=list(target_card.constraints)
+            if target_card and target_card.constraints
+            else None,
+            model_family=model_family,
+            session_tokens_used=session_tokens_used,
+            session_calls_used=session_calls_used,
+        )
+        if not preflight["feasible"]:
+            warnings.append(
+                f"Note: Pre-flight budget evaluation: Fixed overhead requires {preflight['fixed_tokens']} tokens "
+                f"(recommended minimum: {preflight['recommended_min_budget']}), exceeding budget of {token_budget} tokens."
+            )
+        if preflight.get("session", {}).get("single_call_tier_warning"):
+            warnings.append(
+                f"Note: Single-call limit alert: Requested budget ({token_budget:,} tok) exceeds the 272K Astra tier threshold."
+            )
+        elif preflight.get("session", {}).get("threshold_exceeded"):
+            warnings.append(
+                f"Note: Session limit alert: 5-hour rolling consumption ({session_tokens_used:,} tok) + "
+                f"budget ({token_budget:,} tok) approaches or exceeds the 272K Astra tier threshold."
+            )
 
         # --- Git-diff modified ranges collection ---
         git_modified_ranges: dict[str, list[tuple[int, int]]] = {}
@@ -2433,6 +2510,37 @@ class ContextPackGenerator:
             else None
         )
 
+        # Determine realistic baseline mode
+        if inferred_mode == "adapt":
+            baseline_mode = "chapter"
+        elif inferred_mode in ("write", "rewrite", "compress", "proofread"):
+            baseline_mode = "section_neighborhood"
+        else:
+            baseline_mode = "section_neighborhood"
+
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+        instruction_tokens = count_tokens(task, model_family=model_family)
+        baseline_doc_tokens = self._compute_workspace_document_tokens(pr, model_family=model_family)
+        baseline_realistic_tokens, baseline_tokens_raw, is_capped = (
+            self._compute_realistic_baseline_tokens(
+                pr, target_path, baseline_mode, model_family, baseline_doc_tokens, total_tokens
+            )
+        )
+        schema_overhead = 420
+        tokenomics = compute_counterfactual_savings(
+            baseline_doc_tokens=baseline_doc_tokens,
+            pack_tokens=total_tokens,
+            baseline_realistic_tokens=baseline_realistic_tokens,
+            baseline_tokens_raw=baseline_tokens_raw,
+            is_capped=is_capped,
+            baseline_mode=baseline_mode,
+            schema_overhead_tokens=schema_overhead,
+        )
+        tokenomics["preflight"] = preflight
+        tokenomics["model_family"] = model_family
+        tokenomics["instruction_tokens"] = instruction_tokens
+        quality.tokenomics = tokenomics
+
         pack = ContextPack(
             task=task,
             target=target,
@@ -2473,6 +2581,20 @@ class ContextPackGenerator:
                 "section_cards_hash": sc_hash,
                 "rtfm_index_fingerprint": retrieval_fingerprint,
                 "retrieval_fingerprint": retrieval_fingerprint,
+                "pack_tokens": total_tokens,
+                "baseline_doc_tokens": baseline_doc_tokens,
+                "tokens_saved": tokenomics["tokens_saved"],
+                "savings_ratio": tokenomics["savings_ratio"],
+                "schema_overhead_tokens": schema_overhead,
+                "latency_ms": latency_ms,
+                "baseline_realistic_tokens": tokenomics["baseline_realistic_tokens"],
+                "baseline_tokens_raw": tokenomics["baseline_tokens_raw"],
+                "is_capped": is_capped,
+                "instruction_tokens": instruction_tokens,
+                "realistic_tokens_saved": tokenomics["realistic_tokens_saved"],
+                "realistic_savings_ratio": tokenomics["realistic_savings_ratio"],
+                "baseline_mode": baseline_mode,
+                "mode": inferred_mode,
             }
             payload = asdict(pack)
 
@@ -2490,6 +2612,114 @@ class ContextPackGenerator:
             self.store.store_pack(run_id, run_data, payload, sources_to_store)
 
         return pack
+
+    def _compute_workspace_document_tokens(
+        self, project_root: str, model_family: str = "openai"
+    ) -> int:
+        """Compute the total baseline tokens of all eligible manuscript files in the workspace.
+
+        This serves as the counterfactual baseline: what would the agent consume if it
+        ingested the entire project manuscript instead of a context pack?
+        """
+        root = Path(project_root).resolve()
+        if not root.exists():
+            return 0
+        spec = load_ignore_spec(root)
+        total_tokens = 0
+        manuscript_exts = {".tex", ".bib", ".md", ".markdown", ".org", ".txt"}
+        skip_dirs = {
+            ".git",
+            ".rtfm",
+            ".writing-context",
+            ".venv",
+            "venv",
+            "node_modules",
+            "dist",
+            "build",
+            "__pycache__",
+        }
+
+        try:
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                parts = p.relative_to(root).parts
+                if any(
+                    part in skip_dirs or (part.startswith(".") and part not in {".", ".."})
+                    for part in parts[:-1]
+                ):
+                    continue
+                if p.suffix.lower() not in manuscript_exts:
+                    continue
+                rel_str = str(p.relative_to(root))
+                if not is_allowed_source(rel_str):
+                    continue
+                if is_path_ignored(rel_str, spec, is_dir=False):
+                    continue
+                try:
+                    content = p.read_text(encoding="utf-8", errors="replace")
+                    total_tokens += count_tokens(content, model_family=model_family)
+                except Exception:
+                    continue
+        except Exception:
+            return 0
+        return total_tokens
+
+    def _compute_realistic_baseline_tokens(
+        self,
+        project_root: str,
+        target_path: str | None,
+        baseline_mode: str,
+        model_family: str,
+        total_workspace_tokens: int,
+        pack_tokens: int,
+    ) -> tuple[int, int, bool]:
+        """Compute realistic counterfactual tokens representing what a human author actually pastes.
+
+        Returns: (realistic_tokens, baseline_tokens_raw, is_capped)
+        Modes:
+        - 'section_neighborhood': Target section + adjacent context (~5k–15k tokens).
+        - 'chapter': Entire target chapter/file (~20k–50k tokens).
+        """
+        if not target_path:
+            raw = (
+                max(pack_tokens * 4, 25000)
+                if baseline_mode == "chapter"
+                else max(pack_tokens * 2, 8000)
+            )
+            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+                return total_workspace_tokens, raw, True
+            return raw, raw, False
+
+        full_path = Path(project_root) / target_path
+        if not full_path.exists() or not full_path.is_file():
+            raw = (
+                max(pack_tokens * 4, 25000)
+                if baseline_mode == "chapter"
+                else max(pack_tokens * 2, 8000)
+            )
+            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+                return total_workspace_tokens, raw, True
+            return raw, raw, False
+
+        try:
+            content = full_path.read_text(encoding="utf-8", errors="replace")
+            file_tokens = count_tokens(content, model_family=model_family)
+            if baseline_mode == "chapter":
+                raw = max(file_tokens, 25000)
+            elif file_tokens > 15000:
+                raw = min(file_tokens, max(pack_tokens * 2, 10000))
+            else:
+                raw = max(file_tokens * 2, 8000)
+
+            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+                return total_workspace_tokens, raw, True
+            return raw, raw, False
+        except Exception:
+            raw = max(pack_tokens * 2, 8000)
+            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+                return total_workspace_tokens, raw, True
+            return raw, raw, False
 
     # -----------------------------------------------------------------------
     # Combined scoring with query-type scoping

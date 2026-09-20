@@ -90,6 +90,7 @@ class PackQuality:
     git_diff_active: bool = False
     git_modified_files: list[str] | None = None
     auto_escalation: dict[str, Any] | None = None
+    tokenomics: dict[str, Any] | None = None
 
 
 # --- Canonical Reason Taxonomy ---------------------------------------------

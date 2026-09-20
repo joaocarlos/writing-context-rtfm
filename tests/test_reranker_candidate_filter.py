@@ -100,7 +100,8 @@ def test_prioritize_and_bound_reranker_candidates():
 
     # 2. Anchored spans (theory.tex and citation) are promoted ahead of generic unrelated spans
     candidate_spans_with_text = [
-        s for s in prioritized
+        s
+        for s in prioritized
         if s.source_role != "target_text" and (s.metadata or {}).get("snippet")
     ]
     # The first candidates must be the anchored spans

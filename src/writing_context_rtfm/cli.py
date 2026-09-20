@@ -658,6 +658,47 @@ def _print_pack_explanation(pack: ContextPack, as_json: bool = False) -> None:
             print(f"  {pos} ({', '.join(rec.identities) if rec.identities else 'no id'}) -> {rep}")
         print()
 
+    if pack.quality and isinstance(pack.quality, dict) and "tokenomics" in pack.quality:
+        tok = pack.quality["tokenomics"]
+        print("=== Tokenomics & Counterfactual Audit ===")
+        print(f"  Model Family:               {tok.get('model_family', 'generic')}")
+        b_mode = tok.get("baseline_mode", "section_neighborhood")
+        real_tok = tok.get("baseline_realistic_tokens", tok.get("baseline_document_tokens", 0))
+        raw_tok = tok.get("baseline_tokens_raw", real_tok)
+        is_capped = tok.get("is_capped", False)
+        capped_note = f" [Capped at doc ceiling; raw: {raw_tok:,} tok]" if is_capped else ""
+        print(f"  Realistic Baseline ({b_mode}): {real_tok:,} tok{capped_note}")
+        print(f"  Naive Full-Doc Baseline:    {tok.get('baseline_document_tokens', 0):,} tok")
+        print(f"  Context Pack Tokens:        {tok.get('pack_tokens', 0):,}")
+        if tok.get("instruction_tokens"):
+            print(f"  Instruction Prompt Tokens:  {tok.get('instruction_tokens'):,} tok")
+        print(f"  MCP Schema Overhead:        +{tok.get('schema_overhead_tokens', 0):,} tok")
+        print(f"  Effective Pack Cost:        {tok.get('effective_pack_cost', 0):,} tok")
+        real_saved = tok.get("realistic_tokens_saved", tok.get("tokens_saved", 0))
+        real_pct = tok.get("realistic_savings_percentage", tok.get("savings_percentage", 0.0))
+        print(f"  Realistic Savings (truth):  {real_saved:,} tok ({real_pct:.1f}% reduction)")
+        naive_saved = tok.get("tokens_saved", 0)
+        naive_pct = tok.get("savings_percentage", 0.0)
+        print(f"  Naive Savings (ceiling):    {naive_saved:,} tok ({naive_pct:.1f}% reduction)")
+        if "preflight" in tok and isinstance(tok["preflight"], dict):
+            pf = tok["preflight"]
+            feas = "FEASIBLE" if pf.get("feasible") else "DEFICIT WARNING"
+            print(
+                f"  Pre-flight Budget:          {feas} (Fixed: {pf.get('fixed_tokens', 0)} tok, Elastic: {pf.get('available_elastic_tokens', 0)} tok)"
+            )
+            sess = pf.get("session")
+            if sess and isinstance(sess, dict):
+                calls_used = sess.get("session_calls_used", 0)
+                msg_limit = sess.get("session_message_limit", 25)
+                rem_calls = sess.get(
+                    "calls_remaining_by_message_limit", max(0, msg_limit - calls_used)
+                )
+                b_cause = sess.get("bottleneck_cause", "message_limit")
+                print(
+                    f"  5h Rolling Session:         {calls_used}/{msg_limit} msgs (Remaining: {rem_calls} msgs | Bottleneck: {b_cause})"
+                )
+        print()
+
     print("=== Summary ===")
     print(f"  Status:           {pack.status}")
     print(f"  Estimated Tokens: {pack.estimated_tokens}")
@@ -1220,6 +1261,213 @@ def cards_command(args: argparse.Namespace) -> None:
             sys.exit(1)
 
 
+def calibrate_command(args: argparse.Namespace) -> None:
+    """Empirically calibrate the realistic counterfactual baseline for runs."""
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
+        stats = store.get_tokenomics_stats()
+        recent = stats.get("recent_runs", [])
+        if not recent:
+            print("No context pack runs recorded yet to calibrate.")
+            return
+
+        target_run = None
+        run_id_arg = getattr(args, "run_id", None)
+        if run_id_arg:
+            target_run = next((r for r in recent if r["run_id"].startswith(run_id_arg)), None)
+            if not target_run:
+                with store._connect() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT * FROM context_pack_runs WHERE run_id LIKE ? LIMIT 1",
+                        (f"{run_id_arg}%",),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        target_run = dict(row)
+        else:
+            target_run = next((r for r in recent if not r.get("empirical_choice")), recent[0])
+
+        if not target_run:
+            print("Target run not found.")
+            return
+
+        rid = target_run["run_id"]
+        target = target_run.get("target") or "Whole doc"
+        mode = target_run.get("mode", "write")
+        pack_tok = target_run.get("pack_tokens", 0)
+
+        choice = getattr(args, "choice", None)
+        if not choice:
+            print(f"=== Empirical Counterfactual Calibration for Run [{rid[:8]}] ===")
+            print(f"Target: '{target}' | Mode: '{mode}' | Pack Tokens: {pack_tok:,} tok")
+            print("Without writing-context-rtfm, what would you have actually pasted into the LLM?")
+            print("  [1] section       : Target section only (~1,500–4,000 tokens)")
+            print("  [2] neighborhood  : Target section + adjacent context (~6,000–15,000 tokens)")
+            print("  [3] chapter       : Entire chapter / major file (~20,000–50,000 tokens)")
+            print("  [4] full_doc      : Entire document / workspace repository")
+            try:
+                user_inp = input("Choice (1-4 or name) [2]: ").strip().lower()
+                choice = user_inp or "2"
+            except (EOFError, KeyboardInterrupt):
+                print("\nCalibration cancelled.")
+                return
+
+        choice_map = {
+            "1": "section",
+            "section": "section",
+            "2": "neighborhood",
+            "neighborhood": "neighborhood",
+            "3": "chapter",
+            "chapter": "chapter",
+            "4": "full_doc",
+            "full_doc": "full_doc",
+        }
+        canonical_choice = choice_map.get(str(choice).strip().lower(), "neighborhood")
+
+        base_doc = target_run.get("baseline_doc_tokens", 0)
+        if canonical_choice == "section":
+            emp_tokens = min(base_doc, max(pack_tok, 2500))
+        elif canonical_choice == "neighborhood":
+            emp_tokens = min(base_doc, target_run.get("baseline_realistic_tokens") or 8000)
+        elif canonical_choice == "chapter":
+            emp_tokens = min(base_doc, target_run.get("baseline_tokens_raw") or 25000)
+        else:
+            emp_tokens = base_doc
+
+        store.store_calibration(rid, canonical_choice, emp_tokens)
+        saved = max(0, emp_tokens - (pack_tok + 420))
+        ratio = round((saved / max(emp_tokens, 1)) * 100.0, 1)
+        print(
+            f"[OK] Calibrated run [{rid[:8]}] as '{canonical_choice}': {emp_tokens:,} tokens baseline."
+        )
+        print(f"     Empirical savings for this run: {saved:,} tokens ({ratio}% reduction).")
+
+
+def stats_command(args: argparse.Namespace) -> None:
+    if getattr(args, "calibrate", False):
+        calibrate_command(args)
+        return
+
+    project_root = getattr(args, "project_root", ".")
+    config = load_config(project_root)
+    with ExtensionStore(config.cache.path) as store:
+        store.init_db()
+
+        if getattr(args, "session", False):
+            msg_limit = getattr(args, "message_limit", 25) or 25
+            sess = store.get_session_tokenomics(window_hours=5, message_limit=msg_limit)
+            if getattr(args, "json", False):
+                print(json.dumps(sess, indent=2))
+                return
+
+            print("=== Writing Context RTFM — 5-Hour Rolling Session Audit (Astra) ===")
+            print(f"Rolling Window:               {sess['window_hours']} hours")
+            print(f"Message Limit (Session):      {sess['session_message_limit']} msgs")
+            print(f"Messages Consumed:            {sess['session_calls_used']} msgs")
+            print(f"Calls Remaining (by msgs):    {sess['calls_remaining_by_message_limit']} msgs")
+            print(
+                f"Total Roundtrip Tokens:       {sess['session_tokens_used']:,} tok "
+                f"(Pack: {sess['session_pack_tokens']:,}, Task: {sess['session_instruction_tokens']:,}, Gen: {sess['session_generation_tokens']:,})"
+            )
+            print(
+                f"Single-Call Threshold:        {sess['single_call_threshold']:,} tok (pricing doubles if exceeded)"
+            )
+            print(f"Max Pack Observed:            {sess['max_single_pack_observed']:,} tok")
+            b_cause = sess["bottleneck_cause"].replace("_", " ")
+            b_rem = sess["bottleneck_calls_remaining"]
+            print(f"Bottleneck Headroom:          ~{b_rem} calls remaining (limited by {b_cause})")
+            tier_status = (
+                "ALERT: EXCEEDED 272K TIER ON SINGLE PACK"
+                if sess["threshold_exceeded"]
+                else "HEALTHY (Within normal single-call tier)"
+            )
+            print(f"Single-Call Status:           {tier_status}")
+            msg_status = (
+                "EXHAUSTED (Hit session message quota)"
+                if sess["message_limit_exceeded"]
+                else "AVAILABLE"
+            )
+            print(f"Message Quota Status:         {msg_status}\n")
+            return
+
+        stats = store.get_tokenomics_stats()
+
+    if getattr(args, "json", False):
+        print(json.dumps(stats, indent=2))
+        return
+
+    print("=== Writing Context RTFM — Tokenomics & Financial Audit ===")
+    print(f"Total Context Pack Runs:      {stats['total_runs']}")
+    print(f"Total Context Pack Tokens:    {stats['total_pack_tokens']:,}")
+    if stats.get("total_instruction_tokens"):
+        print(f"Total Instruction Tokens:     {stats['total_instruction_tokens']:,}")
+    print(f"Average Pipeline Latency:     {stats['avg_latency_ms']:.1f} ms")
+    print(f"Average MCP Schema Overhead:  {stats['avg_schema_overhead']:.0f} tokens/call\n")
+
+    print("--- Counterfactual Comparison ---")
+    real_base = stats.get("total_realistic_baseline_tokens", 0)
+    real_saved = stats.get("total_realistic_tokens_saved", 0)
+    real_pct = stats.get("avg_realistic_savings_percentage", 0.0)
+    print(
+        f"Realistic Baseline (Truth):   {real_base:>9,} tok | Saved: {real_saved:>9,} tok ({real_pct:>5.1f}% reduction)"
+    )
+
+    empirical_runs = stats.get("empirical_calibrated_runs", 0)
+    if empirical_runs > 0:
+        emp_pct = stats.get("avg_empirical_savings_percentage", 0.0)
+        print(
+            f"Empirical User Baseline:      ({empirical_runs} runs calibrated) | Saved: {emp_pct:>5.1f}% reduction"
+        )
+
+    naive_base = stats.get("total_baseline_tokens", 0)
+    naive_saved = stats.get("total_tokens_saved", 0)
+    naive_pct = stats.get("avg_savings_percentage", 0.0)
+    print(
+        f"Naive Baseline (Full-Doc):    {naive_base:>9,} tok | Saved: {naive_saved:>9,} tok ({naive_pct:>5.1f}% reduction)\n"
+    )
+
+    by_mode = stats.get("by_mode", {})
+    if by_mode:
+        print("--- Breakdown by Task Mode ---")
+        for mode_name, m_data in sorted(by_mode.items()):
+            runs = m_data.get("runs", 0)
+            avg_pack = m_data.get("avg_pack_tokens", 0)
+            avg_real = m_data.get("avg_realistic_baseline", 0)
+            avg_raw = m_data.get("avg_raw_baseline", avg_real)
+            m_pct = m_data.get("avg_savings_percentage", 0.0)
+            capped_note = f" ({m_data['capped_runs']} capped)" if m_data.get("capped_runs") else ""
+            print(
+                f"  Mode: {mode_name:<10} | Runs: {runs:>3} | Avg Pack: {avg_pack:>6.0f} tok | "
+                f"Realistic Base: {avg_real:>6.0f} tok (raw: {avg_raw:>6.0f}){capped_note} | Saved: {m_pct:>5.1f}%"
+            )
+        print()
+
+    recent = stats.get("recent_runs", [])
+    if recent:
+        print("--- Recent Context Pack Runs ---")
+        for r in recent:
+            rid = (r.get("run_id") or "")[:8]
+            target_str = r.get("target") or "Whole Doc"
+            t_mode = r.get("mode", "write")
+            b_mode = r.get("baseline_mode", "section_neighborhood")
+            saved = r.get("realistic_tokens_saved", r.get("tokens_saved", 0))
+            ratio = r.get("realistic_savings_ratio", r.get("savings_ratio", 0.0)) * 100.0
+            pack_tok = r.get("pack_tokens", 0)
+            base_tok = r.get("baseline_realistic_tokens", r.get("baseline_doc_tokens", 0))
+            raw_tok = r.get("baseline_tokens_raw", base_tok)
+            capped_str = f" [Capped from {raw_tok:,}]" if r.get("is_capped") else ""
+            emp_str = f" [Emp: {r.get('empirical_choice')}]" if r.get("empirical_choice") else ""
+            lat = r.get("latency_ms", 0.0)
+            print(
+                f"  [{rid}] {target_str:<18} [{t_mode:<7}] | Pack: {pack_tok:>5} tok | "
+                f"Base ({b_mode[:8]}): {base_tok:>6} tok{capped_str} | Saved: {saved:>6} tok ({ratio:>5.1f}%){emp_str} | {lat:.0f}ms"
+            )
+        print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="writing-context-rtfm")
     parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {__version__}")
@@ -1552,6 +1800,45 @@ def main() -> None:
     p_rebuild.add_argument("--project-root", default=".", help="Project root path")
     p_rebuild.add_argument("--review", action="store_true", help="Run review after rebuild")
 
+    # stats
+    p_stats = subparsers.add_parser("stats", help="Show tokenomics and cumulative token savings")
+    p_stats.add_argument("--project-root", default=".", help="Project root path")
+    p_stats.add_argument("--json", action="store_true", help="Output raw JSON")
+    p_stats.add_argument(
+        "--session",
+        action="store_true",
+        help="Audit rolling 5-hour session consumption against the 272K Astra tier and message quota",
+    )
+    p_stats.add_argument(
+        "--message-limit",
+        type=int,
+        default=25,
+        help="Session message limit (default: 25, Astra range: 5–45)",
+    )
+    p_stats.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="Interactively calibrate the realistic baseline for recent runs",
+    )
+
+    # calibrate
+    p_cal = subparsers.add_parser(
+        "calibrate", help="Empirically calibrate the realistic baseline for recent runs"
+    )
+    p_cal.add_argument(
+        "run_id",
+        nargs="?",
+        default=None,
+        help="Optional run ID to calibrate (default: latest uncalibrated run)",
+    )
+    p_cal.add_argument(
+        "--choice",
+        choices=["1", "2", "3", "4", "section", "neighborhood", "chapter", "full_doc"],
+        default=None,
+        help="Choice of baseline without prompting",
+    )
+    p_cal.add_argument("--project-root", default=".", help="Project root path")
+
     subparsers.add_parser("serve", help="Start the MCP server")
 
     args = parser.parse_args()
@@ -1570,6 +1857,8 @@ def main() -> None:
                 "  cards         Manage section cards (build, update, validate)\n"
                 "  pack          Generate a targeted writing context pack\n"
                 "  preview-pack  Preview exact formatted context pack and prompt rendered for LLMs\n"
+                "  stats         Show tokenomics and cumulative token savings (--session, --calibrate)\n"
+                "  calibrate     Empirically calibrate counterfactual baseline for recent runs\n"
                 "  serve         Start MCP server (STDIO mode for Claude Desktop / Cursor)\n\n"
                 "Tip: Run 'writing-context-rtfm --help' for full command list."
             )
@@ -1593,6 +1882,8 @@ def main() -> None:
         "auth": auth_command,
         "cleanup": cleanup_command,
         "cards": cards_command,
+        "stats": stats_command,
+        "calibrate": calibrate_command,
     }
 
     commands[args.command](args)

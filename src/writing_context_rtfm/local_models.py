@@ -222,9 +222,7 @@ class LocalCrossEncoderReranker:
         cached_scores: dict[str, float] = {}
         if self.store is not None:
             with contextlib.suppress(Exception):
-                cached_scores = self.store.get_reranker_scores(
-                    model_key, task_hash, snippet_hashes
-                )
+                cached_scores = self.store.get_reranker_scores(model_key, task_hash, snippet_hashes)
 
         # Identify missing pairs that need neural inference
         missing_indices: list[int] = []

@@ -258,7 +258,135 @@ class TestStorage(unittest.TestCase):
             self.assertIsNone(fresh_store.get_provider_oauth("openai_semantic"))
             stats = fresh_store.get_openai_embeddings_stats("text-embedding-3-small")
             self.assertEqual(stats.get("count", 0), 0)
+            tokenomics = fresh_store.get_tokenomics_stats()
+            self.assertEqual(tokenomics["total_runs"], 0)
+            session = fresh_store.get_session_tokenomics()
+            self.assertEqual(session["runs_in_window"], 0)
             fresh_store.close()
+
+    def test_legacy_cache_database_migration_and_mixed_stats(self):
+        import sqlite3
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".sqlite") as tmp:
+            legacy_path = tmp.name
+            # 1. Create older database before Sprint 6 Eixo 2
+            legacy_conn = sqlite3.connect(legacy_path)
+            cur = legacy_conn.cursor()
+            cur.execute("""
+            CREATE TABLE context_pack_runs (
+                run_id TEXT PRIMARY KEY,
+                task_hash TEXT NOT NULL,
+                task TEXT NOT NULL,
+                token_budget INTEGER NOT NULL,
+                pack_tokens INTEGER,
+                baseline_doc_tokens INTEGER,
+                tokens_saved INTEGER,
+                savings_ratio REAL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+            cur.execute("""
+            INSERT INTO context_pack_runs (run_id, task_hash, task, token_budget, pack_tokens, baseline_doc_tokens, tokens_saved, savings_ratio)
+            VALUES ('run-legacy-001', 'thash001', 'legacy task', 4000, 3000, 50000, 47000, 0.94);
+            """)
+            legacy_conn.commit()
+            legacy_conn.close()
+
+            # 2. Open with ExtensionStore - triggers _ensure_schema migrations
+            legacy_store = ExtensionStore(legacy_path)
+            stats1 = legacy_store.get_tokenomics_stats()
+            self.assertEqual(stats1["total_runs"], 1)
+            self.assertEqual(stats1["total_baseline_tokens"], 50000)
+            # Legacy row has baseline_realistic_tokens NULL -> falls back to baseline_doc_tokens
+            self.assertEqual(stats1["total_realistic_baseline_tokens"], 50000)
+            self.assertEqual(stats1["total_realistic_tokens_saved"], 47000)
+
+            # 3. Store a modern pack with Sprint 6 Eixo 2 columns
+            modern_run_data = {
+                "task_hash": "thash002",
+                "task": "modern task",
+                "target": "intro.tex",
+                "token_budget": 4000,
+                "pack_tokens": 2000,
+                "baseline_doc_tokens": 40000,
+                "baseline_realistic_tokens": 10000,
+                "baseline_tokens_raw": 20000,
+                "tokens_saved": 38000,
+                "realistic_tokens_saved": 8000,
+                "savings_ratio": 0.95,
+                "realistic_savings_ratio": 0.8,
+                "is_capped": 1,
+                "instruction_tokens": 50,
+                "generation_tokens": 500,
+                "mode": "write",
+                "config_hash": "cfg2",
+                "section_cards_hash": "sc2",
+            }
+            legacy_store.store_pack("run-modern-002", modern_run_data, {"task": "modern task"}, [])
+
+            # 4. Check aggregate stats across legacy + modern
+            stats2 = legacy_store.get_tokenomics_stats()
+            self.assertEqual(stats2["total_runs"], 2)
+            self.assertEqual(stats2["total_pack_tokens"], 5000)
+            self.assertEqual(stats2["total_baseline_tokens"], 90000)  # 50k + 40k
+            # 50k (legacy fallback) + 10k (modern) = 60k
+            self.assertEqual(stats2["total_realistic_baseline_tokens"], 60000)
+            # 47k (legacy fallback) + 8k (modern) = 55k
+            self.assertEqual(stats2["total_realistic_tokens_saved"], 55000)
+            # 50k (legacy fallback) + 20k (modern raw) = 70k
+            self.assertEqual(stats2["total_baseline_tokens_raw"], 70000)
+
+            # 5. Calibration test with exact and prefix match
+            ok_exact = legacy_store.store_calibration("run-modern-002", "neighborhood", 12000)
+            self.assertTrue(ok_exact)
+
+            ok_prefix = legacy_store.store_calibration("run-legacy", "chapter", 35000)
+            self.assertTrue(ok_prefix)
+
+            # Check empirical stats
+            stats3 = legacy_store.get_tokenomics_stats()
+            self.assertEqual(stats3["empirical_calibrated_runs"], 2)
+            self.assertGreater(stats3["avg_empirical_savings_percentage"], 0.0)
+
+            # 6. Generation tokens recording
+            ok_gen = legacy_store.record_generation_tokens("run-legacy-001", 650)
+            self.assertTrue(ok_gen)
+            sess = legacy_store.get_session_tokenomics(window_hours=24)
+            self.assertEqual(sess["runs_in_window"], 2)
+            self.assertEqual(sess["session_generation_tokens"], 1150)  # 500 + 650
+
+            legacy_store.close()
+
+    def test_defensive_error_suppression(self):
+        # Test invalid arguments to get_session_tokenomics
+        res = self.store.get_session_tokenomics(window_hours="invalid", message_limit=None)  # type: ignore[arg-type]
+        self.assertIsInstance(res, dict)
+        self.assertEqual(res["window_hours"], 5)
+        self.assertEqual(res["session_message_limit"], 25)
+
+        # Test closed connection or error condition does not crash
+        self.store.close()
+        # Even if connection is forcibly broken / closed
+        import unittest.mock as mock
+
+        with mock.patch.object(self.store, "_connect", side_effect=Exception("DB boom")):
+            stats = self.store.get_tokenomics_stats()
+            self.assertEqual(stats["total_runs"], 0)
+            sess = self.store.get_session_tokenomics()
+            self.assertEqual(sess["runs_in_window"], 0)
+            cal = self.store.store_calibration("run-1", "chapter")
+            self.assertFalse(cal)
+            rec = self.store.record_generation_tokens("run-1", 100)
+            self.assertFalse(rec)
+
+    def test_wal_mode_and_concurrency(self):
+        # Verify journal_mode is WAL for disk databases
+        with self.store._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("PRAGMA journal_mode;")
+            mode = cur.fetchone()[0]
+            self.assertEqual(str(mode).lower(), "wal")
 
 
 if __name__ == "__main__":

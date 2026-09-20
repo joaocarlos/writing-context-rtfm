@@ -72,7 +72,9 @@ def run_single_case(case_def: dict[str, Any], base_dir: Path, verbose: bool = Fa
     with ExtensionStore(":memory:") as store:
         adapter = RTFMAdapter(project_root=str(proj_dir.resolve()))
         # Include BibTeX provider if bib files present
-        providers: list[BaseContextProvider] = [BibTeXProvider(config)] if list(proj_dir.glob("*.bib")) else []
+        providers: list[BaseContextProvider] = (
+            [BibTeXProvider(config)] if list(proj_dir.glob("*.bib")) else []
+        )
 
         generator = ContextPackGenerator(
             config,

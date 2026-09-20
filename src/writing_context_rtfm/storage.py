@@ -3,10 +3,13 @@
 import contextlib
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import zlib
 from typing import Any
+
+logger = logging.getLogger("writing-context-rtfm.storage")
 
 SCHEMA_VERSION = 1
 
@@ -30,8 +33,13 @@ class ExtensionStore:
         if self._conn is None:
             if self.db_path != ":memory:":
                 os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
             self._conn.execute("PRAGMA foreign_keys = ON;")
+            if self.db_path != ":memory:":
+                with contextlib.suppress(sqlite3.OperationalError):
+                    self._conn.execute("PRAGMA journal_mode = WAL;")
+                with contextlib.suppress(sqlite3.OperationalError):
+                    self._conn.execute("PRAGMA busy_timeout = 30000;")
             self._conn.row_factory = sqlite3.Row
             self._ensure_schema(self._conn)
         return self._conn
@@ -75,14 +83,52 @@ class ExtensionStore:
         );
         """)
 
-        # Migration for older databases: add fingerprint columns if missing
-        for col in ("retrieval_fingerprint", "provider_fingerprint", "context_fingerprint"):
+        # Migration for older databases: add base and fingerprint columns if missing
+        for col in (
+            "target",
+            "corpus",
+            "config_hash",
+            "section_cards_hash",
+            "rtfm_index_fingerprint",
+            "retrieval_fingerprint",
+            "provider_fingerprint",
+            "context_fingerprint",
+            "extension_version",
+        ):
             with contextlib.suppress(sqlite3.OperationalError):
                 cursor.execute(f"ALTER TABLE context_pack_runs ADD COLUMN {col} TEXT;")
+
+        # Migration for tokenomics and counterfactual audit columns
+        for col, col_type in (
+            ("pack_tokens", "INTEGER"),
+            ("baseline_doc_tokens", "INTEGER"),
+            ("tokens_saved", "INTEGER"),
+            ("savings_ratio", "REAL"),
+            ("schema_overhead_tokens", "INTEGER"),
+            ("latency_ms", "REAL"),
+            ("baseline_realistic_tokens", "INTEGER"),
+            ("realistic_tokens_saved", "INTEGER"),
+            ("realistic_savings_ratio", "REAL"),
+            ("baseline_mode", "TEXT"),
+            ("mode", "TEXT"),
+            ("baseline_tokens_raw", "INTEGER"),
+            ("is_capped", "INTEGER DEFAULT 0"),
+            ("instruction_tokens", "INTEGER DEFAULT 0"),
+            ("generation_tokens", "INTEGER DEFAULT 0"),
+            ("empirical_choice", "TEXT"),
+            ("empirical_tokens", "INTEGER"),
+        ):
+            with contextlib.suppress(sqlite3.OperationalError):
+                cursor.execute(f"ALTER TABLE context_pack_runs ADD COLUMN {col} {col_type};")
 
         cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_context_pack_runs_task_hash
         ON context_pack_runs(task_hash);
+        """)
+
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_context_pack_runs_created_at
+        ON context_pack_runs(created_at);
         """)
 
         cursor.execute("""
@@ -278,11 +324,29 @@ class ExtensionStore:
     ) -> None:
         with self._connect() as conn:
             cursor = conn.cursor()
+            pack_tokens = run_data.get("pack_tokens") or payload.get("estimated_tokens", 0)
+            baseline_doc_tokens = run_data.get("baseline_doc_tokens") or 0
+            tokens_saved = run_data.get("tokens_saved") or 0
+            savings_ratio = run_data.get("savings_ratio") or 0.0
+            schema_overhead = run_data.get("schema_overhead_tokens") or 420
+            latency_ms = run_data.get("latency_ms") or 0.0
+            baseline_realistic = run_data.get("baseline_realistic_tokens") or baseline_doc_tokens
+            realistic_saved = run_data.get("realistic_tokens_saved") or tokens_saved
+            realistic_ratio = run_data.get("realistic_savings_ratio") or savings_ratio
+            baseline_mode = run_data.get("baseline_mode") or "section_neighborhood"
+            task_mode = run_data.get("mode") or payload.get("mode") or "write"
+            baseline_raw = run_data.get("baseline_tokens_raw") or baseline_realistic
+            is_capped = 1 if run_data.get("is_capped") else 0
+            instruction_tokens = run_data.get("instruction_tokens") or 0
+            generation_tokens = run_data.get("generation_tokens") or 0
+            empirical_choice = run_data.get("empirical_choice")
+            empirical_tokens = run_data.get("empirical_tokens")
+
             cursor.execute(
                 """
                 INSERT INTO context_pack_runs
-                (run_id, task_hash, task, target, corpus, token_budget, config_hash, section_cards_hash, rtfm_index_fingerprint, retrieval_fingerprint, extension_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (run_id, task_hash, task, target, corpus, token_budget, config_hash, section_cards_hash, rtfm_index_fingerprint, retrieval_fingerprint, extension_version, pack_tokens, baseline_doc_tokens, tokens_saved, savings_ratio, schema_overhead_tokens, latency_ms, baseline_realistic_tokens, realistic_tokens_saved, realistic_savings_ratio, baseline_mode, mode, baseline_tokens_raw, is_capped, instruction_tokens, generation_tokens, empirical_choice, empirical_tokens)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     run_id,
@@ -291,11 +355,28 @@ class ExtensionStore:
                     run_data.get("target"),
                     run_data.get("corpus"),
                     run_data["token_budget"],
-                    run_data["config_hash"],
-                    run_data["section_cards_hash"],
+                    run_data.get("config_hash"),
+                    run_data.get("section_cards_hash"),
                     run_data.get("rtfm_index_fingerprint"),
                     run_data.get("retrieval_fingerprint") or run_data.get("rtfm_index_fingerprint"),
                     run_data.get("extension_version", "0.1.0"),
+                    pack_tokens,
+                    baseline_doc_tokens,
+                    tokens_saved,
+                    savings_ratio,
+                    schema_overhead,
+                    latency_ms,
+                    baseline_realistic,
+                    realistic_saved,
+                    realistic_ratio,
+                    baseline_mode,
+                    task_mode,
+                    baseline_raw,
+                    is_capped,
+                    instruction_tokens,
+                    generation_tokens,
+                    empirical_choice,
+                    empirical_tokens,
                 ),
             )
 
@@ -480,6 +561,309 @@ class ExtensionStore:
             }
             return {"target": target, "metrics": metrics_summary}
 
+    def store_calibration(
+        self,
+        run_id: str,
+        choice: str,
+        empirical_tokens: int | None = None,
+    ) -> bool:
+        """Store empirical user calibration for what they would have pasted without MCP."""
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE context_pack_runs
+                    SET empirical_choice = ?,
+                        empirical_tokens = ?
+                    WHERE run_id = ?
+                    """,
+                    (choice, empirical_tokens, run_id),
+                )
+                if cursor.rowcount == 0 and len(run_id) >= 6:
+                    cursor.execute(
+                        """
+                        UPDATE context_pack_runs
+                        SET empirical_choice = ?,
+                            empirical_tokens = ?
+                        WHERE run_id LIKE ?
+                        """,
+                        (choice, empirical_tokens, f"{run_id}%"),
+                    )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error("Failed to store calibration for run %s: %s", run_id, e)
+            return False
+
+    def record_generation_tokens(self, run_id: str, generation_tokens: int) -> bool:
+        """Record actual generation tokens produced by the downstream LLM."""
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    UPDATE context_pack_runs
+                    SET generation_tokens = ?
+                    WHERE run_id = ?
+                    """,
+                    (int(generation_tokens), run_id),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error("Failed to record generation tokens for run %s: %s", run_id, e)
+            return False
+
+    def get_session_tokenomics(
+        self, window_hours: int = 5, message_limit: int = 25
+    ) -> dict[str, Any]:
+        """Aggregate tokenomics and message limits within a rolling session window (e.g. 5 hours for Astra)."""
+        try:
+            w_hours = abs(int(window_hours))
+        except (TypeError, ValueError):
+            w_hours = 5
+
+        try:
+            msg_limit = max(1, int(message_limit))
+        except (TypeError, ValueError):
+            msg_limit = 25
+
+        single_call_threshold = 272_000  # Astra threshold where single call price doubles
+
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT
+                        COUNT(*) as runs_in_window,
+                        COALESCE(SUM(pack_tokens), 0) as total_pack_tokens,
+                        COALESCE(SUM(instruction_tokens), 0) as total_instruction_tokens,
+                        COALESCE(SUM(generation_tokens), 0) as total_generation_tokens,
+                        COALESCE(SUM(schema_overhead_tokens), 0) as total_schema_overhead,
+                        COALESCE(AVG(pack_tokens), 0.0) as avg_pack_tokens,
+                        COALESCE(MAX(pack_tokens), 0) as max_pack_tokens
+                    FROM context_pack_runs
+                    WHERE created_at >= datetime('now', ? || ' hours')
+                """,
+                    (f"-{w_hours}",),
+                )
+                row = cursor.fetchone()
+                total_pack = int(row["total_pack_tokens"] or 0) if row else 0
+                total_instruction = int(row["total_instruction_tokens"] or 0) if row else 0
+                total_generation = int(row["total_generation_tokens"] or 0) if row else 0
+                total_schema = int(row["total_schema_overhead"] or 0) if row else 0
+                total_roundtrip = total_pack + total_instruction + total_generation + total_schema
+                runs = int(row["runs_in_window"] or 0) if row else 0
+                avg_pack = float(row["avg_pack_tokens"] or 0.0) if row else 0.0
+                max_pack = int(row["max_pack_tokens"] or 0) if row else 0
+
+                # Message limit tracking (the primary Astra 5-hour constraint)
+                session_calls_used = runs
+                calls_remaining_by_message_limit = max(0, msg_limit - session_calls_used)
+
+                # Token headroom across session
+                token_headroom = max(0, single_call_threshold - total_roundtrip)
+                calls_remaining_by_token_headroom = (
+                    int(token_headroom // max(avg_pack, 2500.0)) if token_headroom > 0 else 0
+                )
+
+                # The real bottleneck is the minimum of message limit and token headroom
+                bottleneck_calls_remaining = min(
+                    calls_remaining_by_message_limit, calls_remaining_by_token_headroom
+                )
+                bottleneck_cause = (
+                    "message_limit"
+                    if calls_remaining_by_message_limit <= calls_remaining_by_token_headroom
+                    else "token_headroom"
+                )
+
+                return {
+                    "window_hours": w_hours,
+                    "runs_in_window": runs,
+                    "session_calls_used": session_calls_used,
+                    "session_message_limit": msg_limit,
+                    "calls_remaining_by_message_limit": calls_remaining_by_message_limit,
+                    "session_tokens_used": total_roundtrip,
+                    "session_pack_tokens": total_pack,
+                    "session_instruction_tokens": total_instruction,
+                    "session_generation_tokens": total_generation,
+                    "remaining_headroom": token_headroom,
+                    "threshold": single_call_threshold,
+                    "single_call_threshold": single_call_threshold,
+                    "max_single_pack_observed": max_pack,
+                    "projected_calls_remaining": bottleneck_calls_remaining,
+                    "calls_remaining_by_token_headroom": calls_remaining_by_token_headroom,
+                    "bottleneck_calls_remaining": bottleneck_calls_remaining,
+                    "bottleneck_cause": bottleneck_cause,
+                    "threshold_exceeded": max_pack >= single_call_threshold,
+                    "message_limit_exceeded": session_calls_used >= msg_limit,
+                }
+        except Exception as e:
+            logger.warning("Failed to query session tokenomics: %s", e)
+            return {
+                "window_hours": w_hours,
+                "runs_in_window": 0,
+                "session_calls_used": 0,
+                "session_message_limit": msg_limit,
+                "calls_remaining_by_message_limit": msg_limit,
+                "session_tokens_used": 0,
+                "session_pack_tokens": 0,
+                "session_instruction_tokens": 0,
+                "session_generation_tokens": 0,
+                "remaining_headroom": single_call_threshold,
+                "threshold": single_call_threshold,
+                "single_call_threshold": single_call_threshold,
+                "max_single_pack_observed": 0,
+                "projected_calls_remaining": msg_limit,
+                "calls_remaining_by_token_headroom": int(single_call_threshold // 2500),
+                "bottleneck_calls_remaining": msg_limit,
+                "bottleneck_cause": "message_limit",
+                "threshold_exceeded": False,
+                "message_limit_exceeded": False,
+            }
+
+    def get_tokenomics_stats(self) -> dict[str, Any]:
+        """Aggregate cumulative tokenomics, dual baselines, and breakdown by task mode."""
+        default_stats: dict[str, Any] = {
+            "total_runs": 0,
+            "total_pack_tokens": 0,
+            "total_baseline_tokens": 0,
+            "total_tokens_saved": 0,
+            "avg_savings_ratio": 0.0,
+            "avg_savings_percentage": 0.0,
+            "total_realistic_baseline_tokens": 0,
+            "total_realistic_tokens_saved": 0,
+            "avg_realistic_savings_ratio": 0.0,
+            "avg_realistic_savings_percentage": 0.0,
+            "total_baseline_tokens_raw": 0,
+            "total_instruction_tokens": 0,
+            "total_generation_tokens": 0,
+            "avg_latency_ms": 0.0,
+            "avg_schema_overhead": 420.0,
+            "empirical_calibrated_runs": 0,
+            "avg_empirical_savings_percentage": 0.0,
+            "recent_runs": [],
+            "by_mode": {},
+        }
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_runs,
+                        COALESCE(SUM(pack_tokens), 0) as total_pack_tokens,
+                        COALESCE(SUM(baseline_doc_tokens), 0) as total_baseline_tokens,
+                        COALESCE(SUM(tokens_saved), 0) as total_tokens_saved,
+                        COALESCE(AVG(savings_ratio), 0.0) as avg_savings_ratio,
+                        COALESCE(SUM(COALESCE(baseline_realistic_tokens, baseline_doc_tokens, 0)), 0) as total_realistic_baseline_tokens,
+                        COALESCE(SUM(COALESCE(realistic_tokens_saved, tokens_saved, 0)), 0) as total_realistic_tokens_saved,
+                        COALESCE(AVG(COALESCE(realistic_savings_ratio, savings_ratio, 0.0)), 0.0) as avg_realistic_savings_ratio,
+                        COALESCE(SUM(COALESCE(baseline_tokens_raw, baseline_realistic_tokens, baseline_doc_tokens, 0)), 0) as total_baseline_tokens_raw,
+                        COALESCE(SUM(instruction_tokens), 0) as total_instruction_tokens,
+                        COALESCE(SUM(generation_tokens), 0) as total_generation_tokens,
+                        COALESCE(AVG(latency_ms), 0.0) as avg_latency_ms,
+                        COALESCE(AVG(schema_overhead_tokens), 420.0) as avg_schema_overhead,
+                        COUNT(CASE WHEN empirical_choice IS NOT NULL THEN 1 END) as empirical_calibrated_runs,
+                        COALESCE(AVG(CASE WHEN empirical_tokens IS NOT NULL AND empirical_tokens > 0 THEN 1.0 - (CAST(COALESCE(pack_tokens, 0) + COALESCE(schema_overhead_tokens, 420) AS REAL) / CAST(empirical_tokens AS REAL)) END), 0.0) as avg_empirical_savings_ratio
+                    FROM context_pack_runs
+                """)
+                row = cursor.fetchone()
+                if not row or int(row["total_runs"] or 0) == 0:
+                    return default_stats
+
+                # Breakdown by task mode
+                cursor.execute("""
+                    SELECT
+                        COALESCE(mode, 'write') as task_mode,
+                        COUNT(*) as count,
+                        COALESCE(AVG(pack_tokens), 0.0) as avg_pack_tokens,
+                        COALESCE(AVG(COALESCE(baseline_realistic_tokens, baseline_doc_tokens, 0.0)), 0.0) as avg_realistic_baseline,
+                        COALESCE(AVG(COALESCE(baseline_tokens_raw, baseline_realistic_tokens, baseline_doc_tokens, 0.0)), 0.0) as avg_raw_baseline,
+                        COALESCE(AVG(COALESCE(realistic_savings_ratio, savings_ratio, 0.0)), 0.0) as avg_realistic_savings_ratio,
+                        COALESCE(AVG(COALESCE(schema_overhead_tokens, 420.0)), 420.0) as avg_schema_overhead,
+                        SUM(COALESCE(is_capped, 0)) as capped_runs
+                    FROM context_pack_runs
+                    GROUP BY COALESCE(mode, 'write')
+                """)
+                by_mode = {}
+                for m_row in cursor.fetchall():
+                    ratio = float(m_row["avg_realistic_savings_ratio"] or 0.0)
+                    by_mode[str(m_row["task_mode"])] = {
+                        "runs": int(m_row["count"] or 0),
+                        "avg_pack_tokens": round(float(m_row["avg_pack_tokens"] or 0.0), 1),
+                        "avg_realistic_baseline": round(
+                            float(m_row["avg_realistic_baseline"] or 0.0), 1
+                        ),
+                        "avg_raw_baseline": round(float(m_row["avg_raw_baseline"] or 0.0), 1),
+                        "avg_savings_percentage": round(ratio * 100.0, 2),
+                        "avg_schema_overhead": round(
+                            float(m_row["avg_schema_overhead"] or 420.0), 0
+                        ),
+                        "capped_runs": int(m_row["capped_runs"] or 0),
+                    }
+
+                cursor.execute("""
+                    SELECT
+                        run_id,
+                        task,
+                        target,
+                        token_budget,
+                        COALESCE(mode, 'write') as mode,
+                        COALESCE(baseline_mode, 'section_neighborhood') as baseline_mode,
+                        COALESCE(pack_tokens, 0) as pack_tokens,
+                        COALESCE(baseline_doc_tokens, 0) as baseline_doc_tokens,
+                        COALESCE(tokens_saved, 0) as tokens_saved,
+                        COALESCE(savings_ratio, 0.0) as savings_ratio,
+                        COALESCE(baseline_realistic_tokens, baseline_doc_tokens, 0) as baseline_realistic_tokens,
+                        COALESCE(baseline_tokens_raw, baseline_realistic_tokens, baseline_doc_tokens, 0) as baseline_tokens_raw,
+                        COALESCE(is_capped, 0) as is_capped,
+                        COALESCE(instruction_tokens, 0) as instruction_tokens,
+                        COALESCE(generation_tokens, 0) as generation_tokens,
+                        empirical_choice,
+                        empirical_tokens,
+                        COALESCE(realistic_tokens_saved, tokens_saved, 0) as realistic_tokens_saved,
+                        COALESCE(realistic_savings_ratio, savings_ratio, 0.0) as realistic_savings_ratio,
+                        COALESCE(latency_ms, 0.0) as latency_ms,
+                        created_at
+                    FROM context_pack_runs
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                """)
+                recent_runs = [dict(r) for r in cursor.fetchall()]
+
+                realistic_ratio = round(float(row["avg_realistic_savings_ratio"] or 0.0), 4)
+                naive_ratio = round(float(row["avg_savings_ratio"] or 0.0), 4)
+                empirical_ratio = round(float(row["avg_empirical_savings_ratio"] or 0.0), 4)
+
+                return {
+                    "total_runs": int(row["total_runs"] or 0),
+                    "total_pack_tokens": int(row["total_pack_tokens"] or 0),
+                    "total_baseline_tokens": int(row["total_baseline_tokens"] or 0),
+                    "total_tokens_saved": int(row["total_tokens_saved"] or 0),
+                    "avg_savings_ratio": naive_ratio,
+                    "avg_savings_percentage": round(naive_ratio * 100.0, 2),
+                    "total_realistic_baseline_tokens": int(
+                        row["total_realistic_baseline_tokens"] or 0
+                    ),
+                    "total_realistic_tokens_saved": int(row["total_realistic_tokens_saved"] or 0),
+                    "avg_realistic_savings_ratio": realistic_ratio,
+                    "avg_realistic_savings_percentage": round(realistic_ratio * 100.0, 2),
+                    "total_baseline_tokens_raw": int(row["total_baseline_tokens_raw"] or 0),
+                    "total_instruction_tokens": int(row["total_instruction_tokens"] or 0),
+                    "total_generation_tokens": int(row["total_generation_tokens"] or 0),
+                    "empirical_calibrated_runs": int(row["empirical_calibrated_runs"] or 0),
+                    "avg_empirical_savings_percentage": round(empirical_ratio * 100.0, 2),
+                    "avg_latency_ms": round(float(row["avg_latency_ms"] or 0.0), 2),
+                    "avg_schema_overhead": round(float(row["avg_schema_overhead"] or 420.0), 0),
+                    "recent_runs": recent_runs,
+                    "by_mode": by_mode,
+                }
+        except Exception as e:
+            logger.warning("Failed to query tokenomics stats: %s", e)
+            return default_stats
+
     def get_provider_token(self, provider_id: str) -> str | None:
         try:
             with self._connect() as conn:
@@ -615,6 +999,7 @@ class ExtensionStore:
     ) -> list[dict[str, Any]]:
         """Returns chunks from RTFM DB that do not have an OpenAI embedding for the configured model in cache."""
         missing = []
+        rtfm_conn: sqlite3.Connection | None = None
         try:
             rtfm_conn = sqlite3.connect(rtfm_db_path, check_same_thread=False)
             rtfm_conn.row_factory = sqlite3.Row
@@ -647,14 +1032,13 @@ class ExtensionStore:
                     }
                 )
         except Exception as e:
-            import logging
-
-            logging.getLogger("mcp-server").error(f"Failed to fetch missing OpenAI chunks: {e}")
+            logger.error("Failed to fetch missing OpenAI chunks: %s", e)
         finally:
-            if "rtfm_conn" in locals():
+            if rtfm_conn is not None:
                 with contextlib.suppress(Exception):
                     rtfm_conn.execute("DETACH DATABASE cache_db")
-                rtfm_conn.close()
+                with contextlib.suppress(Exception):
+                    rtfm_conn.close()
 
         return missing
 

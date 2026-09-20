@@ -89,3 +89,16 @@ benchmark/**/*judgment*.json
 
 # Added by code-review-graph
 .code-review-graph/
+
+# Assistant and editor configs
+.codebuddy/
+.cursor/
+.cursorrules
+.kiro/
+.qoder/
+.windsurfrules
+CODEBUDDY.md
+QODER.md
+opencode.jsonc
+.github/instructions/
+

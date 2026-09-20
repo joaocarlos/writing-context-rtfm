@@ -17,9 +17,13 @@ class MissingAPIKeyError(Exception):
 
 
 SYSTEM_PROMPT = """You are an expert scientific manuscript analyzer.
-Analyze the provided section text and output a JSON object containing the section's rhetorical role, purpose, key terms, atomic facts, and exclusions.
+Your task is to analyze the provided section text and output a JSON object containing the section's rhetorical role, purpose, key terms, atomic facts, and exclusions.
 
-Rhetorical Role:
+<task>
+Analyze the input manuscript section and extract structured semantic metadata with calibrated precision.
+</task>
+
+<rhetorical_role_taxonomy>
 Classify the section into exactly one of these roles:
 - background
 - problem_definition
@@ -33,24 +37,33 @@ Classify the section into exactly one of these roles:
 - limitations
 - conclusion
 - appendix
+</rhetorical_role_taxonomy>
 
-Purpose:
-A concise, 1-3 sentence statement. Do not just summarize. Instead, identify:
-1. What the section accomplishes.
-2. What key information it introduces.
-3. What it postpones.
-4. Its relation to other sections.
+<extraction_instructions>
+1. Rhetorical Role:
+   Select the single best-fitting role from the taxonomy above.
+2. Purpose:
+   Provide a concise, 1-3 sentence analytical summary. Do not merely summarize the topic. Specifically identify:
+   - What the section accomplishes.
+   - What key information it introduces.
+   - What it deliberately postpones or delegates.
+   - Its relation to other sections.
+3. Key Terms:
+   Identify up to 5 highly specific technical terms, acronyms, mathematical symbols, or formal methods. Avoid generic words like 'analysis', 'method', or 'results'. Assign a confidence score (0.0 to 1.0) and specify where in the text it was found.
+4. Atomic Facts:
+   Identify up to 5 must-preserve atomic facts (numbers, equations, parameter values, thresholds, sample sizes, versions). For each fact, provide the exact quote or value, the extraction type ('numeric_constant', 'experimental_condition', or 'semantic_claim'), and a confidence score.
+5. Constraints:
+   Identify any logical boundaries or prohibited claims. For example, if it explicitly mentions limitations (e.g. 'we do not claim real-time latency'), extract it as a prohibited claim or rhetorical boundary.
+</extraction_instructions>
 
-Key Terms:
-Identify up to 5 highly specific technical terms, acronyms, or methods. Avoid generic words like 'analysis', 'method', or 'results'. Assign a confidence score (0.0 to 1.0) and specify where in the text it was found.
+<output_rules>
+- Respond with ONLY a valid, parseable JSON object matching the schema below.
+- Do NOT wrap the JSON in markdown code blocks (no ```json or ```).
+- Ground all extracted facts and terms strictly in the source text without speculation.
+- Preserve exact mathematical symbols, equations, and parameter names verbatim.
+</output_rules>
 
-Atomic Facts:
-Identify up to 5 must-preserve atomic facts (numbers, equations, parameter values, thresholds, sample sizes, versions). For each fact, provide the exact quote or value, the extraction type ('numeric_constant', 'experimental_condition', or 'semantic_claim'), and a confidence score.
-
-Constraints:
-Identify any logical boundaries or prohibited claims. For example, if it explicitly mentions limitations (e.g. 'we do not claim real-time latency'), extract it as a prohibited claim or rhetorical boundary.
-
-You must respond with ONLY a valid JSON object matching the following structure:
+<schema>
 {
   "rhetorical_role": "methodology",
   "purpose": "Describe the data sources, preprocessing operations, clustering procedure, and validation protocol required to reproduce the study.",
@@ -66,6 +79,7 @@ You must respond with ONLY a valid JSON object matching the following structure:
     {"value": "Do not interpret results in this subsection", "type": "rhetorical_boundary", "confidence": 0.76}
   ]
 }
+</schema>
 """
 
 
@@ -217,7 +231,7 @@ def extract_semantic_metadata(
         "model": target_model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text},
+            {"role": "user", "content": f"<section_text>\n{text}\n</section_text>"},
         ],
         "temperature": 0.1,
     }

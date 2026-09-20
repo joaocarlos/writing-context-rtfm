@@ -42,11 +42,13 @@ def _format_write_section_prompt(pack: Any) -> str:
     for s in pack.source_spans:
         snippet = (s.metadata or {}).get("snippet") or ""
         source_spans_txt.append(
+            f'<context_span file="{s.path}" lines="{s.line_start}-{s.line_end}" priority="{s.priority}">\n'
             f"--- File: {s.path} (Lines {s.line_start}-{s.line_end}) [{s.priority}]\n"
             f"Reason: {s.reason}\n"
             f"Content:\n{snippet}\n"
+            f"</context_span>"
         )
-    source_spans_joined = "\n".join(source_spans_txt)
+    source_spans_joined = "\n\n".join(source_spans_txt)
     constraints_joined = (
         "\n".join(f"- {c}" for c in pack.constraints) if pack.constraints else "None"
     )
@@ -61,20 +63,41 @@ def _format_write_section_prompt(pack: Any) -> str:
     if macros and isinstance(macros, dict):
         macro_lines = [f"- `{m}`: {defn}" for m, defn in sorted(macros.items())[:20]]
         custom_macros_block = (
-            "\n[Author Defined LaTeX Macros (Do NOT redefine or alter)]:\n"
+            "<author_macros>\n"
+            "[Author Defined LaTeX Macros (Do NOT redefine or alter)]:\n"
             + "\n".join(macro_lines)
-            + "\n"
+            + "\n</author_macros>\n\n"
         )
 
     return (
-        f"You are writing/editing a manuscript section. Follow the task instructions below and stay aligned with the manuscript's thesis and constraints.\n\n"
+        "You are an expert scientific manuscript co-author and academic editor. "
+        "Your objective is to draft or revise the specified manuscript section with rigorous fidelity "
+        "to the document's central thesis, section constraints, author macros, and surgical context spans.\n\n"
+        f"<task>\n"
         f"Task: {pack.task}\n"
-        f"Target Section: {pack.target or 'Unknown'}\n\n"
-        f"[Manuscript Thesis]:\n{pack.document_thesis or 'None'}\n\n"
+        f"Target Section: {pack.target or 'Unknown'}\n"
+        f"</task>\n\n"
+        f"<thesis>\n"
+        f"[Manuscript Thesis]:\n{pack.document_thesis or 'None'}\n"
+        f"</thesis>\n\n"
+        f"<section_constraints>\n"
         f"[Constraints & Rules]:\n{constraints_joined}\n"
-        f"{custom_macros_block}\n"
-        f"[Prior Source Spans (Surgical Context)]:\n{source_spans_joined}\n\n"
-        f"Instruction: Draft or revise the section based strictly on the provided context spans and constraints above. Maintain academic tone and LaTeX/Markdown formatting consistency."
+        f"</section_constraints>\n\n"
+        f"{custom_macros_block}"
+        f"<context_spans>\n"
+        f"[Prior Source Spans (Surgical Context)]:\n{source_spans_joined}\n"
+        f"</context_spans>\n\n"
+        f"<rules>\n"
+        f"1. Factual and Evidence Grounding: Draft content strictly aligned with the provided context spans and constraints. Do not fabricate citations, empirical findings, or numerical figures.\n"
+        f"2. LaTeX & Syntax Invariants:\n"
+        f"   - Preserve all citation keys (`\\cite{{...}}`, `[@...]`), cross-references (`\\ref{{...}}`, `\\eqref{{...}}`), and labels (`\\label{{...}}`) exactly.\n"
+        f"   - Maintain proper LaTeX math mode delimiters (`$...$`, `$$...$$`) and standard environments (`equation`, `align`).\n"
+        f"   - Do NOT redefine, shadow, or modify any author-defined LaTeX macros listed in <author_macros>.\n"
+        f"3. Style & Tone: Maintain a precise, publication-grade academic style matching the existing manuscript voice.\n"
+        f"</rules>\n\n"
+        f"<instructions>\n"
+        f"Instruction: Draft or revise the section based strictly on the provided context spans and constraints above. Maintain academic tone and LaTeX/Markdown formatting consistency.\n"
+        f"</instructions>"
     )
 
 
@@ -157,11 +180,15 @@ def _format_proofread_section_prompt(pack: Any) -> str:
             else local_ctx.get("next_paragraph")
         )
         if prev_para:
-            local_txt += f"[Previous Context Paragraph]:\n{prev_para}\n\n"
+            local_txt += f"<previous_paragraph>\n[Previous Context Paragraph]:\n{prev_para}\n</previous_paragraph>\n\n"
         if target_span:
-            local_txt += f"[Target Text to Revise]:\n{target_span}\n\n"
+            local_txt += (
+                f"<target_span>\n[Target Text to Revise]:\n{target_span}\n</target_span>\n\n"
+            )
         if next_para:
-            local_txt += f"[Next Context Paragraph]:\n{next_para}\n\n"
+            local_txt += (
+                f"<next_paragraph>\n[Next Context Paragraph]:\n{next_para}\n</next_paragraph>\n\n"
+            )
 
     target = getattr(pack, "target", None)
     file_path: str = "Unknown"
@@ -180,14 +207,37 @@ def _format_proofread_section_prompt(pack: Any) -> str:
             file_path = str(target)
 
     return (
-        f"You are proofreading and refining the following segment of the manuscript.\n\n"
+        "You are an expert scientific manuscript editor and proofreader. "
+        "Perform surgical, high-precision revisions on the targeted segment while strictly adhering "
+        "to the specified editorial mode, strictness level, and domain terminology constraints.\n\n"
+        f"<target_scope>\n"
         f"Target file: {file_path} (Lines {line_start}-{line_end})\n"
-        f"Mode: {mode} | Strictness: {strictness}\n\n"
+        f"Mode: {mode} | Strictness: {strictness}\n"
+        f"</target_scope>\n\n"
+        f"<surrounding_context>\n"
         f"[Local Context surrounding Target]:\n{local_txt}"
-        f"[General Rules for {mode}]:\n{general_joined}\n\n"
-        f"[Section Constraints]:\n{constraints_joined}\n\n"
-        f"[Terminology Usage Examples (Prior Context)]:\n{terminology_joined}\n\n"
-        f"Instruction: Revise the target segment strictly following the mode and constraints above. Maintain terminology consistency as shown in the examples."
+        f"</surrounding_context>\n\n"
+        f"<mode_rules>\n"
+        f"[General Rules for {mode}]:\n{general_joined}\n"
+        f"</mode_rules>\n\n"
+        f"<section_constraints>\n"
+        f"[Section Constraints]:\n{constraints_joined}\n"
+        f"</section_constraints>\n\n"
+        f"<terminology_guidelines>\n"
+        f"[Terminology Usage Examples (Prior Context)]:\n{terminology_joined}\n"
+        f"</terminology_guidelines>\n\n"
+        f"<safety_rules>\n"
+        f"1. LaTeX & Citation Safety: NEVER alter, delete, or reformat citation keys (`\\cite{{...}}`, `[@...]`), cross-references (`\\ref{{...}}`, `\\eqref{{...}}`), or section/equation labels (`\\label{{...}}`).\n"
+        f"2. Mathematical Environments: Preserve all math environments (`$...$`, `$$...$$`, `equation`, `align`) exactly as written.\n"
+        f"3. Strictness Calibrated Scope:\n"
+        f"   - Conservative: Repair only objective grammatical, spelling, typographical, or syntactic errors without altering authorial style.\n"
+        f"   - Moderate: Enhance sentence flow, clarity, and conciseness while retaining the author's structure and voice.\n"
+        f"   - Assertive: Substantively improve rhetorical clarity, academic elegance, and precision.\n"
+        f"4. Terminology Compliance: Strictly enforce canonical terms, accepted variants, and avoidance prohibitions listed in <terminology_guidelines>.\n"
+        f"</safety_rules>\n\n"
+        f"<instructions>\n"
+        f"Instruction: Revise the target segment strictly following the mode and constraints above. Maintain terminology consistency as shown in the examples.\n"
+        f"</instructions>"
     )
 
 

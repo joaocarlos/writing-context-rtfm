@@ -57,12 +57,24 @@ def test_local_cross_encoder_reranker_with_store_cache(tmp_path):
     )
 
     span1 = SourceSpan(
-        path="doc1.tex", line_start=1, line_end=10, reason="BM25", score=0.5,
-        priority="supporting", source_role="reference", metadata={"snippet": "First snippet content."}
+        path="doc1.tex",
+        line_start=1,
+        line_end=10,
+        reason="BM25",
+        score=0.5,
+        priority="supporting",
+        source_role="reference",
+        metadata={"snippet": "First snippet content."},
     )
     span2 = SourceSpan(
-        path="doc2.tex", line_start=1, line_end=10, reason="BM25", score=0.6,
-        priority="supporting", source_role="reference", metadata={"snippet": "Second snippet content."}
+        path="doc2.tex",
+        line_start=1,
+        line_end=10,
+        reason="BM25",
+        score=0.6,
+        priority="supporting",
+        source_role="reference",
+        metadata={"snippet": "Second snippet content."},
     )
 
     query = "Reescrever teorema"
@@ -83,8 +95,14 @@ def test_local_cross_encoder_reranker_with_store_cache(tmp_path):
     # --- 3rd run with 1 new span: Partial cache hit! ---
     mock_model.predict.return_value = np.array([0.77], dtype=np.float32)
     span3 = SourceSpan(
-        path="doc3.tex", line_start=1, line_end=10, reason="BM25", score=0.4,
-        priority="supporting", source_role="reference", metadata={"snippet": "Third new snippet."}
+        path="doc3.tex",
+        line_start=1,
+        line_end=10,
+        reason="BM25",
+        score=0.4,
+        priority="supporting",
+        source_role="reference",
+        metadata={"snippet": "Third new snippet."},
     )
     reranked_3 = reranker.rerank(query, [span1, span2, span3])
     # predict is called once more, but ONLY with the 1 missing pair

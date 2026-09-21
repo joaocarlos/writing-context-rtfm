@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.1] - 2026-09-21
+
+### Fixed
+- **CLI Quickstart Section Count Reporting**:
+  - Fixed cosmetic display bug where `writing-context-rtfm init --quickstart` printed `0 section(s) discovered` even though manuscript structure was fully parsed and written to `.writing-context/cards.generated.yaml`.
+  - Added `sections_found` key to `cards_scan_command` response payload alongside `total` for dual compatibility across CLI and API callers.
+  - Made `cli.py` fallback gracefully across `total`, `sections_found`, and `len(added)` to ensure accurate manuscript statistics.
+
+### Added
+- **Quickstart End-to-End Regression Test**:
+  - Added `test_init_quickstart_scans_and_reports_correct_section_count` in `tests/test_cli_init.py` verifying accurate section discovery logging and card persistence during quickstart initialization.
+
 ## [0.23.0] - 2026-09-20
 
 ### Added

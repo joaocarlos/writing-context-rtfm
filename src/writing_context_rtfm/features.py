@@ -726,7 +726,13 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
             yaml.safe_dump(default_overrides, f, sort_keys=False)
 
     print("Scan completed successfully.", file=sys.stderr, flush=True)
-    return {"status": "success", "added": added, "updated": updated, "total": len(all_nodes)}
+    return {
+        "status": "success",
+        "added": added,
+        "updated": updated,
+        "total": len(all_nodes),
+        "sections_found": len(all_nodes),
+    }
 
 
 def cards_infer_command(project_root: str, force: bool = False) -> dict[str, Any]:

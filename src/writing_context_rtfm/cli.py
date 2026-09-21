@@ -500,7 +500,9 @@ def init_command(args: argparse.Namespace) -> None:
             from writing_context_rtfm.features import cards_scan_command
 
             scan_res = cards_scan_command(str(root))
-            sections_found = scan_res.get("sections_found", 0)
+            sections_found = scan_res.get(
+                "total", scan_res.get("sections_found", len(scan_res.get("added", [])))
+            )
             print(f"[*] Scanned manuscript structure: {sections_found} section(s) discovered.")
         except Exception as e:
             print(f"[*] Note: Card scanning deferred ({e})")

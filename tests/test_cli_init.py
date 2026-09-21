@@ -12,6 +12,7 @@ from writing_context_rtfm.cli import init_command
 @dataclass
 class MockArgs:
     project_root: str
+    quickstart: bool = False
 
 
 class TestCliInit(unittest.TestCase):
@@ -236,6 +237,29 @@ class TestCliInit(unittest.TestCase):
         self.assertEqual(
             repaired_session_end[0]["hooks"][0]["command"], "writing-context-rtfm cleanup"
         )
+
+    def test_init_quickstart_scans_and_reports_correct_section_count(self):
+        # Create dummy tex file with 2 sections
+        tex_file = self.project_root / "main.tex"
+        tex_file.write_text(
+            "\\documentclass{article}\n\\begin{document}\n"
+            "\\section{Introduction}\\label{sec:intro}\nIntro text.\n"
+            "\\section{Methods}\\label{sec:methods}\nMethods text.\n"
+            "\\end{document}\n",
+            encoding="utf-8",
+        )
+
+        args = MockArgs(project_root=str(self.project_root), quickstart=True)
+        import io
+        from unittest.mock import patch
+
+        with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
+            with patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter.sync"):
+                init_command(args)
+                output = mock_stdout.getvalue()
+
+        self.assertIn("Scanned manuscript structure: 3 section(s) discovered.", output)
+        self.assertTrue((self.project_root / ".writing-context" / "cards.generated.yaml").exists())
 
 
 if __name__ == "__main__":

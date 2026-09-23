@@ -310,3 +310,32 @@ def test_server_handle_proofread_real_warning_status(
         assert "Invalid card structure" in payload["warnings"]
         # Check that status degrades to "degraded" due to the real card warning
         assert payload["status"] == "degraded"
+
+
+def test_proofread_records_telemetry_run_in_store(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
+    generator = ProofreadPackGenerator(mock_config, mock_section_cards, mock_adapter, mock_store)
+
+    pack = generator.generate(
+        target_file=test_file, line_start=3, line_end=4, mode="academic_clarity"
+    )
+
+    assert pack.run_id is not None
+    assert mock_store.store_pack.called
+    call_args = mock_store.store_pack.call_args[0]
+    stored_run_id = call_args[0]
+    stored_run_data = call_args[1]
+    stored_payload = call_args[2]
+    stored_sources = call_args[3]
+
+    assert stored_run_id == pack.run_id
+    assert stored_run_data["mode"] == "proofread"
+    assert stored_run_data["target"] == test_file
+    assert stored_run_data["pack_tokens"] == pack.estimated_tokens
+    assert stored_run_data["baseline_mode"] == "target_file"
+    assert stored_payload["run_id"] == pack.run_id
+    assert len(stored_sources) >= 1
+    assert stored_sources[0]["path"] == test_file
+    assert stored_sources[0]["line_start"] == 3
+    assert stored_sources[0]["line_end"] == 4

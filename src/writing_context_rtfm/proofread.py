@@ -1,11 +1,18 @@
+import hashlib
 import json
 import logging
 import os
 import re
+import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from writing_context_rtfm.config import AppConfig
+from writing_context_rtfm.context_pack import (
+    compute_realistic_baseline_tokens,
+    compute_workspace_document_tokens,
+)
 from writing_context_rtfm.retrieval import RetrievalEngine
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import (
@@ -14,7 +21,7 @@ from writing_context_rtfm.section_cards import (
     normalize_terminology,
 )
 from writing_context_rtfm.storage import ExtensionStore
-from writing_context_rtfm.token_budget import estimate_tokens
+from writing_context_rtfm.token_budget import count_tokens, estimate_tokens
 from writing_context_rtfm.utils import extract_keywords, is_allowed_source, scan_latex_commands
 
 
@@ -60,6 +67,7 @@ class ProofreadingContextPack:
     guidance: str = ""
     status: str = "complete"
     warnings: list[str] = field(default_factory=list)
+    run_id: str | None = None
 
 
 MODE_CONSTRAINTS = {
@@ -117,6 +125,8 @@ class ProofreadPackGenerator:
         strictness: str = "moderate",
         max_tokens: int = 4000,
     ) -> ProofreadingContextPack:
+        start_time = time.perf_counter()
+        run_id = str(uuid.uuid4())
         warnings = []
         lines = []
         # Clamp early to valid 1-indexed range
@@ -192,7 +202,9 @@ class ProofreadPackGenerator:
             else f"Target: {target_file} (lines {line_start}-{line_end}). Mode: '{mode}', Strictness: '{strictness}'."
         )
 
-        return ProofreadingContextPack(
+        latency_ms = (time.perf_counter() - start_time) * 1000.0
+
+        pack = ProofreadingContextPack(
             target=target_info,
             local_context=local_ctx,
             constraints=constraints,
@@ -200,7 +212,91 @@ class ProofreadPackGenerator:
             guidance=guidance,
             status="complete",
             warnings=warnings,
+            run_id=run_id,
         )
+
+        if (
+            self.store
+            and getattr(getattr(self, "config", None), "cache", None)
+            and getattr(self.config.cache, "enabled", True)
+        ):
+            try:
+                project_root = (
+                    getattr(self.adapter, "project_root", None)
+                    or (
+                        getattr(self.config, "rtfm", None)
+                        and getattr(self.config.rtfm, "project_root", None)
+                    )
+                    or "."
+                )
+                total_workspace_tokens = compute_workspace_document_tokens(project_root)
+                realistic_tokens, raw_tokens, is_capped = compute_realistic_baseline_tokens(
+                    project_root=project_root,
+                    target_path=target_file,
+                    baseline_mode="section_neighborhood",
+                    model_family="openai",
+                    total_workspace_tokens=total_workspace_tokens,
+                    pack_tokens=est,
+                )
+                baseline_doc = max(total_workspace_tokens, realistic_tokens)
+                tokens_saved = max(0, baseline_doc - est)
+                savings_ratio = (tokens_saved / baseline_doc) if baseline_doc > 0 else 0.0
+                realistic_saved = max(0, realistic_tokens - est)
+                realistic_ratio = (
+                    (realistic_saved / realistic_tokens) if realistic_tokens > 0 else 0.0
+                )
+                task_str = f"Proofread {target_file}:{line_start}-{line_end} ({mode})"
+                task_hash = hashlib.sha256(
+                    f"{target_file}:{line_start}:{line_end}:{mode}:{strictness}".encode()
+                ).hexdigest()
+                instruction_tokens = count_tokens(task_str, model_family="openai")
+
+                run_data = {
+                    "task_hash": task_hash,
+                    "task": task_str,
+                    "target": target_file,
+                    "corpus": getattr(getattr(self.config, "rtfm", None), "corpus", "default"),
+                    "token_budget": max_tokens,
+                    "config_hash": None,
+                    "section_cards_hash": None,
+                    "rtfm_index_fingerprint": None,
+                    "retrieval_fingerprint": None,
+                    "pack_tokens": est,
+                    "baseline_doc_tokens": baseline_doc,
+                    "tokens_saved": tokens_saved,
+                    "savings_ratio": savings_ratio,
+                    "schema_overhead_tokens": 420,
+                    "latency_ms": latency_ms,
+                    "baseline_realistic_tokens": realistic_tokens,
+                    "baseline_tokens_raw": raw_tokens,
+                    "is_capped": 1 if is_capped else 0,
+                    "instruction_tokens": instruction_tokens,
+                    "realistic_tokens_saved": realistic_saved,
+                    "realistic_savings_ratio": realistic_ratio,
+                    "baseline_mode": "target_file",
+                    "mode": "proofread",
+                }
+
+                sources_to_store = [
+                    {
+                        "path": target_file,
+                        "line_start": line_start,
+                        "line_end": line_end,
+                        "score": 1.0,
+                        "reason": f"Proofreading target span (lines {line_start}-{line_end})",
+                        "rank": 0,
+                        "query": f"proofread:{target_file}",
+                        "metadata_json": json.dumps({"mode": mode, "strictness": strictness}),
+                        "selected": 1,
+                    }
+                ]
+
+                payload = asdict(pack)
+                self.store.store_pack(run_id, run_data, payload, sources_to_store)
+            except Exception as e:
+                warnings.append(f"Telemetry warning: failed to store proofreading run ({e})")
+
+        return pack
 
     def _get_local_context(
         self, file_path: str, start: int, end: int, lines: list[str] | None = None

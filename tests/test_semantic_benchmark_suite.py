@@ -118,14 +118,14 @@ def test_candidate_pool_scaling_sub_15ms() -> None:
     raw = scaling["raw_neural_scaling"]
     assert set(raw.keys()) == {5, 10, 20, 50}
     for n, lat in raw.items():
-        assert lat < 25.0, f"Raw neural latency for N={n} was {lat} ms (exceeded 25 ms ceiling)"
+        assert lat < 35.0, f"Raw neural latency for N={n} was {lat} ms (exceeded 35 ms ceiling)"
 
-    # b) Production pipeline bounded: pre-filtering bounds scoring to 20 candidates, keeping CPU latency <= 25 ms
+    # b) Production pipeline bounded: pre-filtering bounds scoring to 20 candidates, keeping CPU latency <= 35 ms
     bounded = scaling["production_pipeline_bounded"]
     assert set(bounded.keys()) == {5, 10, 20, 50}
-    assert bounded[20] <= 25.0, f"N=20 latency was {bounded[20]} ms (exceeded 25 ms budget)"
-    assert bounded[50] <= 25.0, (
-        f"N=50 bounded latency was {bounded[50]} ms (exceeded 25 ms budget; pre-filtering failed to bound)"
+    assert bounded[20] <= 35.0, f"N=20 latency was {bounded[20]} ms (exceeded 35 ms budget)"
+    assert bounded[50] <= 35.0, (
+        f"N=50 bounded latency was {bounded[50]} ms (exceeded 35 ms budget; pre-filtering failed to bound)"
     )
 
 

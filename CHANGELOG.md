@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.2] - 2026-09-23
+
+### Added
+- **Proofreading Context Pack Telemetry & Storage**:
+  - `ProofreadingContextPack` now generates and returns a unique `run_id`, allowing evaluation feedback (`submit_generation_feedback`) to be linked to proofreading sessions.
+  - Instrumented `ProofreadPackGenerator.generate()` to record telemetry runs into SQLite (`context_pack_runs`, `context_pack_payloads`, `context_pack_sources`) with `mode="proofread"`.
+  - Added counterfactual baseline calculations (`baseline_mode="target_file"`) tracking realistic tokens and tokens saved during surgical proofreading.
+  - Added unit test `test_proofread_records_telemetry_run_in_store` in `tests/test_proofread.py`.
+
 ## [0.23.1] - 2026-09-21
 
 ### Fixed

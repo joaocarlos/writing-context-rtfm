@@ -2617,54 +2617,7 @@ class ContextPackGenerator:
     def _compute_workspace_document_tokens(
         self, project_root: str, model_family: str = "openai"
     ) -> int:
-        """Compute the total baseline tokens of all eligible manuscript files in the workspace.
-
-        This serves as the counterfactual baseline: what would the agent consume if it
-        ingested the entire project manuscript instead of a context pack?
-        """
-        root = Path(project_root).resolve()
-        if not root.exists():
-            return 0
-        spec = load_ignore_spec(root)
-        total_tokens = 0
-        manuscript_exts = {".tex", ".bib", ".md", ".markdown", ".org", ".txt"}
-        skip_dirs = {
-            ".git",
-            ".rtfm",
-            ".writing-context",
-            ".venv",
-            "venv",
-            "node_modules",
-            "dist",
-            "build",
-            "__pycache__",
-        }
-
-        try:
-            for p in root.rglob("*"):
-                if not p.is_file():
-                    continue
-                parts = p.relative_to(root).parts
-                if any(
-                    part in skip_dirs or (part.startswith(".") and part not in {".", ".."})
-                    for part in parts[:-1]
-                ):
-                    continue
-                if p.suffix.lower() not in manuscript_exts:
-                    continue
-                rel_str = str(p.relative_to(root))
-                if not is_allowed_source(rel_str):
-                    continue
-                if is_path_ignored(rel_str, spec, is_dir=False):
-                    continue
-                try:
-                    content = p.read_text(encoding="utf-8", errors="replace")
-                    total_tokens += count_tokens(content, model_family=model_family)
-                except Exception:
-                    continue
-        except Exception:
-            return 0
-        return total_tokens
+        return compute_workspace_document_tokens(project_root, model_family=model_family)
 
     def _compute_realistic_baseline_tokens(
         self,
@@ -2675,52 +2628,14 @@ class ContextPackGenerator:
         total_workspace_tokens: int,
         pack_tokens: int,
     ) -> tuple[int, int, bool]:
-        """Compute realistic counterfactual tokens representing what a human author actually pastes.
-
-        Returns: (realistic_tokens, baseline_tokens_raw, is_capped)
-        Modes:
-        - 'section_neighborhood': Target section + adjacent context (~5k–15k tokens).
-        - 'chapter': Entire target chapter/file (~20k–50k tokens).
-        """
-        if not target_path:
-            raw = (
-                max(pack_tokens * 4, 25000)
-                if baseline_mode == "chapter"
-                else max(pack_tokens * 2, 8000)
-            )
-            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-                return total_workspace_tokens, raw, True
-            return raw, raw, False
-
-        full_path = Path(project_root) / target_path
-        if not full_path.exists() or not full_path.is_file():
-            raw = (
-                max(pack_tokens * 4, 25000)
-                if baseline_mode == "chapter"
-                else max(pack_tokens * 2, 8000)
-            )
-            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-                return total_workspace_tokens, raw, True
-            return raw, raw, False
-
-        try:
-            content = full_path.read_text(encoding="utf-8", errors="replace")
-            file_tokens = count_tokens(content, model_family=model_family)
-            if baseline_mode == "chapter":
-                raw = max(file_tokens, 25000)
-            elif file_tokens > 15000:
-                raw = min(file_tokens, max(pack_tokens * 2, 10000))
-            else:
-                raw = max(file_tokens * 2, 8000)
-
-            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-                return total_workspace_tokens, raw, True
-            return raw, raw, False
-        except Exception:
-            raw = max(pack_tokens * 2, 8000)
-            if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-                return total_workspace_tokens, raw, True
-            return raw, raw, False
+        return compute_realistic_baseline_tokens(
+            project_root=project_root,
+            target_path=target_path,
+            baseline_mode=baseline_mode,
+            model_family=model_family,
+            total_workspace_tokens=total_workspace_tokens,
+            pack_tokens=pack_tokens,
+        )
 
     # -----------------------------------------------------------------------
     # Combined scoring with query-type scoping
@@ -2955,3 +2870,110 @@ class ContextPackGenerator:
                 )
             )
         return result
+
+
+def compute_workspace_document_tokens(project_root: str, model_family: str = "openai") -> int:
+    """Compute the total baseline tokens of all eligible manuscript files in the workspace.
+
+    This serves as the counterfactual baseline: what would the agent consume if it
+    ingested the entire project manuscript instead of a context pack?
+    """
+    root = Path(project_root).resolve()
+    if not root.exists():
+        return 0
+    spec = load_ignore_spec(root)
+    total_tokens = 0
+    manuscript_exts = {".tex", ".bib", ".md", ".markdown", ".org", ".txt"}
+    skip_dirs = {
+        ".git",
+        ".rtfm",
+        ".writing-context",
+        ".venv",
+        "venv",
+        "node_modules",
+        "dist",
+        "build",
+        "__pycache__",
+    }
+
+    try:
+        for p in root.rglob("*"):
+            if not p.is_file():
+                continue
+            parts = p.relative_to(root).parts
+            if any(
+                part in skip_dirs or (part.startswith(".") and part not in {".", ".."})
+                for part in parts[:-1]
+            ):
+                continue
+            if p.suffix.lower() not in manuscript_exts:
+                continue
+            rel_str = str(p.relative_to(root))
+            if not is_allowed_source(rel_str):
+                continue
+            if is_path_ignored(rel_str, spec, is_dir=False):
+                continue
+            try:
+                content = p.read_text(encoding="utf-8", errors="replace")
+                total_tokens += count_tokens(content, model_family=model_family)
+            except Exception:
+                continue
+    except Exception:
+        return 0
+    return total_tokens
+
+
+def compute_realistic_baseline_tokens(
+    project_root: str,
+    target_path: str | None,
+    baseline_mode: str,
+    model_family: str,
+    total_workspace_tokens: int,
+    pack_tokens: int,
+) -> tuple[int, int, bool]:
+    """Compute realistic counterfactual tokens representing what a human author actually pastes.
+
+    Returns: (realistic_tokens, baseline_tokens_raw, is_capped)
+    Modes:
+    - 'section_neighborhood': Target section + adjacent context (~5k–15k tokens).
+    - 'chapter': Entire target chapter/file (~20k–50k tokens).
+    """
+    if not target_path:
+        raw = (
+            max(pack_tokens * 4, 25000)
+            if baseline_mode == "chapter"
+            else max(pack_tokens * 2, 8000)
+        )
+        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+            return total_workspace_tokens, raw, True
+        return raw, raw, False
+
+    full_path = Path(project_root) / target_path
+    if not full_path.exists() or not full_path.is_file():
+        raw = (
+            max(pack_tokens * 4, 25000)
+            if baseline_mode == "chapter"
+            else max(pack_tokens * 2, 8000)
+        )
+        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+            return total_workspace_tokens, raw, True
+        return raw, raw, False
+
+    try:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+        file_tokens = count_tokens(content, model_family=model_family)
+        if baseline_mode == "chapter":
+            raw = max(file_tokens, 25000)
+        elif file_tokens > 15000:
+            raw = min(file_tokens, max(pack_tokens * 2, 10000))
+        else:
+            raw = max(file_tokens * 2, 8000)
+
+        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+            return total_workspace_tokens, raw, True
+        return raw, raw, False
+    except Exception:
+        raw = max(pack_tokens * 2, 8000)
+        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
+            return total_workspace_tokens, raw, True
+        return raw, raw, False

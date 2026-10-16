@@ -77,6 +77,9 @@ def _parse_libraries(markdown_text: str) -> list[_ZoteroLibrary]:
         if not line or line.startswith("#"):
             continue
 
+        if "zotero_switch" in lower_line or "switch to a different library" in lower_line:
+            continue
+
         clean_line = re.sub(r"^(?:[-*+•]|\d+[.)])\s+", "", line).strip()
         if not clean_line:
             continue
@@ -287,6 +290,15 @@ class ZoteroProvider(BaseContextProvider):
                     candidates = [loc_matches[0]]
                 elif not loc_matches and user_libs:
                     candidates = [user_libs[0]]
+                else:
+                    logger.info(
+                        "Parsed libraries are group libraries; using default active personal user library ('My Library')."
+                    )
+                    self._library = _ZoteroLibrary(
+                        name="My Library", library_id="0", library_type="user"
+                    )
+                    self._library_scope_initialized = True
+                    return self._library
 
         if not candidates:
             available = ", ".join(f"'{lib.name}'" for lib in parsed_libraries) or "none"

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.8] - 2026-10-16
+
+### Fixed
+- **Group-Only Library Scope & Footer Hint Filtering in Zotero Provider**:
+  - Filtered out tool instruction footers (e.g. `Use zotero_switch_library...`) from being misparsed as library entries.
+  - When only group libraries are returned by `zotero_list_libraries`, requesting `My Library` automatically and gracefully falls back to the already-active personal user library instead of raising a missing library error.
+
 ## [0.23.7] - 2026-10-16
 
 ### Fixed

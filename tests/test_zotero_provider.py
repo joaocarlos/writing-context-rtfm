@@ -576,3 +576,35 @@ def test_unmatched_library_reports_available(base_config, mock_manager):
     with pytest.raises(ValueError, match="Available libraries: 'Minha Biblioteca'"):
         provider._ensure_library_selected(mock_manager)
 
+
+def test_group_only_libraries_defaults_to_personal_user_library(base_config, mock_manager):
+    config = _scoped_config(base_config, collections=[], library_name="My Library")
+    provider = ZoteroProvider(config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None, session_scope=None):
+        if tool_name == "zotero_list_libraries":
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = (
+                "## Group Libraries\n"
+                "- **SmartRFinder** (groupID=101)\n"
+                "- **ImgCap** (groupID=102)\n"
+                "- **SAPA** (groupID=103)\n"
+                "- **EU-DREAM** (groupID=104)\n\n"
+                "- Use `zotero_switch_library` to switch to a different library."
+            )
+            res.content = [block]
+            return res
+        res = MagicMock()
+        res.content = []
+        return res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    lib = provider._ensure_library_selected(mock_manager)
+    assert lib is not None
+    assert lib.name == "My Library"
+    assert lib.library_type == "user"
+
+

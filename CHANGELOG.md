@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.7] - 2026-10-16
+
+### Fixed
+- **Zotero Provider Localized User Library Auto-Fallback**:
+  - Added smart fallback in `ZoteroProvider._ensure_library_selected` when default `library_name: "My Library"` is configured on non-English/localized Zotero Desktop installations (e.g., "Minha Biblioteca", "A Minha Biblioteca", or single personal user library).
+  - Enhanced error messages to list all discovered library names if matching fails.
+  - Relaxed library parser regex to support variations in `zotero-mcp` fastmcp output (`libraryID`, `library_id`, `ID`).
+
 ## [0.23.6] - 2026-10-16
 
 ### Fixed

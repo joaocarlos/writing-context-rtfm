@@ -493,3 +493,86 @@ def test_zotero_fingerprint_includes_library_and_collection_scope(base_config):
     assert first_fingerprint is not None
     assert second_fingerprint is not None
     assert first_fingerprint != second_fingerprint
+
+
+def test_localized_user_library_fallback(base_config, mock_manager):
+    config = _scoped_config(base_config, collections=["Methods"], library_name="My Library")
+    provider = ZoteroProvider(config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None, session_scope=None):
+        if tool_name == "zotero_list_libraries":
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = (
+                "## User Library\n"
+                "- **Minha Biblioteca** — 250 items (libraryID=1)\n"
+            )
+            res.content = [block]
+            return res
+        if tool_name == "zotero_switch_library":
+            assert arguments == {"library_id": "1", "library_type": "user"}
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = "Successfully switched to library ID 1."
+            res.content = [block]
+            return res
+        if tool_name == "zotero_get_collections":
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = "- **Methods** (Key: METH0001)"
+            res.content = [block]
+            return res
+        if tool_name == "zotero_get_collection_items":
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = "- `METH0001` | Methods paper (2024)"
+            res.content = [block]
+            return res
+        if tool_name == "zotero_search_items":
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = "## 1. Localized paper\n**Citation Key:** loc2024\n**Relevance:** 0.95"
+            res.content = [block]
+            return res
+        res = MagicMock()
+        res.content = []
+        return res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    # Should not raise ValueError because single user library 'Minha Biblioteca' is selected as fallback
+    lib = provider._ensure_library_selected(mock_manager)
+    assert lib is not None
+    assert lib.name == "Minha Biblioteca"
+    assert lib.library_id == "1"
+
+
+def test_unmatched_library_reports_available(base_config, mock_manager):
+    config = _scoped_config(base_config, collections=["Methods"], library_name="NonexistentLib")
+    provider = ZoteroProvider(config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None, session_scope=None):
+        if tool_name == "zotero_list_libraries":
+            res = MagicMock()
+            block = MagicMock()
+            block.type = "text"
+            block.text = (
+                "## User Library\n"
+                "- **Minha Biblioteca** (libraryID=1)\n"
+            )
+            res.content = [block]
+            return res
+        res = MagicMock()
+        res.content = []
+        return res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    with pytest.raises(ValueError, match="Available libraries: 'Minha Biblioteca'"):
+        provider._ensure_library_selected(mock_manager)
+

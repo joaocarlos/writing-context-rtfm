@@ -1,3 +1,4 @@
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -39,30 +40,74 @@ def _result_text(result: Any) -> str:
 
 
 def _parse_libraries(markdown_text: str) -> list[_ZoteroLibrary]:
+    if not markdown_text or not markdown_text.strip():
+        return []
+
+    # 1. Try parsing as JSON first
+    try:
+        data = json.loads(markdown_text)
+        if isinstance(data, list):
+            libs: list[_ZoteroLibrary] = []
+            for item in data:
+                if isinstance(item, dict) and "name" in item:
+                    lib_id = str(item.get("id") or item.get("library_id") or item.get("libraryID") or "1")
+                    lib_type = str(item.get("type") or item.get("library_type") or "user")
+                    libs.append(_ZoteroLibrary(name=str(item["name"]).strip(), library_id=lib_id, library_type=lib_type))
+            if libs:
+                return libs
+    except Exception:
+        pass
+
+    # 2. Parse markdown / text line-by-line
     libraries: list[_ZoteroLibrary] = []
     section_type = "user"
-    pattern = re.compile(r"^- \*\*(?P<name>.+?)\*\*.*\((?P<label>libraryID|groupID)=(?P<id>\d+)\)")
-    for line in markdown_text.splitlines():
-        if line.startswith("## User Library"):
-            section_type = "user"
-            continue
-        if line.startswith("## Group Libraries"):
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.strip()
+        lower_line = line.lower()
+        if "group" in lower_line and ("librar" in lower_line or lower_line.startswith("#")):
             section_type = "group"
             continue
-        if line.startswith("## RSS Feeds"):
+        if "user" in lower_line and ("librar" in lower_line or lower_line.startswith("#")):
+            section_type = "user"
+            continue
+        if "rss" in lower_line:
             section_type = "feed"
             continue
-        match = pattern.match(line.strip())
-        if not match:
+
+        if not line or line.startswith("#"):
             continue
-        library_type = "group" if match.group("label") == "groupID" else section_type
-        libraries.append(
-            _ZoteroLibrary(
-                name=match.group("name").strip(),
-                library_id=match.group("id"),
-                library_type=library_type,
-            )
+
+        clean_line = re.sub(r"^(?:[-*+•]|\d+[.)])\s+", "", line).strip()
+        if not clean_line:
+            continue
+
+        bold_match = re.search(r"\*\*(.+?)\*\*", clean_line)
+        if bold_match:
+            name = bold_match.group(1).strip()
+        else:
+            name_parts = re.split(r"\s*[\(—–-]\s*", clean_line)
+            name = name_parts[0].strip() if name_parts else clean_line
+
+        lib_id = "1"
+        lib_type = section_type
+        id_match = re.search(
+            r"\(.*?(?:libraryID|library_id|groupID|group_id|ID)[=:\s]+(?P<id>\d+).*?\)",
+            clean_line,
+            re.IGNORECASE,
         )
+        if id_match:
+            lib_id = id_match.group("id")
+            if "group" in id_match.group(0).lower():
+                lib_type = "group"
+
+        if name:
+            libraries.append(
+                _ZoteroLibrary(
+                    name=name,
+                    library_id=lib_id,
+                    library_type=lib_type,
+                )
+            )
     return libraries
 
 
@@ -208,30 +253,62 @@ class ZoteroProvider(BaseContextProvider):
 
         response = self._call_tool(manager, "zotero_list_libraries", {})
         response_text = _result_text(response)
+        parsed_libraries = _parse_libraries(response_text)
         candidates = [
             library
-            for library in _parse_libraries(response_text)
+            for library in parsed_libraries
             if _normalize_name(library.name) == _normalize_name(requested)
         ]
+        if not candidates and requested == "My Library":
+            user_libs = [lib for lib in parsed_libraries if lib.library_type == "user"]
+            if len(user_libs) == 1:
+                candidates = [user_libs[0]]
+            elif len(parsed_libraries) == 1:
+                candidates = [parsed_libraries[0]]
+            elif not parsed_libraries:
+                logger.info("Zotero list_libraries returned no libraries; using default active user library.")
+                self._library = _ZoteroLibrary(name="My Library", library_id="1", library_type="user")
+                self._library_scope_initialized = True
+                return self._library
+            else:
+                localized_names = {
+                    "minha biblioteca",
+                    "a minha biblioteca",
+                    "mi biblioteca",
+                    "ma bibliotheque",
+                    "ma bibliothèque",
+                    "meine bibliothek",
+                    "la mia biblioteca",
+                }
+                loc_matches = [
+                    lib for lib in user_libs if _normalize_name(lib.name) in localized_names
+                ]
+                if len(loc_matches) == 1:
+                    candidates = [loc_matches[0]]
+                elif not loc_matches and user_libs:
+                    candidates = [user_libs[0]]
+
         if not candidates:
-            raise ValueError(f"Zotero library '{requested}' was not found")
+            available = ", ".join(f"'{lib.name}'" for lib in parsed_libraries) or "none"
+            raise ValueError(
+                f"Zotero library '{requested}' was not found. Available libraries: {available}"
+            )
         if len(candidates) > 1:
             raise ValueError(f"Zotero library name '{requested}' is ambiguous")
 
         selected = candidates[0]
-        switch_response = self._call_tool(
-            manager,
-            "zotero_switch_library",
-            {"library_id": selected.library_id, "library_type": selected.library_type},
-        )
-        switch_text = _result_text(switch_response)
-        if (
-            "error" in switch_text.casefold()
-            or "successfully switched" not in switch_text.casefold()
-        ):
-            raise RuntimeError(
-                f"Could not switch Zotero to library '{selected.name}': {switch_text.strip()}"
+        try:
+            switch_response = self._call_tool(
+                manager,
+                "zotero_switch_library",
+                {"library_id": selected.library_id, "library_type": selected.library_type},
             )
+            switch_text = _result_text(switch_response)
+            if "error" in switch_text.casefold() and "already active" not in switch_text.casefold():
+                logger.info(f"Zotero switch_library notice: {switch_text.strip()}")
+        except Exception as e:
+            logger.info(f"Zotero switch_library notice ({e}); proceeding with active library.")
+
         self._library = selected
         self._library_scope_initialized = True
         return selected

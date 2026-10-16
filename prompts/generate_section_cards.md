@@ -1,24 +1,37 @@
-# Prompt: Generate Main-Section Cards (`version: 2`)
+# Prompt: Generate Section Overrides (`cards.overrides.yaml`)
 
-Use this prompt with an AI agent or LLM working inside a `writing-context-rtfm` manuscript project to generate or update `.writing-context/section_cards.yaml` (or `.writing-context/cards.overrides.yaml`).
+Use this prompt with an AI agent or LLM working inside a `writing-context-rtfm` manuscript project to generate or curate `.writing-context/cards.overrides.yaml` (schema `version: 2`).
+
+> [!NOTE]
+> In `writing-context-rtfm`, deterministic structural metadata (section IDs, files, line ranges, and LaTeX `\ref` -> `\label` dependencies) is handled automatically by the AST parser into `.writing-context/cards.generated.yaml`.
+> 
+> The `.writing-context/cards.overrides.yaml` file is the **curated semantic layer**: it holds the manuscript thesis, writing style, glossary, and surgical section constraints (`purpose`, `key_terms`, `must_preserve`, `avoid`, `constraints`).
 
 ---
 
 ## Prompt Template
 
 ```markdown
-You are a writing-context analyst. Your task is to inspect the project workspace, analyze the manuscript files, and generate a valid `.writing-context/section_cards.yaml` file (schema `version: 2`) for `writing-context-rtfm`.
+You are a writing-context analyst. Your task is to analyze the manuscript and produce a curated, surgical `.writing-context/cards.overrides.yaml` file (schema `version: 2`) for `writing-context-rtfm`.
 
-### Instructions for Manuscript Discovery
-1. **Search Project Files**: Discover the main entry files (`.tex` or `.md` files) in the workspace. If specific files are named (e.g., `main.tex`, `manuscript.md`), analyze those target files first.
-2. **Main-Section Organization**: Organize cards exclusively around top-level main sections (`\section` in papers/articles, `\chapter` in books/theses, or H1 `#` in Markdown). Do not create separate cards for subsections; encapsulate their content under the parent main section.
-3. **Extract Metadata**: Derive the document title, central thesis statement, writing style, key technical terminology, and main section attributes directly from manuscript prose.
+### Core Principle: Retrieval-Calibrated Context
+Every field in this file directly controls how the RTFM retrieval engine and token budgeter operate downstream:
+- **`key_terms`**: Each term triggers an individual semantic search query in RTFM. Over-specifying terms or choosing generic words (e.g., "algorithm", "results", "evaluation") floods the context with irrelevant chunks and exhausts token budgets.
+- **`must_preserve`**: Injected verbatim into the prompt's immutable constraints. Copying full narrative sentences or paragraphs consumes budget tokens needed for actual context retrieval.
+- **`depends_on`**: Imports dependency chunks and their key terms. Rely on the AST reference graph (`cards.generated.yaml`) for structural cross-references (`\cite`, `\ref`); only add explicit semantic dependencies when a section directly builds upon mathematical formulations or outputs from another section.
+- **`avoid`**: Hard negative filter phrases used to discard noisy or tangential candidate spans.
 
 ---
 
-### Schema (Version 2)
+### MCP Pre-flight Workflow (Recommended)
+If working as an MCP agent:
+1. **Initialize AST Scaffolding First**: Ensure `.writing-context/cards.generated.yaml` exists by calling `manage_section_cards(action="init")` or inspecting existing sections with `manage_section_cards(action="inspect", target="<section_id>")`.
+2. **Reuse Canonical Section IDs**: Match the exact `section_id` keys discovered by the parser (e.g., `section_introduction`, `section_methodology`).
+3. **Section-by-Section Inspection**: Rather than dumping entire files into context, inspect target sections individually or read their specific files.
 
-Produce a YAML structure adhering to `version: 2`:
+---
+
+### Schema (`cards.overrides.yaml`, Version 2)
 
 ```yaml
 version: 2
@@ -28,46 +41,54 @@ document:
   thesis: "<1-2 sentence central thesis or core argument of the manuscript>"
   writing_style:
     tone: "<e.g., Academic, formal, concise, third-person>"
-    avoid_words: ["<cliché>", "<groundbreaking>", "<game-changing>"]
+    avoid_words: ["<cliché 1>", "<groundbreaking>", "<game-changing>"]
   terminology:
-    "<Canonical Term>":
-      definition: "<Concise definition of the technical concept>"
-      variants: ["<alternate phrase 1>", "<alternate phrase 2>"]
+    "<Canonical Technical Term>":
+      definition: "<Concise 1-sentence definition of the concept>"
+      variants: ["<alternate phrase 1>", "<acronym>"]
       avoid: ["<deprecated or incorrect phrasing to avoid>"]
 
 sections:
-  <section_id>:                     # snake_case identifier (e.g., section_introduction, section_methodology)
-    title: "<Human-readable Section Title>"
-    purpose: "<1 sentence: main objective and contribution of this section>"
-    path: "<relative path to the section file, e.g., sections/01_introduction.tex>"
+  <section_id>:                     # snake_case ID matching AST (e.g., section_methodology)
+    purpose: "<Exactly 1 sentence: primary objective and contribution of this section>"
     key_terms:
-      - "<domain-specific technical term central to this section>"
-      # 3–8 specific terms recommended
-    depends_on:
-      - <other_section_id>          # section_ids whose outputs/claims this section references
+      - "<highly specific domain term 1>"
+      - "<highly specific domain term 2>"
+      - "<highly specific domain term 3>"
+      # STRICTLY 3–5 terms. Must be discriminative technical terms, methods, or parameters.
+      # NEVER generic words ('machine learning', 'performance', 'data', 'analysis').
     must_preserve:
-      - "<exact sentence, formula, or caveat that must survive rewrites intact>"
+      - "<exact parameter value, threshold, or core equation, e.g., 'Learning rate eta = 1e-4'>"
+      # STRICTLY 0–2 items. Only numeric constants, parameter values, or formal equations.
+      # NEVER full prose sentences, narrative arguments, or paragraph excerpts.
     avoid:
-      - "<phrase or topic to filter out from context packs for this section>"
+      - "<specific noisy phrase or out-of-scope topic to exclude from retrieval>"
+      # STRICTLY 1–3 short phrases (2–4 words) to filter false-positive search results.
     constraints:
-      - "<free-form writing or structural constraint, e.g., 'List main contributions in a bulleted list'>"
+      - "<actionable rhetorical or structural rule, e.g., 'Do not present benchmark numbers in this section'>"
+      # STRICTLY 1–2 rules maximum.
 ```
 
 ---
 
-### Guidelines
+### Field Budgets & Extraction Constraints
 
-1. **`version`**: Must be set to `2`.
-2. **`section_id`**: Use valid `snake_case` (e.g. `section_introduction`). This key is used with `--target` / `target` in context pack requests.
-3. **`path`**: Provide exact relative paths from project root.
-4. **`key_terms`**: Use exact technical terms used in the manuscript (e.g. `"quantization-aware training"` rather than generic `"machine learning"`).
-5. **`must_preserve`**: Short verbatim claims, equations, or fixed statements (not instructions).
-6. **`avoid`**: Short phrases (2-5 words) to filter out noisy or irrelevant search results.
-7. **`terminology`**: Standardize critical project terms with canonical definitions, allowed variants, and forbidden phrases.
+Follow these strict bounds to prevent context bloat and query explosion:
+
+| Field | Hard Limit | Rules & Negative Guidance |
+| :--- | :--- | :--- |
+| `document.thesis` | Max 2 sentences | State the central claim or hypothesis. Do not summarize the entire outline. |
+| `document.terminology` | 5–10 terms max | Include only critical project-specific concepts, novel metrics, or ambiguous acronyms. |
+| `sections.<id>.purpose` | Exactly 1 sentence | State what this section introduces and accomplishes. No generic filler ("This section discusses..."). |
+| `sections.<id>.key_terms` | **3 to 5 terms** | Highly specific technical entities, formal parameter names, or methods. **No generic words.** |
+| `sections.<id>.must_preserve` | **0 to 2 items** | Only verbatim equations, fixed mathematical symbols, or exact parameter values. **No prose sentences.** |
+| `sections.<id>.depends_on` | 0 to 2 sections | Omit if already linked by LaTeX `\ref` / `\label`. Include only if claims directly depend on another section's derivation. |
+| `sections.<id>.avoid` | 1 to 3 phrases | Short negative filters (2–4 words) that commonly contaminate search results. |
+| `sections.<id>.constraints` | 1 to 2 rules | Brief, actionable boundaries (e.g., "Confine dataset descriptions to Table 1"). |
 
 ---
 
 ### Execution Request
 
-Analyze the project manuscript files (or target: `[Specify file path or leave blank for auto-discovery]`) and output the complete `section_cards.yaml` inside a single YAML block.
+Analyze the project manuscript files (or target: `[Specify file path or leave blank for auto-discovery]`) and output the calibrated `.writing-context/cards.overrides.yaml` inside a single YAML code block.
 ```

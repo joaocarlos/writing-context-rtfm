@@ -803,6 +803,10 @@ def _render_pack_preview(pack: ContextPack, config: Any, no_color: bool = False)
     if (pack.quality or {}).get("custom_macros"):
         macro_count = len((pack.quality or {}).get("custom_macros") or {})
         lines.append(f"LaTeX Macros: {macro_count} custom macro(s) protected")
+    if pack.warnings:
+        lines.append(f"Warnings ({len(pack.warnings)}):")
+        for w_item in pack.warnings:
+            lines.append(f"  • {w_item}")
     lines.append("-" * w)
 
     if pack.document_thesis:

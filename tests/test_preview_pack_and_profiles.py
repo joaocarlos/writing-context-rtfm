@@ -190,6 +190,8 @@ def test_preview_pack_command_rendering(
     assert "Max 500 words" in out
     assert "ch1.md" in out
     assert "ch2.md" in out
+    assert "Warnings (1):" in out
+    assert "Sample warning" in out
     assert "RENDERED LLM PROMPT PREVIEW:" in out
 
 

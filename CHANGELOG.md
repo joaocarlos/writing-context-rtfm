@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.6] - 2026-10-16
+
+### Fixed
+- **Preview Pack Diagnostics & Warnings Display**:
+  - `writing-context-rtfm preview-pack` now explicitly displays `Warnings (<count>):` directly in the preview header, surfacing any degradation reasons, provider notices, or budget caveats.
+- **Reference Traversal Notice Hygiene**:
+  - Prefixed 1-hop reference traversal notice in `context_pack.py` with `Note:` to prevent harmless traversal notices from falsely marking healthy packs as `degraded`.
+
 ## [0.23.5] - 2026-10-16
 
 ### Fixed

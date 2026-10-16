@@ -1995,7 +1995,7 @@ class ContextPackGenerator:
                                                 stream_key="ref_graph",
                                             )
             except Exception as e:
-                warnings.append(f"1-Hop reference traversal notice: {e}")
+                warnings.append(f"Note: 1-Hop reference traversal notice: {e}")
 
         self._record_diagnostic("retrieved", all_candidates)
 

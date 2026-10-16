@@ -147,3 +147,58 @@ class TestRelease0233Improvements(unittest.TestCase):
         self.assertIsNone(key)
         self.assertIsNone(card)
         self.assertIsNone(path)
+
+    def test_latex_acronym_extraction(self):
+        """Verify extraction of acronyms from LaTeX text."""
+        from writing_context_rtfm.latex import extract_acronyms_from_text
+
+        sample_tex = r"""
+        \newacronym{cri}{CRI}{Contextual Risk Index}
+        \acro{TRIAGE}[TRIAGE/4]{Tiered Routing and Inversion-Aware Geographic Execution}
+        \begin{description}
+            \item[\textbf{EDU}] Edge Detection Unit \\
+            \item[EMS] Emergency Management System \label{sec:ems}
+        \end{description}
+        \nomenclature{HP}{Hazard Perception}
+        """
+        acronyms = extract_acronyms_from_text(sample_tex)
+        self.assertEqual(acronyms.get("CRI"), "Contextual Risk Index")
+        self.assertEqual(
+            acronyms.get("TRIAGE"), "Tiered Routing and Inversion-Aware Geographic Execution"
+        )
+        self.assertEqual(acronyms.get("EDU"), "Edge Detection Unit")
+        self.assertEqual(acronyms.get("EMS"), "Emergency Management System")
+        self.assertEqual(acronyms.get("HP"), "Hazard Perception")
+
+    def test_get_term_fallback_to_section_key_terms(self):
+        """Verify get_term_context finds terms in section key_terms even without document dictionary."""
+        from unittest.mock import patch
+
+        from writing_context_rtfm.features import get_term_context
+
+        cards = SectionCards(
+            version=2,
+            document=DocumentCard(title="Thesis"),
+            sections={
+                "section_chap3": SectionCard(
+                    id="section_chap3",
+                    title="Chapter 3",
+                    key_terms=["CRI", "VERUS"],
+                ),
+                "section_chap5": SectionCard(
+                    id="section_chap5",
+                    title="Chapter 5",
+                    key_terms=["CRI", "TRIAGE/4"],
+                ),
+            },
+        )
+        with patch("writing_context_rtfm.section_cards.load_section_cards", return_value=cards):
+            res_cri = get_term_context("CRI", ".")
+            self.assertEqual(res_cri.get("status"), "found")
+            self.assertEqual(res_cri.get("match_type"), "section_key_term")
+            self.assertIn("section_chap3", res_cri.get("sections", []))
+            self.assertIn("section_chap5", res_cri.get("sections", []))
+
+            res_bogus = get_term_context("NONEXISTENT_ACRONYM", ".")
+            self.assertEqual(res_bogus.get("status"), "not_found")
+

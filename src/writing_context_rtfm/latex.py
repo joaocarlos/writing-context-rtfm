@@ -293,3 +293,90 @@ def find_preamble_macros(project_root: str | Path) -> dict[str, str]:
             continue
 
     return all_macros
+
+
+def extract_acronyms_from_text(content: str) -> dict[str, str]:
+    """Extract acronyms and definitions from LaTeX text (glossaries, acronym, or description envs)."""
+    acronyms: dict[str, str] = {}
+
+    # 1. \newacronym[...]{label}{ABBR}{Full Definition}
+    for m in re.finditer(
+        r"\\newacronym(?:\[[^\]]*\])?\{[^}]*\}\{([^}]+)\}\{([^}]+)\}",
+        content,
+    ):
+        abbr = m.group(1).strip()
+        defn = m.group(2).strip()
+        if abbr and defn:
+            acronyms[abbr] = defn
+
+    # 2. \acro{ABBR}[...]{Full Definition} or \acrodef{ABBR}[...]{Full Definition}
+    for m in re.finditer(
+        r"\\acro(?:def)?\{([^}]+)\}(?:\[[^\]]*\])?\{([^}]+)\}",
+        content,
+    ):
+        abbr = m.group(1).strip()
+        defn = m.group(2).strip()
+        if abbr and defn and abbr not in acronyms:
+            acronyms[abbr] = defn
+
+    # 3. \item[\textbf{ABBR}] Full Definition or \item[ABBR] Full Definition
+    for m in re.finditer(
+        r"\\item\s*\[(?:\\textbf\{|\\ac\{)?\s*([A-Za-z0-9/\-_+]{2,20})\s*(?:\})?\]\s*(.+)",
+        content,
+    ):
+        abbr = m.group(1).strip()
+        raw_defn = m.group(2).strip()
+        raw_defn = re.sub(r"%.*$", "", raw_defn).strip()
+        raw_defn = re.sub(r"\\\\$", "", raw_defn).strip()
+        raw_defn = re.sub(r"\\label\{[^}]*\}", "", raw_defn).strip()
+        raw_defn = re.sub(r"\\[a-zA-Z]+\{([^}]*)\}", r"\1", raw_defn).strip()
+        if abbr and raw_defn and abbr not in acronyms:
+            acronyms[abbr] = raw_defn
+
+    # 4. \nomenclature[...]{ABBR}{Full Definition}
+    for m in re.finditer(
+        r"\\nomenclature(?:\[[^\]]*\])?\{([A-Za-z0-9/\-_+]{2,20})\}\{([^}]+)\}",
+        content,
+    ):
+        abbr = m.group(1).strip()
+        defn = m.group(2).strip()
+        if abbr and defn and abbr not in acronyms:
+            acronyms[abbr] = defn
+
+    return acronyms
+
+
+def extract_acronyms_for_project(project_root: str) -> dict[str, str]:
+    """Scan candidate abbreviation and glossary files in project_root to discover acronyms."""
+    root = Path(project_root).resolve()
+    candidate_names = (
+        "abbrevs.tex",
+        "acronyms.tex",
+        "abbreviations.tex",
+        "glossary.tex",
+        "symbols.tex",
+        "definitions.tex",
+        "preamble.tex",
+    )
+    found_files: list[Path] = []
+    for name in candidate_names:
+        p = root / name
+        if p.is_file():
+            found_files.append(p)
+
+    for p in root.glob("*.tex"):
+        if p.is_file() and p not in found_files:
+            lower_name = p.name.lower()
+            if any(term in lower_name for term in ("abbrev", "acronym", "glossar", "symbol")):
+                found_files.append(p)
+
+    all_acronyms: dict[str, str] = {}
+    for f in found_files:
+        try:
+            content = f.read_text(encoding="utf-8", errors="replace")
+            file_acronyms = extract_acronyms_from_text(content)
+            all_acronyms.update(file_acronyms)
+        except Exception:
+            continue
+    return all_acronyms
+

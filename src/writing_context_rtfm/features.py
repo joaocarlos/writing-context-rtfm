@@ -227,10 +227,9 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
     if not sc_path.is_absolute():
         sc_path = root / sc_path
 
-    if not sc_path.exists():
-        return {"status": "error", "message": f"Section cards file not found at '{sc_path}'"}
-
-    section_cards = load_section_cards(str(sc_path), required=True)
+    section_cards = load_section_cards(str(sc_path), required=False)
+    if not section_cards:
+        return {"status": "error", "message": f"Section cards not found in '{sc_path.parent}'"}
     if not section_cards:
         return {"status": "error", "message": "Failed to load section cards"}
     adapter = RTFMAdapter(str(root))
@@ -422,14 +421,14 @@ def get_term_context(term: str, project_root: str | None = None) -> dict[str, An
         sc_path = root / sc_path
 
     section_cards = load_section_cards(str(sc_path), required=False)
-    if not section_cards or not section_cards.document or not section_cards.document.terminology:
+    if not section_cards or not section_cards.document:
         return {
             "status": "not_found",
-            "message": "No terminology dictionary defined in section cards.",
+            "message": "No section cards found.",
         }
 
     term_lower = term.lower()
-    terminology = section_cards.document.terminology
+    terminology = section_cards.document.terminology or {}
 
     # Pre-build lookup maps for O(1) matching of direct, variant, and avoid terms
     direct_lookup = {}
@@ -457,9 +456,27 @@ def get_term_context(term: str, project_root: str | None = None) -> dict[str, An
         canonical_term, details = avoid_lookup[term_lower]
         match_type = "avoid"
     else:
+        # Fallback to searching section cards key_terms
+        found_in_sections = []
+        if section_cards.sections:
+            for sid, scard in section_cards.sections.items():
+                if scard.key_terms and any(term_lower == kt.lower() for kt in scard.key_terms):
+                    found_in_sections.append(sid)
+        if found_in_sections:
+            return {
+                "status": "found",
+                "term": term,
+                "match_type": "section_key_term",
+                "definition": f"Key term identified in section card(s): {', '.join(found_in_sections)}",
+                "sections": found_in_sections,
+                "variants": [term],
+                "avoid": [],
+                "consistency_guidance": f"Identified as key term in section(s): {', '.join(found_in_sections)}.",
+            }
+
         return {
             "status": "not_found",
-            "message": f"Term '{term}' not found in terminology dictionary.",
+            "message": f"Term '{term}' not found in terminology dictionary or section key terms.",
         }
 
     variants = details.get("variants", [])
@@ -610,6 +627,24 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
             pass
 
     lock_sections: dict[str, Any] = lock.setdefault("sections", {})
+
+    # Discover project acronyms / abbreviations from LaTeX files
+    from writing_context_rtfm.latex import extract_acronyms_for_project
+
+    discovered_acronyms = extract_acronyms_for_project(str(root))
+    doc_meta = gen_cards.setdefault("document", {})
+    existing_terminology = doc_meta.setdefault("terminology", {})
+    if not isinstance(existing_terminology, dict):
+        existing_terminology = {}
+
+    for abbr, definition in discovered_acronyms.items():
+        if abbr not in existing_terminology:
+            existing_terminology[abbr] = {
+                "definition": definition,
+                "variants": [abbr],
+                "avoid": [],
+            }
+    doc_meta["terminology"] = existing_terminology
 
     added = []
     updated = []

@@ -1005,13 +1005,12 @@ def inspect_target_command(args: argparse.Namespace) -> None:
     if not sc_path.is_absolute():
         sc_path = project_root / sc_path
 
-    if not sc_path.exists():
-        print(f"Error: Section cards file not found at '{sc_path}'", file=sys.stderr)
+    cards = load_section_cards(str(sc_path), required=False)
+    if not cards:
+        print(f"Error: Section cards not found in '{sc_path.parent}'", file=sys.stderr)
         sys.exit(1)
-
-    cards = load_section_cards(str(sc_path), required=True)
     target = args.target
-    if not cards or not cards.sections or target not in cards.sections:
+    if not cards.sections or target not in cards.sections:
         print(f"Error: Section '{target}' not found in {sc_path}", file=sys.stderr)
         sys.exit(1)
 
@@ -1046,8 +1045,7 @@ def show_graph_command(args: argparse.Namespace) -> None:
         sc_path = Path(config.section_cards.path)
         if not sc_path.is_absolute():
             sc_path = project_root / sc_path
-        if sc_path.exists():
-            cards = load_section_cards(str(sc_path), required=False)
+        cards = load_section_cards(str(sc_path), required=False)
     except Exception:
         pass
 
@@ -1118,14 +1116,14 @@ def show_graph_command(args: argparse.Namespace) -> None:
         print("  (No file inclusions found)")
     print("")
 
-    print("Section Card Dependencies (section_cards.yaml):")
+    print("Section Card Dependencies:")
     if cards and cards.sections:
         for sid in sorted(cards.sections.keys()):
             scard = cards.sections[sid]
             deps = scard.depends_on or []
             print(f"  - {sid} ({scard.path}) depends on: {deps}")
     else:
-        print("  (No section cards or section_cards.yaml not found/empty)")
+        print("  (No section cards found or empty)")
 
 
 def cleanup_command(args: argparse.Namespace) -> None:

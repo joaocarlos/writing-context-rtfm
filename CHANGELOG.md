@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.4] - 2026-10-16
+
+### Added
+- **LaTeX Acronym & Abbreviation Discovery (`abbrevs.tex`)**:
+  - Implemented `extract_acronyms_for_project` and `extract_acronyms_from_text` in `latex.py` to auto-discover glossary entries from `abbrevs.tex`, `acronyms.tex`, `symbols.tex`, etc.
+  - Supports `\newacronym`, `\acro`, `\acrodef`, `\item[\textbf{...}]`, and `\nomenclature` syntax.
+  - Automatically populates `document.terminology` in `cards.generated.yaml` during `writing-context-rtfm cards scan`.
+- **Glossary Fallback to Section Key Terms**:
+  - `get-term` / `get_term_context` now searches across section cards' `key_terms` when a term is not yet defined in the document dictionary, reporting which sections use it.
+
+### Fixed
+- **Section Card Loading for Modern Split Card Layouts**:
+  - Fixed `show-graph`, `inspect-target`, and `audit` commands which previously required legacy `section_cards.yaml` to exist on disk before calling `load_section_cards()`.
+  - Now transparently loads `cards.generated.yaml` and `cards.overrides.yaml`, displaying section card dependencies properly in `show-graph`.
+
 ## [0.23.3] - 2026-10-16
 
 ### Fixed

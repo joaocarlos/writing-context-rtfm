@@ -49,23 +49,23 @@ document:
       avoid: ["<deprecated or incorrect phrasing to avoid>"]
 
 sections:
-  <section_id>:                     # snake_case ID matching AST (e.g., section_methodology)
-    purpose: "<Exactly 1 sentence: primary objective and contribution of this section>"
+  <section_id>:                     # snake_case ID (e.g., section_methodology)
+    purpose: "<Exactly 1 sentence: objective and contribution of this section>"
     key_terms:
       - "<highly specific domain term 1>"
       - "<highly specific domain term 2>"
       - "<highly specific domain term 3>"
-      # STRICTLY 3–5 terms. Must be discriminative technical terms, methods, or parameters.
-      # NEVER generic words ('machine learning', 'performance', 'data', 'analysis').
+      # STRICTLY 3–5 terms. Discriminative technical terms or parameters.
+      # NEVER generic words ('machine learning', 'performance', 'data').
     must_preserve:
-      - "<exact parameter value, threshold, or core equation, e.g., 'Learning rate eta = 1e-4'>"
-      # STRICTLY 0–2 items. Only numeric constants, parameter values, or formal equations.
-      # NEVER full prose sentences, narrative arguments, or paragraph excerpts.
+      - "<exact parameter, threshold, or equation, e.g., 'eta = 1e-4'>"
+      # STRICTLY 0–2 items. Numeric constants or formal equations only.
+      # NEVER prose sentences, arguments, or paragraph excerpts.
     avoid:
-      - "<specific noisy phrase or out-of-scope topic to exclude from retrieval>"
-      # STRICTLY 1–3 short phrases (2–4 words) to filter false-positive search results.
+      - "<noisy phrase or out-of-scope topic to exclude from retrieval>"
+      # STRICTLY 1–3 short phrases (2–4 words) to filter search results.
     constraints:
-      - "<actionable rhetorical or structural rule, e.g., 'Do not present benchmark numbers in this section'>"
+      - "<actionable rhetorical rule, e.g., 'No benchmarks in this section'>"
       # STRICTLY 1–2 rules maximum.
 ```
 
@@ -75,16 +75,16 @@ sections:
 
 Follow these strict bounds to prevent context bloat and query explosion:
 
-| Field | Hard Limit | Rules & Negative Guidance |
-| :--- | :--- | :--- |
-| `document.thesis` | Max 2 sentences | State the central claim or hypothesis. Do not summarize the entire outline. |
-| `document.terminology` | 5–10 terms max | Include only critical project-specific concepts, novel metrics, or ambiguous acronyms. |
-| `sections.<id>.purpose` | Exactly 1 sentence | State what this section introduces and accomplishes. No generic filler ("This section discusses..."). |
-| `sections.<id>.key_terms` | **3 to 5 terms** | Highly specific technical entities, formal parameter names, or methods. **No generic words.** |
-| `sections.<id>.must_preserve` | **0 to 2 items** | Only verbatim equations, fixed mathematical symbols, or exact parameter values. **No prose sentences.** |
-| `sections.<id>.depends_on` | 0 to 2 sections | Omit if already linked by LaTeX `\ref` / `\label`. Include only if claims directly depend on another section's derivation. |
-| `sections.<id>.avoid` | 1 to 3 phrases | Short negative filters (2–4 words) that commonly contaminate search results. |
-| `sections.<id>.constraints` | 1 to 2 rules | Brief, actionable boundaries (e.g., "Confine dataset descriptions to Table 1"). |
+| Scope | Field | Hard Limit | Rules & Negative Guidance |
+| :--- | :--- | :--- | :--- |
+| `document` | `thesis` | Max 2 sentences | State the central claim or hypothesis. Do not summarize the outline. |
+| `document` | `terminology` | 5–10 terms max | Critical project concepts, novel metrics, or ambiguous acronyms. |
+| `sections.<id>` | `purpose` | Exactly 1 sentence | Core objective and contribution. No generic filler. |
+| `sections.<id>` | `key_terms` | **3 to 5 terms** | Specific technical entities or methods. **No generic words.** |
+| `sections.<id>` | `must_preserve` | **0 to 2 items** | Exact equations, symbols, or parameters. **No prose sentences.** |
+| `sections.<id>` | `depends_on` | 0 to 2 sections | Omit if linked by LaTeX `\ref`/`\label`. Use only for mathematical derivations. |
+| `sections.<id>` | `avoid` | 1 to 3 phrases | Short negative filters (2–4 words) to drop false-positive search results. |
+| `sections.<id>` | `constraints` | 1 to 2 rules | Actionable boundaries (e.g., "Confine dataset descriptions to Table 1"). |
 
 ---
 

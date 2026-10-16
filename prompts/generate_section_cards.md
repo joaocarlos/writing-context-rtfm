@@ -11,7 +11,6 @@ Use this prompt with an AI agent or LLM working inside a `writing-context-rtfm` 
 
 ## Prompt Template
 
-```markdown
 You are a writing-context analyst. Your task is to analyze the manuscript and produce a curated, surgical `.writing-context/cards.overrides.yaml` file (schema `version: 2`) for `writing-context-rtfm`.
 
 ### Core Principle: Retrieval-Calibrated Context
@@ -38,35 +37,38 @@ version: 2
 
 document:
   title: "<Manuscript Title>"
-  thesis: "<1-2 sentence central thesis or core argument of the manuscript>"
+  thesis: "<1-2 sentence core thesis>"
   writing_style:
-    tone: "<e.g., Academic, formal, concise, third-person>"
-    avoid_words: ["<cliché 1>", "<groundbreaking>", "<game-changing>"]
+    tone: "Academic, formal, concise"
+    avoid_words: ["<cliché>", "<groundbreaking>"]
   terminology:
-    "<Canonical Technical Term>":
-      definition: "<Concise 1-sentence definition of the concept>"
-      variants: ["<alternate phrase 1>", "<acronym>"]
-      avoid: ["<deprecated or incorrect phrasing to avoid>"]
+    "<Canonical Term>":
+      definition: "<1-sentence definition>"
+      variants: ["<alternate phrase>", "<acronym>"]
+      avoid: ["<deprecated phrasing>"]
 
 sections:
-  <section_id>:                     # snake_case ID (e.g., section_methodology)
-    purpose: "<Exactly 1 sentence: objective and contribution of this section>"
+  <section_id>:
+    # Exactly 1 sentence: core objective
+    purpose: "<1 sentence objective>"
+
+    # STRICTLY 3–5 specific domain terms (no generic words)
     key_terms:
-      - "<highly specific domain term 1>"
-      - "<highly specific domain term 2>"
-      - "<highly specific domain term 3>"
-      # STRICTLY 3–5 terms. Discriminative technical terms or parameters.
-      # NEVER generic words ('machine learning', 'performance', 'data').
+      - "<domain term 1>"
+      - "<domain term 2>"
+      - "<domain term 3>"
+
+    # STRICTLY 0–2 constants/equations only (NO prose sentences)
     must_preserve:
-      - "<exact parameter, threshold, or equation, e.g., 'eta = 1e-4'>"
-      # STRICTLY 0–2 items. Numeric constants or formal equations only.
-      # NEVER prose sentences, arguments, or paragraph excerpts.
+      - "<exact parameter/equation, e.g. 'eta = 1e-4'>"
+
+    # STRICTLY 1–3 negative filter phrases
     avoid:
-      - "<noisy phrase or out-of-scope topic to exclude from retrieval>"
-      # STRICTLY 1–3 short phrases (2–4 words) to filter search results.
+      - "<noisy out-of-scope phrase>"
+
+    # STRICTLY 1–2 rhetorical rules
     constraints:
-      - "<actionable rhetorical rule, e.g., 'No benchmarks in this section'>"
-      # STRICTLY 1–2 rules maximum.
+      - "<actionable boundary rule>"
 ```
 
 ---
@@ -75,20 +77,27 @@ sections:
 
 Follow these strict bounds to prevent context bloat and query explosion:
 
-| Scope | Field | Hard Limit | Rules & Negative Guidance |
-| :--- | :--- | :--- | :--- |
-| `document` | `thesis` | Max 2 sentences | State the central claim or hypothesis. Do not summarize the outline. |
-| `document` | `terminology` | 5–10 terms max | Critical project concepts, novel metrics, or ambiguous acronyms. |
-| `sections.<id>` | `purpose` | Exactly 1 sentence | Core objective and contribution. No generic filler. |
-| `sections.<id>` | `key_terms` | **3 to 5 terms** | Specific technical entities or methods. **No generic words.** |
-| `sections.<id>` | `must_preserve` | **0 to 2 items** | Exact equations, symbols, or parameters. **No prose sentences.** |
-| `sections.<id>` | `depends_on` | 0 to 2 sections | Omit if linked by LaTeX `\ref`/`\label`. Use only for mathematical derivations. |
-| `sections.<id>` | `avoid` | 1 to 3 phrases | Short negative filters (2–4 words) to drop false-positive search results. |
-| `sections.<id>` | `constraints` | 1 to 2 rules | Actionable boundaries (e.g., "Confine dataset descriptions to Table 1"). |
+#### Document-Level Fields (`document`)
+
+| Field | Hard Limit | Rules & Negative Guidance |
+| :--- | :--- | :--- |
+| `thesis` | Max 2 sentences | Central claim or hypothesis. Do not summarize outline. |
+| `writing_style` | Tone + avoid words | Academic tone and banned cliché words. |
+| `terminology` | 5–10 terms max | Critical project concepts, novel metrics, or ambiguous acronyms. |
+
+#### Section-Level Fields (`sections.<section_id>`)
+
+| Field | Hard Limit | Rules & Negative Guidance |
+| :--- | :--- | :--- |
+| `purpose` | Exactly 1 sentence | Core objective and contribution. No generic filler. |
+| `key_terms` | **3 to 5 terms** | Specific technical entities or methods. **No generic words.** |
+| `must_preserve` | **0 to 2 items** | Exact equations, symbols, or parameters. **No prose sentences.** |
+| `depends_on` | 0 to 2 sections | Omit if linked by LaTeX `\ref`/`\label`. Use only for mathematical derivations. |
+| `avoid` | 1 to 3 phrases | Short negative filters (2–4 words) to drop false-positive search results. |
+| `constraints` | 1 to 2 rules | Actionable boundaries (e.g., "Confine dataset descriptions to Table 1"). |
 
 ---
 
 ### Execution Request
 
 Analyze the project manuscript files (or target: `[Specify file path or leave blank for auto-discovery]`) and output the calibrated `.writing-context/cards.overrides.yaml` inside a single YAML code block.
-```

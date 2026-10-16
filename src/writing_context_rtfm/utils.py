@@ -15,6 +15,9 @@ EXCLUDED_SOURCE_PATTERNS = [
     ".rtfm/",
     ".git/",
     "__pycache__/",
+    "claude.md",
+    "agents.md",
+    "gemini.md",
 ]
 EXCLUDED_SOURCE_EXTENSIONS = {
     ".sqlite",
@@ -82,10 +85,12 @@ def is_path_ignored(rel_path: str | Path, spec: Any | None, is_dir: bool = False
 
 def is_allowed_source(path: str) -> bool:
     """Return True if the path should appear as a manuscript source span."""
-    normalized = path.replace("\\", "/")
+    normalized = path.replace("\\", "/").lower()
     for pat in EXCLUDED_SOURCE_PATTERNS:
         if pat in normalized:
             return False
+    if "receipt" in normalized:
+        return False
     return Path(normalized).suffix.lower() not in EXCLUDED_SOURCE_EXTENSIONS
 
 
@@ -119,6 +124,38 @@ KEYWORD_STOPWORDS = {
     "each",
     "by",
     "our",
+    # Procedural instructions & generic task verbs
+    "expand",
+    "explain",
+    "avoid",
+    "only",
+    "other",
+    "preserve",
+    "claiming",
+    "claim",
+    "merge",
+    "concise",
+    "scope",
+    "existing",
+    "sections",
+    "subsequent",
+    "delivery",
+    "detail",
+    "describe",
+    "summarize",
+    "summary",
+    "compare",
+    "discuss",
+    "conclude",
+    "conclusion",
+    "revise",
+    "rewrite",
+    "draft",
+    "superiority",
+    "gains",
+    "transition",
+    "chapter",
+    "chapters",
 }
 
 

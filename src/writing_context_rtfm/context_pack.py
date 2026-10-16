@@ -527,9 +527,44 @@ class ContextPackGenerator:
         return "rewrite"
 
     def _resolve_target(
-        self, target: str | None, pr: str
+        self, target: str | None, pr: str, task: str | None = None
     ) -> tuple[str | None, SectionCard | None, str | None]:
-        """Resolves target string to (card_key, card, path)."""
+        """Resolves target string to (card_key, card, path), with heuristic inference from task if target is omitted."""
+        if not target and task and self.section_cards and self.section_cards.sections:
+            # 0. Attempt heuristic extraction from task description
+            match = re.search(
+                r"\b(?:chapter|cap[ií]tulo|section|se[çc][aã]o)\s*([0-9]+|[a-zA-Z0-9_\-]+)\b",
+                task,
+                re.IGNORECASE,
+            )
+            if match:
+                raw_ref = match.group(1).lower()
+                for key, card in self.section_cards.sections.items():
+                    key_lower = key.lower()
+                    title_lower = (card.title or "").lower()
+                    path_lower = (card.path or "").lower()
+                    if (
+                        f"chapter{raw_ref}" in key_lower
+                        or f"chapter_{raw_ref}" in key_lower
+                        or f"chap{raw_ref}" in key_lower
+                        or f"chap_{raw_ref}" in key_lower
+                        or f"chapter{raw_ref}" in path_lower
+                        or f"chap{raw_ref}" in path_lower
+                        or f"chapter {raw_ref}" in title_lower
+                        or f"section_{raw_ref}" in key_lower
+                        or f"sec_{raw_ref}" in key_lower
+                    ):
+                        return key, card, card.path
+
+            for key, card in self.section_cards.sections.items():
+                if card.path:
+                    card_filename = Path(card.path).name.lower()
+                    if card_filename in task.lower():
+                        return key, card, card.path
+                if card.selector and not card.selector.startswith("/"):
+                    if card.selector.lower() in task.lower():
+                        return key, card, card.path
+
         if not target:
             return None, None, None
 
@@ -1180,7 +1215,7 @@ class ContextPackGenerator:
                 model_family = "generic"
 
         # Target resolution & mode inference
-        resolved_key, target_card, target_path = self._resolve_target(target, pr)
+        resolved_key, target_card, target_path = self._resolve_target(target, pr, task=task)
         inferred_mode = self._infer_writing_mode(
             mode=mode,
             task=task,
@@ -1213,9 +1248,14 @@ class ContextPackGenerator:
                 f"No section cards loaded from '{self.config.section_cards.path}'. "
                 "Ranking used retrieval score only."
             )
-            if not target:
+        if not target:
+            if target_card and target_path:
                 warnings.append(
-                    "No --target provided. Query expansion is limited to raw task string."
+                    f"Target was inferred from task description as '{target_card.title or target_path}'."
+                )
+            else:
+                warnings.append(
+                    "No --target provided and none could be inferred from task. Query expansion is limited to raw task string."
                 )
 
         # --- Cache check ---

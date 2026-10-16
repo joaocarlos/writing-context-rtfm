@@ -2,6 +2,7 @@ import contextlib
 import os
 import re
 import sys
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -613,9 +614,72 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
     added = []
     updated = []
 
+    # Map labels and file paths to canonical section IDs to resolve structural dependencies
+    from writing_context_rtfm.latex import build_reference_graph
+    label_to_sid: dict[str, str] = {}
+    try:
+        ref_graph = build_reference_graph(str(root))
+        file_to_sids: dict[str, list[str]] = defaultdict(list)
+        for sid, node in all_nodes.items():
+            if node.source_path:
+                file_to_sids[node.source_path].append(sid)
+            if node.selector and not node.selector.startswith("/"):
+                label_to_sid[node.selector] = sid
+
+        for lbl_key, lbl_info in ref_graph.get("labels", {}).items():
+            def_file = lbl_info.get("file")
+            def_line = lbl_info.get("line", 1)
+            candidate_sids = file_to_sids.get(def_file, [])
+            if len(candidate_sids) == 1:
+                label_to_sid[lbl_key] = candidate_sids[0]
+            elif len(candidate_sids) > 1:
+                for csid in candidate_sids:
+                    cnode = all_nodes[csid]
+                    if cnode.line_start <= def_line <= cnode.line_end:
+                        label_to_sid[lbl_key] = csid
+                        break
+                if lbl_key not in label_to_sid:
+                    label_to_sid[lbl_key] = candidate_sids[0]
+    except Exception:
+        pass
+
     for sid, node in all_nodes.items():
         # Keep semantic fields from existing generated card if present
         ex_sec = existing_sections.get(sid, {}) or {}
+
+        # Resolve references to external section IDs
+        resolved_deps: set[str] = set()
+        for ref_key in node.references:
+            target_sid = label_to_sid.get(ref_key)
+            if target_sid and target_sid != sid:
+                resolved_deps.add(target_sid)
+            elif ref_key in all_nodes and ref_key != sid:
+                resolved_deps.add(ref_key)
+
+        # Normalize and preserve any accepted/verified dependencies from previous scan
+        existing_deps_records = ex_sec.get("dependencies", [])
+        final_deps: list[dict[str, Any]] = []
+        seen_targets: set[str] = set()
+
+        for d in existing_deps_records:
+            if isinstance(d, dict):
+                tgt = d.get("target")
+                status = d.get("status")
+                if tgt and tgt in label_to_sid:
+                    tgt = label_to_sid[tgt]
+                if tgt and tgt in all_nodes and tgt != sid and tgt not in seen_targets:
+                    if status in ("accepted", "verified", "override"):
+                        final_deps.append({"target": tgt, "status": status})
+                        seen_targets.add(tgt)
+            elif isinstance(d, str):
+                tgt = label_to_sid.get(d, d)
+                if tgt in all_nodes and tgt != sid and tgt not in seen_targets:
+                    seen_targets.add(tgt)
+
+        for dep in sorted(resolved_deps):
+            if dep not in seen_targets and dep in all_nodes:
+                final_deps.append({"target": dep, "status": "generated"})
+                seen_targets.add(dep)
 
         gen_cards["sections"][sid] = {
             "identity": {
@@ -638,9 +702,7 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
             "key_terms": ex_sec.get("key_terms", []),
             "facts": ex_sec.get("facts", []),
             "constraints": ex_sec.get("constraints", []),
-            "dependencies": ex_sec.get(
-                "dependencies", [{"target": dep} for dep in node.references]
-            ),
+            "dependencies": final_deps,
             "citations": node.citations,
             "references": node.references,
             "figures": node.figures,

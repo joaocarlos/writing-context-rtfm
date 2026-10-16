@@ -31,6 +31,7 @@ class SectionCard:
     verified_facts: list[dict[str, Any]] | None = None
     unverified_key_terms: list[str] | None = None
     unverified_dependencies: list[str] | None = None
+    selector: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,7 @@ def _merge_split_cards(
             or sid.replace("section_", "").replace("_", " ").title()
         )
         path = gs.get("identity", {}).get("source") or os_data.get("path")
+        selector = gs.get("identity", {}).get("selector") or os_data.get("selector")
         purpose = (
             os_data.get("purpose")
             or gs.get("purpose", {}).get("value")
@@ -274,6 +276,7 @@ def _merge_split_cards(
             verified_facts=verified_facts,
             unverified_key_terms=unverified_key_terms,
             unverified_dependencies=unverified_dependencies,
+            selector=selector,
         )
 
     return SectionCards(version=generated.get("version", 2), document=document, sections=sections)
@@ -335,6 +338,10 @@ def load_section_cards(
     for sec_id, sec_data in data.get("sections", {}).items():
         mp = list(sec_data.get("must_preserve") or [])
         vf = [{"value": val, "status": "verified", "source": sec_id} for val in mp]
+        sec_selector = (
+            sec_data.get("selector")
+            or (sec_data.get("identity", {}).get("selector") if isinstance(sec_data.get("identity"), dict) else None)
+        )
         sections[sec_id] = SectionCard(
             id=sec_id,
             title=sec_data.get("title"),
@@ -348,6 +355,7 @@ def load_section_cards(
             verified_facts=vf,
             unverified_key_terms=[],
             unverified_dependencies=[],
+            selector=sec_selector,
         )
 
     return SectionCards(version=data.get("version", 1), document=document, sections=sections)
@@ -365,12 +373,32 @@ def validate_section_cards(cards: "SectionCards") -> list[str]:
 
     section_ids = set(cards.sections)
 
+    # Build known aliases for sections: selector -> sid, path stem/name -> sid, title -> sid
+    known_aliases: dict[str, str] = {}
+    for sid, card in cards.sections.items():
+        if card.selector:
+            known_aliases[card.selector] = sid
+            known_aliases[card.selector.lstrip("/")] = sid
+        if card.path:
+            p = Path(card.path)
+            known_aliases[card.path] = sid
+            known_aliases[p.name] = sid
+            known_aliases[p.stem] = sid
+        if card.title:
+            known_aliases[card.title.lower()] = sid
+
     for sid, card in cards.sections.items():
         for dep in card.depends_on or []:
-            if dep not in section_ids:
-                warnings.append(
-                    f"Section '{sid}' depends_on unknown section '{dep}'. "
-                    "Query expansion will skip this dependency."
-                )
+            if dep in section_ids:
+                continue
+            if dep in known_aliases:
+                continue
+            # Intra-document asset labels (equations, figures, tables, code listings) are not sections
+            if dep.startswith(("eq:", "fig:", "tab:", "lst:")):
+                continue
+            warnings.append(
+                f"Section '{sid}' depends_on unknown section '{dep}'. "
+                "Query expansion will skip this dependency."
+            )
 
     return warnings

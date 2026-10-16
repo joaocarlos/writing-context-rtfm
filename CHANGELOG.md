@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.3] - 2026-10-16
+
+### Fixed
+- **Cross-Reference & Asset Dependency Resolution in Section Cards**:
+  - `cards scan` now maps reference labels (`\ref{...}`) through the document reference graph into canonical section IDs, discarding intra-section self-references.
+  - Eliminated hundreds of spurious `depends_on unknown section 'eq:...', 'fig:...', 'tab:...', 'lst:...'` warnings in `writing-context-rtfm cards validate`.
+  - Added section alias mapping in `validate_section_cards()` supporting section selectors, paths, stems, and lowercased titles.
+- **Search Hygiene & Query Noise Filtering**:
+  - Filtered out agent persona and instruction files (`CLAUDE.md`, `AGENTS.md`, `gemini.md`) as well as receipts (`receipt`) from candidate search results and source spans in `is_allowed_source()`.
+  - Expanded `KEYWORD_STOPWORDS` with procedural prompt instructions and common writing task verbs (`expand`, `explain`, `avoid`, `only`, `preserve`, `claiming`, `merge`, `concise`, `scope`, `delivery`, `superiority`, `draft`, `chapter`, etc.), preventing prompt phrasing from polluting sparse/dense search queries with irrelevant single-word lookups.
+
+### Added
+- **Heuristic Target Section Inference**:
+  - `ContextPackGenerator._resolve_target` now infers the target section or chapter automatically from the `task` prompt when `--target` is omitted or passed as `null` by an agent or client (e.g. recognizing `"Chapter 5"`, `"Capítulo 5"`, or explicit file/selector mentions).
+  - Emits an informative diagnostic warning explaining the inferred target, preserving section-anchored relevance ranking and preventing degraded, unanchored pack generation.
+
 ## [0.23.2] - 2026-09-23
 
 ### Added

@@ -202,3 +202,37 @@ class TestRelease0233Improvements(unittest.TestCase):
             res_bogus = get_term_context("NONEXISTENT_ACRONYM", ".")
             self.assertEqual(res_bogus.get("status"), "not_found")
 
+    def test_inferred_target_populates_pack_target_and_complete_status(self):
+        """Verify inferred target displays in pack.target and keeps status complete."""
+        config = AppConfig(
+            version=1,
+            rtfm=RTFMConfig(),
+            context=ContextConfig(default_token_budget=1000),
+            cache=CacheConfig(enabled=False),
+            section_cards=SectionCardsConfig(),
+        )
+        cards = SectionCards(
+            version=2,
+            document=DocumentCard(title="Thesis"),
+            sections={
+                "section_chap5": SectionCard(
+                    id="section_chap5",
+                    title="Chapter 5: Sensing",
+                    path="chapter5.tex",
+                )
+            },
+        )
+        adapter = MagicMock()
+        adapter.search.return_value = []
+        store = MagicMock(spec=ExtensionStore)
+
+        generator = ContextPackGenerator(config, cards, adapter, store)
+        pack = generator.generate(
+            task="Expand only Chapter 5 Summary with practical implications.",
+            target=None,
+            token_budget=2000,
+        )
+        self.assertIn("chapter5.tex", str(pack.target))
+        self.assertEqual(pack.status, "complete")
+
+

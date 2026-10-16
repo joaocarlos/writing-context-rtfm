@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.5] - 2026-10-16
+
+### Fixed
+- **Inferred Target Status & Display Hygiene**:
+  - `ContextPack.target` and telemetry `run_data["target"]` now receive the inferred target display string (e.g. `chapter5.tex (inferred)`) instead of preserving raw `None`.
+  - Inferred target diagnostic warning is now prefixed with `Note:` (`Note: Target was inferred from task description as '...'`), preventing the pack status from erroneously being marked as `degraded` and ensuring it reports `complete`.
+  - Rendered prompt preview in `<task>` now states `Target Section: <inferred_target>` instead of `Target Section: Unknown`.
+
 ## [0.23.4] - 2026-10-16
 
 ### Added

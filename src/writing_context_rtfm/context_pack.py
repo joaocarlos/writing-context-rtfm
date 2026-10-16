@@ -1251,7 +1251,7 @@ class ContextPackGenerator:
         if not target:
             if target_card and target_path:
                 warnings.append(
-                    f"Target was inferred from task description as '{target_card.title or target_path}'."
+                    f"Note: Target was inferred from task description as '{target_card.title or target_path}'."
                 )
             else:
                 warnings.append(
@@ -2581,10 +2581,16 @@ class ContextPackGenerator:
         tokenomics["model_family"] = model_family
         tokenomics["instruction_tokens"] = instruction_tokens
         quality.tokenomics = tokenomics
+        inferred_target_display = target
+        if not target:
+            card_title = target_card.title if target_card else None
+            inferred_label = target_path or card_title
+            if inferred_label:
+                inferred_target_display = f"{inferred_label} (inferred)"
 
         pack = ContextPack(
             task=task,
-            target=target,
+            target=inferred_target_display,
             document_thesis=doc_thesis,
             prior_claims=prior_claims,
             terminology=terminology_pack,
@@ -2615,7 +2621,7 @@ class ContextPackGenerator:
             run_data = {
                 "task_hash": task_hash,
                 "task": task,
-                "target": target,
+                "target": inferred_target_display,
                 "corpus": self.config.rtfm.corpus,
                 "token_budget": token_budget,
                 "config_hash": config_hash,

@@ -352,10 +352,11 @@ def get_tools_list() -> dict[str, Any]:
                         "target": {
                             "type": "string",
                             "description": (
-                                "section_id from .writing-context/section_cards.yaml (e.g., 'section_methodology'). "
-                                "Activates: target-file score boost, dependency-section expansion, key-term scoping, "
-                                "must_preserve/avoid constraints. Omitting this disables section-card-driven "
-                                "expansion and the pack will have status='degraded'."
+                                "Target identifier: can be a section_id (e.g. 'section_methodology'), "
+                                "a filename (e.g. 'chapter6.tex', 'methodology.tex'), or a chapter name "
+                                "(e.g. 'chapter6', 'chapter_06'). STRONGLY RECOMMENDED whenever the task "
+                                "focuses on a specific file, section, or chapter. Activates target-file score boost, "
+                                "dependency-section expansion, key-term scoping, and section constraints."
                             ),
                         },
                         "token_budget": {
@@ -363,8 +364,9 @@ def get_tools_list() -> dict[str, Any]:
                             "description": (
                                 "Soft cap on tokens spent on source_spans. The generator reserves ~10% for "
                                 "downstream generation and stops adding spans once the cap is hit. Defaults "
-                                "to the value in config.yaml (typically 6000). Recommended: 800–2000 for "
-                                "focused tasks, 3000–6000 for broad rewrites."
+                                "to config.yaml (typically 6000). Recommended guidelines: 1000–2000 for "
+                                "focused edits/proofreading, 3000–5000 for standard drafting, 6000–10000 "
+                                "for broad chapter adaptations and multi-section reviews."
                             ),
                         },
                         "must_consider": {

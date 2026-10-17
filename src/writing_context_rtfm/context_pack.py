@@ -530,40 +530,97 @@ class ContextPackGenerator:
         self, target: str | None, pr: str, task: str | None = None
     ) -> tuple[str | None, SectionCard | None, str | None]:
         """Resolves target string to (card_key, card, path), with heuristic inference from task if target is omitted."""
-        if not target and task and self.section_cards and self.section_cards.sections:
-            # 0. Attempt heuristic extraction from task description
+        if not target and task:
+            # 0a. Check for explicit file references in task (e.g. chapter6.tex, intro.md)
+            file_candidates = re.findall(
+                r"\b([a-zA-Z0-9_\-\./\\]+\.(?:tex|md|txt|org|rst))\b", task, re.IGNORECASE
+            )
+
+            # Try to match file candidates to section cards first
+            if self.section_cards and self.section_cards.sections:
+                for fc in file_candidates:
+                    fc_clean = Path(fc).name.lower()
+                    fc_stem = Path(fc).stem.lower()
+                    for key, card in self.section_cards.sections.items():
+                        if card.path:
+                            c_name = Path(card.path).name.lower()
+                            c_stem = Path(card.path).stem.lower()
+                            if fc_clean == c_name or fc_stem == c_stem:
+                                return key, card, card.path
+                            # Check numerical equivalence (e.g. chapter6 vs chapter06)
+                            m_fc = re.search(r"(\d+)", fc_stem)
+                            m_c = re.search(r"(\d+)", c_stem)
+                            if m_fc and m_c and int(m_fc.group(1)) == int(m_c.group(1)):
+                                prefix_fc = fc_stem[: m_fc.start()].rstrip("._-")
+                                prefix_c = c_stem[: m_c.start()].rstrip("._-")
+                                if prefix_fc == prefix_c or not prefix_fc or not prefix_c:
+                                    return key, card, card.path
+                        if key.lower() in (fc_clean, fc_stem):
+                            return key, card, card.path
+
+            # If not matched to a card, check if any file candidate exists in workspace or common subdirs
+            for fc in file_candidates:
+                candidate_path = Path(pr) / fc
+                if candidate_path.is_file():
+                    return None, None, fc
+                for sub in ("chapters", "sections", "src", "content"):
+                    sub_cand = Path(pr) / sub / Path(fc).name
+                    if sub_cand.is_file():
+                        with contextlib.suppress(ValueError):
+                            return None, None, str(sub_cand.relative_to(Path(pr)))
+
+            # 0b. Attempt chapter/section reference extraction with zero-padding tolerance
             match = re.search(
                 r"\b(?:chapter|cap[ií]tulo|section|se[çc][aã]o)\s*([0-9]+|[a-zA-Z0-9_\-]+)\b",
                 task,
                 re.IGNORECASE,
             )
-            if match:
+            if match and self.section_cards and self.section_cards.sections:
                 raw_ref = match.group(1).lower()
+                ref_variants = {raw_ref}
+                if raw_ref.isdigit():
+                    num = int(raw_ref)
+                    ref_variants.add(str(num))
+                    ref_variants.add(f"{num:02d}")
+                    ref_variants.add(f"{num:03d}")
+
                 for key, card in self.section_cards.sections.items():
                     key_lower = key.lower()
                     title_lower = (card.title or "").lower()
                     path_lower = (card.path or "").lower()
-                    if (
-                        f"chapter{raw_ref}" in key_lower
-                        or f"chapter_{raw_ref}" in key_lower
-                        or f"chap{raw_ref}" in key_lower
-                        or f"chap_{raw_ref}" in key_lower
-                        or f"chapter{raw_ref}" in path_lower
-                        or f"chap{raw_ref}" in path_lower
-                        or f"chapter {raw_ref}" in title_lower
-                        or f"section_{raw_ref}" in key_lower
-                        or f"sec_{raw_ref}" in key_lower
-                    ):
-                        return key, card, card.path
+                    for r in ref_variants:
+                        if (
+                            f"chapter{r}" in key_lower
+                            or f"chapter_{r}" in key_lower
+                            or f"chap{r}" in key_lower
+                            or f"chap_{r}" in key_lower
+                            or f"ch{r}" in key_lower
+                            or f"ch_{r}" in key_lower
+                            or f"chapter{r}" in path_lower
+                            or f"chap{r}" in path_lower
+                            or f"ch{r}" in path_lower
+                            or f"chapter {r}" in title_lower
+                            or f"section_{r}" in key_lower
+                            or f"sec_{r}" in key_lower
+                            or f"section {r}" in title_lower
+                        ):
+                            return key, card, card.path
 
-            for key, card in self.section_cards.sections.items():
-                if card.path:
-                    card_filename = Path(card.path).name.lower()
-                    if card_filename in task.lower():
-                        return key, card, card.path
-                if card.selector and not card.selector.startswith("/"):
-                    if card.selector.lower() in task.lower():
-                        return key, card, card.path
+            # 0c. General card path/selector substring match in task
+            if self.section_cards and self.section_cards.sections:
+                for key, card in self.section_cards.sections.items():
+                    if card.path:
+                        card_filename = Path(card.path).name.lower()
+                        card_stem = Path(card.path).stem.lower()
+                        if card_filename in task.lower() or card_stem in task.lower():
+                            return key, card, card.path
+                    if card.selector and not card.selector.startswith("/"):
+                        if card.selector.lower() in task.lower():
+                            return key, card, card.path
+
+            # 0d. If file candidate was mentioned in task, resolve it as target_path even without a card
+            if file_candidates:
+                return None, None, file_candidates[0]
 
         if not target:
             return None, None, None
@@ -597,6 +654,13 @@ class ContextPackGenerator:
                         or card.path.lower() == target_lower
                     ):
                         return key, card, card.path
+                    m_t = re.search(r"(\d+)", target_lower)
+                    m_c = re.search(r"(\d+)", card_path.stem.lower())
+                    if m_t and m_c and int(m_t.group(1)) == int(m_c.group(1)):
+                        t_prefix = target_lower[: m_t.start()].rstrip("._-")
+                        c_prefix = card_path.stem.lower()[: m_c.start()].rstrip("._-")
+                        if t_prefix == c_prefix or not t_prefix or not c_prefix:
+                            return key, card, card.path
 
         # 5. Check if target matches a virtual section node in root document files (single-file or multi-file)
         try:
@@ -1249,9 +1313,14 @@ class ContextPackGenerator:
                 "Ranking used retrieval score only."
             )
         if not target:
-            if target_card and target_path:
+            if target_card or target_path:
+                inferred_label = (
+                    target_card.title
+                    if target_card and target_card.title
+                    else target_path
+                )
                 warnings.append(
-                    f"Note: Target was inferred from task description as '{target_card.title or target_path}'."
+                    f"Note: Target was inferred from task description as '{inferred_label}'."
                 )
             else:
                 warnings.append(
@@ -2535,6 +2604,9 @@ class ContextPackGenerator:
             not w.startswith("LaTeX Safety:")
             and not w.startswith("Note:")
             and not w.startswith("Budget overflow:")
+            and not w.startswith("Card uncertainty:")
+            and not w.startswith("Card audit:")
+            and not w.startswith("Pre-flight budget")
             and "candidate span(s) were dropped" not in w
             for w in warnings
         )

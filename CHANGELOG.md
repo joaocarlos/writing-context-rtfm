@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.9] - 2026-10-17
+
+### Fixed
+- **Resilient Target Inference (`_resolve_target`)**:
+  - Automatically extracts explicit manuscript filenames (`.tex`, `.md`, `.txt`, `.org`, `.rst`) from the natural language task string.
+  - Added numerical equivalence and zero-padding tolerance between task references and section cards (e.g. matching `chapter6.tex` or `chapter 6` with `chapter_06`, `chapter06.tex`, `ch06`).
+  - Added filesystem fallback: if a referenced file exists in the workspace or standard subdirectories (`chapters/`, `sections/`, etc.), it is resolved as `target_path` even before a section card is created.
+  - When target is resolved via file path without a card, properly reports `Note: Target was inferred from task description as '...'` rather than dropping into degraded unmapped mode.
+- **Degraded Status Hygiene (`has_degrading`)**:
+  - Excluded routine manuscript auditing and advisory warnings (`Card uncertainty:`, `Card audit:`, `Pre-flight budget check:`) from setting `status = "degraded"`.
+  - Retains `status = "complete"` whenever retrieval executes successfully and returns valid spans within token budget.
+- **MCP Tool Schema Guidance**:
+  - Updated `get_writing_context_pack` schema in `server.py`: clearly documents that `target` accepts section IDs, filenames, and chapter identifiers, marking it STRONGLY RECOMMENDED.
+  - Updated `token_budget` description with practical guidelines across task types (1k–2k local, 3k–5k drafting, 6k–10k review/adaptation).
+  - Updated `AGENTS.md` and `GEMINI.md` Rules of Thumb to prioritize passing `target` and calibrating budget.
+
 ## [0.23.8] - 2026-10-16
 
 ### Fixed

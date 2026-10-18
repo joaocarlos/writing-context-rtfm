@@ -159,7 +159,13 @@ class VirtualDocumentParser:
                 return node
             if node.selector.lower().strip().endswith(t_lower):
                 return node
+            if Path(node.source_path).name.lower().strip() == t_lower:
+                return node
             if Path(node.source_path).stem.lower().strip() == t_lower:
+                return node
+            if node.source_path.lower().strip() == t_lower:
+                return node
+            if any(lbl.lower().strip() == t_lower for lbl in node.labels):
                 return node
         return None
 

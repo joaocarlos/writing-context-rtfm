@@ -171,7 +171,8 @@ class ProofreadPackGenerator:
         if latex_commands:
             warnings.append(
                 "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
-                f"and must not be modified or deleted: {', '.join(latex_commands)}"
+                "and must not be modified or deleted, unless explicitly instructed by the task to remove or refactor "
+                f"their enclosing section/content: {', '.join(latex_commands)}"
             )
 
         # 4. Generate constraints

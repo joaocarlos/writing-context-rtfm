@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.23.10] - 2026-10-18
+
+### Added
+- **Local Semantic Intent Classifier (`intent_classifier.py`)**:
+  - Implemented `LocalIntentClassifier` using local sentence embeddings (`sentence-transformers/all-MiniLM-L6-v2`) to infer task intent (`compress`, `adapt`, `rewrite`, `delete`, `write`) via cosine similarity against multilingual semantic prototypes.
+  - Replaced brittle substring matching with a 4-level hybrid cascade (explicit parameter -> deterministic removal/preservation guardrails -> local semantic embeddings -> structural fallback).
+  - Applied asymmetric confidence thresholding to protect against false compression: `compress` requires high semantic confidence (`score >= 0.65`, `margin >= 0.08`), whereas structural editing/deletion prioritizes conservative `rewrite` without pruning.
+
+### Fixed
+- **LaTeX Safety Warning Permissive Qualification**:
+  - Qualified `LaTeX Safety:` warning in both `context_pack.py` and `proofread.py` with: `"unless explicitly instructed by the task to remove or refactor their enclosing section/content"`, preventing false prohibitions on intentional user deletions/removals.
+- **Substring False Positives in Mode Inference & Target Resolution**:
+  - Fixed bug where Portuguese verb `"executar"` (containing substring `"cut"`) falsely forced `mode="compress"`, deactivated retrieval providers, and injected an unintended 15% text pruning constraint.
+  - Fixed bug where `"adaptive"` triggered `adapt` mode.
+  - Fixed `card_stem` in `_resolve_target` to use word boundaries (`\b`), preventing unintended matches with substrings of common words.
+- **Document Node Resolution in `virtual_doc.py`**:
+  - Extended `find_section_node` to match exact filenames (`chapter6.tex`), relative file paths, and internal LaTeX section labels (`\label{...}`), enabling precise node lookup for chapter files.
+
 ## [0.23.9] - 2026-10-17
 
 ### Fixed

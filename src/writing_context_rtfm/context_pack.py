@@ -22,6 +22,7 @@ from writing_context_rtfm.hashing import (
     compute_task_hash,
     stable_hash,
 )
+from writing_context_rtfm.intent_classifier import classify_task_intent
 from writing_context_rtfm.local_models import SpanReranker
 from writing_context_rtfm.providers.base import BaseContextProvider
 from writing_context_rtfm.providers.bibtex import BibTeXProvider
@@ -71,6 +72,24 @@ BibliographyHandoff = Callable[
     [Sequence[SourceSpan], Sequence[SourceSpan]],
     Sequence[SourceSpan],
 ]
+
+# Task intent patterns for robust writing mode inference
+_REMOVAL_INTENT_PATTERN = re.compile(
+    r"\b(?:remover|remov[aeiou][a-z]*|deletar|delet[aeiou][a-z]*|excluir|exclus[a-z]*|eliminar|elimin[a-z]*|apagar|remove|delete|drop)\b",
+    re.IGNORECASE,
+)
+_NO_REWRITE_PATTERN = re.compile(
+    r"\b(?:sem\s+reescrever|n[aã]o\s+reescrever|sem\s+alterar|without\s+rewriting|do\s+not\s+rewrite|preservar\s+trechos|manter\s+texto)\b",
+    re.IGNORECASE,
+)
+_COMPRESS_INTENT_PATTERN = re.compile(
+    r"\b(?:comprimir|compress|compress[aã]o|compression|reduzir|redu[çc][aã]o|enxugar|shorten|page\s+limit|caber\s+no|caber\s+em|trim\s+down|cut\s+down|cut\s+length|cut\s+words)\b",
+    re.IGNORECASE,
+)
+_ADAPT_INTENT_PATTERN = re.compile(
+    r"\b(?:adaptar|adapta[çc][aã]o|adaptation|\badapt\b|tese\s+para\s+artigo|artigo\s+para\s+tese|paper\s+to\s+chapter|chapter\s+to\s+paper|disserta[çc][aã]o)\b",
+    re.IGNORECASE,
+)
 
 
 def _path_matches(path: str, card_path: str | None) -> bool:
@@ -482,33 +501,52 @@ class ContextPackGenerator:
             if clean in ("write", "rewrite", "adapt", "compress"):
                 return clean
 
-        task_lower = task.lower()
-        if any(
-            k in task_lower
-            for k in (
-                "comprimir",
-                "compress",
-                "reduzir",
-                "enxugar",
-                "shorten",
-                "cut",
-                "page limit",
-                "caber",
-            )
-        ):
+        # Priority 1: Check for explicit removal/deletion or no-rewrite intent.
+        # Tasks that remove sections or prohibit rewriting are editing tasks (rewrite), never compression/adaptation.
+        if _REMOVAL_INTENT_PATTERN.search(task) or _NO_REWRITE_PATTERN.search(task):
+            if target_path:
+                full = Path(pr) / target_path
+                if not full.exists():
+                    return "write"
+                try:
+                    content = full.read_text(encoding="utf-8", errors="replace").strip()
+                    if not content:
+                        return "write"
+                except Exception:
+                    return "write"
+            elif target_card and not target_card.path:
+                return "write"
+            return "rewrite"
+
+        # Priority 3: Local Semantic Embeddings Intent Classification
+        semantic_intent = classify_task_intent(task)
+        if semantic_intent and semantic_intent.is_confident:
+            if semantic_intent.intent == "delete":
+                if target_path:
+                    full = Path(pr) / target_path
+                    if not full.exists():
+                        return "write"
+                    try:
+                        content = full.read_text(encoding="utf-8", errors="replace").strip()
+                        if not content:
+                            return "write"
+                    except Exception:
+                        return "write"
+                elif target_card and not target_card.path:
+                    return "write"
+                return "rewrite"
+            if semantic_intent.intent == "compress":
+                return "compress"
+            if semantic_intent.intent == "adapt":
+                return "adapt"
+            if semantic_intent.intent == "write":
+                if not target_path or not (Path(pr) / target_path).exists():
+                    return "write"
+
+        # Priority 4: Bounded regex fallback (when semantic confidence is low or model offline)
+        if _COMPRESS_INTENT_PATTERN.search(task):
             return "compress"
-        if any(
-            k in task_lower
-            for k in (
-                "adaptar",
-                "adapt",
-                "tese para artigo",
-                "artigo para tese",
-                "paper to chapter",
-                "chapter to paper",
-                "dissertação",
-            )
-        ):
+        if _ADAPT_INTENT_PATTERN.search(task):
             return "adapt"
 
         if target_path:
@@ -612,10 +650,14 @@ class ContextPackGenerator:
                     if card.path:
                         card_filename = Path(card.path).name.lower()
                         card_stem = Path(card.path).stem.lower()
-                        if card_filename in task.lower() or card_stem in task.lower():
+                        if card_filename in task.lower():
+                            return key, card, card.path
+                        if len(card_stem) >= 3 and re.search(
+                            rf"\b{re.escape(card_stem)}\b", task, re.IGNORECASE
+                        ):
                             return key, card, card.path
                     if card.selector and not card.selector.startswith("/"):
-                        if card.selector.lower() in task.lower():
+                        if re.search(rf"\b{re.escape(card.selector.lower())}\b", task, re.IGNORECASE):
                             return key, card, card.path
 
             # 0d. If file candidate was mentioned in task, resolve it as target_path even without a card
@@ -2483,7 +2525,8 @@ class ContextPackGenerator:
         if unique_latex:
             warnings.append(
                 "LaTeX Safety: The following LaTeX commands or math environments were detected in the target text "
-                f"and must not be modified or deleted: {', '.join(unique_latex)}"
+                "and must not be modified or deleted, unless explicitly instructed by the task to remove or refactor "
+                f"their enclosing section/content: {', '.join(unique_latex)}"
             )
 
         # --- Build pack metadata & prior claims ---

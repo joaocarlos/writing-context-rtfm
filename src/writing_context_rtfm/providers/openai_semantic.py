@@ -1,6 +1,5 @@
 import logging
 import os
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +7,7 @@ import httpx
 
 from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.providers.base import BaseContextProvider
+from writing_context_rtfm.retrieval import RetrievalEngine
 from writing_context_rtfm.schemas import SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 
@@ -38,8 +38,9 @@ def get_openai_embeddings(texts: list[str], model: str, api_key: str) -> list[li
 
 
 class OpenAISemanticSearchProvider(BaseContextProvider):
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, engine: RetrievalEngine | None = None):
         self.config = config
+        self._engine = engine
 
     @property
     def provider_id(self) -> str:
@@ -201,50 +202,56 @@ class OpenAISemanticSearchProvider(BaseContextProvider):
         # Get top K indices
         top_k_indices = np.argsort(max_sims)[-limit:][::-1]
 
-        spans = []
-        conn = None
+        candidate_indices = [
+            int(idx) for idx in top_k_indices if float(max_sims[idx]) >= 0.2
+        ]
+        if not candidate_indices:
+            return []
+
+        selected_chunk_ids = [str(chunk_ids[idx]) for idx in candidate_indices]
+        chunk_rows: dict[str, dict[str, Any]] = {}
         try:
-            conn = sqlite3.connect(rtfm_db_path, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            if self._engine is not None:
+                engine_chunks = self._engine.get_chunks_by_ids(selected_chunk_ids)
+                for cid, res in engine_chunks.items():
+                    chunk_rows[cid] = {
+                        "content": res.snippet,
+                        "file_path": res.path,
+                        "line_start": res.line_start,
+                        "line_end": res.line_end,
+                    }
+            else:
+                from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 
-            for idx in top_k_indices:
-                score = float(max_sims[idx])
-                if score < 0.2:  # Threshold to avoid returning garbage
-                    continue
-
-                chunk_id = chunk_ids[idx]
-                query_used = queries[best_query_indices[idx]]
-
-                cursor.execute(
-                    """
-                    SELECT c.content, b.filename as file_path, c.line_start, c.line_end
-                    FROM chunks c
-                    JOIN books b ON c.book_id = b.id
-                    WHERE c.chunk_id = ?
-                """,
-                    (chunk_id,),
-                )
-
-                row = cursor.fetchone()
-                if row:
-                    spans.append(
-                        SourceSpan(
-                            path=row["file_path"],
-                            line_start=row["line_start"],
-                            line_end=row["line_end"],
-                            reason="OpenAI semantic match for query",
-                            score=score,
-                            priority="supporting",
-                            source_role="local_context",
-                            query=query_used,
-                            metadata={"snippet": row["content"]},
-                        )
+                chunk_rows = {
+                    row["chunk_id"]: row
+                    for row in RTFMAdapter.list_indexed_chunks_from_db(
+                        rtfm_db_path, chunk_ids=selected_chunk_ids
                     )
+                }
         except Exception as e:
             logger.error(f"Failed to fetch chunk details from RTFM DB: {e}")
-        finally:
-            if conn is not None:
-                conn.close()
+            return []
+
+        spans = []
+        for idx in candidate_indices:
+            score = float(max_sims[idx])
+            chunk_id = str(chunk_ids[idx])
+            query_used = queries[best_query_indices[idx]]
+            row = chunk_rows.get(chunk_id)
+            if row:
+                spans.append(
+                    SourceSpan(
+                        path=str(row["file_path"]),
+                        line_start=row["line_start"],
+                        line_end=row["line_end"],
+                        reason="OpenAI semantic match for query",
+                        score=score,
+                        priority="supporting",
+                        source_role="local_context",
+                        query=query_used,
+                        metadata={"snippet": str(row["content"])},
+                    )
+                )
 
         return spans

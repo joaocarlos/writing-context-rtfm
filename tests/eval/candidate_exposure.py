@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from writing_context_rtfm.benchmark import (
+from tests.eval.benchmark import (
     BenchmarkError,
     ProductionRetrievalBackend,
     _atomic_json,

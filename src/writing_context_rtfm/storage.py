@@ -291,7 +291,7 @@ class ExtensionStore:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT p.payload_json
+                SELECT p.run_id, p.payload_json
                 FROM context_pack_payloads p
                 JOIN context_pack_runs r ON p.run_id = r.run_id
                 WHERE r.task_hash = ?
@@ -313,6 +313,16 @@ class ExtensionStore:
             row = cursor.fetchone()
             if row:
                 data: dict[str, Any] = json.loads(self._decompress(row["payload_json"]))
+                initial_selected = len(data.get("source_spans") or [])
+                cursor.execute(
+                    """
+                    UPDATE context_pack_sources
+                    SET selected = CASE WHEN rank < ? THEN 1 ELSE 0 END
+                    WHERE run_id = ?
+                    """,
+                    (initial_selected, row["run_id"]),
+                )
+                conn.commit()
                 return data
         return None
 
@@ -999,33 +1009,20 @@ class ExtensionStore:
         self, rtfm_db_path: str, model: str = "text-embedding-3-small"
     ) -> list[dict[str, Any]]:
         """Returns chunks from RTFM DB that do not have an OpenAI embedding for the configured model in cache."""
-        missing = []
-        rtfm_conn: sqlite3.Connection | None = None
+        from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+
+        missing: list[dict[str, Any]] = []
         try:
-            rtfm_conn = sqlite3.connect(rtfm_db_path, check_same_thread=False)
-            rtfm_conn.row_factory = sqlite3.Row
-
-            # Attach context_cache.sqlite to RTFM connection
-            escaped_cache_path = self.db_path.replace("'", "''")
-            rtfm_conn.execute(f"ATTACH DATABASE '{escaped_cache_path}' AS cache_db")
-
-            cursor = rtfm_conn.cursor()
-            # Select chunks from RTFM that are NOT in cache_db.openai_embeddings for the specific model
-            cursor.execute(
-                """
-                SELECT c.chunk_id, c.content, b.filename as file_path, c.line_start, c.line_end
-                FROM chunks c
-                JOIN books b ON c.book_id = b.id
-                LEFT JOIN cache_db.openai_embeddings e ON c.chunk_id = e.chunk_id AND e.model = ?
-                WHERE e.chunk_id IS NULL
-            """,
-                (model,),
-            )
-
-            for row in cursor.fetchall():
+            cached_ids = {
+                str(row["chunk_id"]) for row in self.get_all_openai_embeddings(model)
+            }
+            for row in RTFMAdapter.list_indexed_chunks_from_db(rtfm_db_path):
+                chunk_id = str(row["chunk_id"])
+                if chunk_id in cached_ids:
+                    continue
                 missing.append(
                     {
-                        "chunk_id": row["chunk_id"],
+                        "chunk_id": chunk_id,
                         "content": row["content"],
                         "file_path": row["file_path"],
                         "line_start": row["line_start"],
@@ -1034,12 +1031,6 @@ class ExtensionStore:
                 )
         except Exception as e:
             logger.error("Failed to fetch missing OpenAI chunks: %s", e)
-        finally:
-            if rtfm_conn is not None:
-                with contextlib.suppress(Exception):
-                    rtfm_conn.execute("DETACH DATABASE cache_db")
-                with contextlib.suppress(Exception):
-                    rtfm_conn.close()
 
         return missing
 
@@ -1095,20 +1086,13 @@ class ExtensionStore:
         model_key: str,
     ) -> list[dict[str, Any]]:
         """Return new or content-changed RTFM chunks for one local model identity."""
+        from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+
         cached = {
             row["chunk_id"]: row["content_hash"] for row in self.get_local_embeddings(model_key)
         }
         missing: list[dict[str, Any]] = []
-        with sqlite3.connect(rtfm_db_path, check_same_thread=False) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT c.chunk_id, c.content, b.filename AS file_path,
-                       c.line_start, c.line_end
-                FROM chunks c
-                JOIN books b ON c.book_id = b.id
-                """
-            ).fetchall()
+        rows = RTFMAdapter.list_indexed_chunks_from_db(rtfm_db_path)
         for row in rows:
             content = str(row["content"])
             content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()

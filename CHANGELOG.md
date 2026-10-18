@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.30.0] - 2026-10-18
+
+### Added
+- **RetrievalEngine Boundary Extensions (`retrieval.py`, `rtfm_adapter.py`)**:
+  - Extended `RetrievalEngineHealth` with `has_fts: bool` and added `get_chunks_by_ids(chunk_ids)` to the `RetrievalEngine` protocol plus `RTFMAdapter.list_indexed_chunks_from_db(...)`.
+  - Added `profile` parameter (`"auto"`, `"fast"`, `"quality"`) to the `get_writing_context_pack` MCP tool schema (`server.py`) and updated `docs/mcp_tools_reference.md`.
+
+### Changed
+- **Architectural Boundary Enforcement (`doctor.py`, `storage.py`, `providers/`)**:
+  - Eliminated direct `sqlite3.connect` and `ATTACH DATABASE` accesses to `.rtfm/library.db` outside `rtfm_adapter.py`, routing index diagnostics and embedding chunk syncs through `RTFMAdapter` and `RetrievalEngine`.
+- **Realistic Counterfactual Token Baseline (`context_pack.py`, `token_budget.py`, `proofread.py`)**:
+  - Removed hardcoded `8,000` / `25,000` token floor clamping in `compute_realistic_baseline_tokens` and `compute_counterfactual_savings`. Realistic baselines now reflect actual tokens of the target file plus 1-hop `depends_on` files without artificial inflation.
+- **Distribution Packaging Cleanup**:
+  - Moved private benchmark and evaluation modules (`benchmark.py`, `candidate_exposure.py`, `rtfm_sync_explicit.py`) from `src/writing_context_rtfm/` to `tests/eval/`, keeping the published wheel strictly focused on runtime library and MCP server code.
+
+### Fixed
+- **Provider Registration & Fingerprint Invalidations (`providers/__init__.py`, `context_pack.py`)**:
+  - Registered `LocalSemanticSearchProvider` in `get_active_providers()` so CLI and MCP runs instantiate local semantic search when enabled.
+  - Included `must_consider`, `profile`, `strict_budget`, and `role_budgets` in `compute_task_hash` calls in `ContextPackGenerator.generate`, preventing stale cache hits across distinct request constraints.
+- **Intent Classification & Execution Profile (`intent_classifier.py`, `context_pack.py`)**:
+  - Added word-boundary token checks before short-token substring fallback in `_lexical_prototype_scores`, preventing false matches such as `"add"` inside `"address"` or `"cut"` inside `"executar"`.
+  - `_infer_writing_mode` now respects `profile="fast"` by skipping `classify_task_intent(task)` model loading and using deterministic regex heuristics.
+- **Tiered Budget Eviction & Structural Snapping (`context_pack.py`, `token_budget.py`, `section_cards.py`)**:
+  - Updated `_select_spans_within_budget` so essential spans (`target_text`, `dependency`) evict lower-priority spans (`reference`, `local_context`) before falling back to partial truncation.
+  - Preserved diagnostic stage tags during structural LaTeX AST snapping and recorded `snap_ast` events in the candidate trace tracker.
+  - Resolved `preflight_budget_check` section keys across file stems and paths (`section_cards.py` / `token_budget.py`).
+  - Excluded non-degrading advisory prefixes (`Note:`, `Card uncertainty:`, `Card audit:`, `Pre-flight budget check:`) from `warnings_triggered` in `features.py`.
+- **Proofreading Cache Key & Dynamic Extension Version (`proofread.py`, `storage.py`)**:
+  - Scoped proofreading cache keys with `project_root`, file `mtime_ns`/`size`, and `section_cards` hash, and replaced hardcoded `"0.1.0"` fallback version in `storage.py` with `writing_context_rtfm.__version__`.
+
 ## [0.23.10] - 2026-10-18
 
 ### Added

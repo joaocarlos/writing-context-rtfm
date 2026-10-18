@@ -6,13 +6,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from writing_context_rtfm.benchmark import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.eval.benchmark import (
     BenchmarkError,
     CaseManifest,
     build_model_client,

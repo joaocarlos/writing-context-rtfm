@@ -9,12 +9,15 @@ import json
 import platform
 import resource
 import statistics
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from writing_context_rtfm.benchmark import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.eval.benchmark import (
     PROMPT_VERSION,
     ArtifactStore,
     ProductionRetrievalBackend,
@@ -28,6 +31,7 @@ from writing_context_rtfm.benchmark import (
     retrieval_metrics,
     sha256_text,
 )
+
 from writing_context_rtfm.config import AppConfig, load_config
 from writing_context_rtfm.context_pack import ContextPackGenerator
 from writing_context_rtfm.local_models import LocalCrossEncoderReranker, LocalSentenceEncoder

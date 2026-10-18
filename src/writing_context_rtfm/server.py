@@ -12,7 +12,10 @@ from typing import Any
 
 from writing_context_rtfm import __version__
 from writing_context_rtfm.config import AppConfig, load_config
-from writing_context_rtfm.context_pack import ContextPackGenerator
+from writing_context_rtfm.context_pack import (
+    ContextPackGenerator,
+    is_degrading_pack_warning,
+)
 from writing_context_rtfm.features import (
     audit_manuscript_terminology,
     get_term_context,
@@ -25,6 +28,7 @@ from writing_context_rtfm.retrieval import RetrievalEngine
 from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.section_cards import (
     SectionCards,
+    get_section_cards_files,
     load_section_cards,
     merge_cards,
     validate_section_cards,
@@ -723,15 +727,27 @@ def _load_runtime() -> tuple[
             except Exception:
                 pass
 
-    sc_mtime = None
-    sc_size = None
-    if sc_path.exists():
-        try:
-            stat = sc_path.stat()
-            sc_mtime = stat.st_mtime
-            sc_size = stat.st_size
-        except OSError:
-            pass
+    def _compute_sc_sig(p: Path) -> tuple[float | None, int | None, tuple[tuple[str, float, int], ...]]:
+        m_val = None
+        s_val = None
+        if p.exists():
+            try:
+                st = p.stat()
+                m_val = st.st_mtime
+                s_val = st.st_size
+            except OSError:
+                pass
+        sig_items: list[tuple[str, float, int]] = []
+        for cand in get_section_cards_files(p):
+            if cand.exists():
+                try:
+                    cst = cand.stat()
+                    sig_items.append((cand.name, cst.st_mtime, cst.st_size))
+                except OSError:
+                    pass
+        return m_val, s_val, tuple(sig_items)
+
+    sc_mtime, sc_size, sc_signature = _compute_sc_sig(sc_path)
 
     if (
         _RUNTIME_CACHE is not None
@@ -739,6 +755,7 @@ def _load_runtime() -> tuple[
         and _RUNTIME_CACHE["config_size"] == config_size
         and _RUNTIME_CACHE["sc_mtime"] == sc_mtime
         and _RUNTIME_CACHE["sc_size"] == sc_size
+        and _RUNTIME_CACHE.get("sc_signature") == sc_signature
     ):
         return (
             _RUNTIME_CACHE["config"],
@@ -767,20 +784,16 @@ def _load_runtime() -> tuple[
             logger.warning(f"Auto-sync failed before pack generation: {e}")
             card_warnings.append(f"Auto-sync failed: {e}")
 
-    try:
+    with contextlib.suppress(OSError):
         final_sc_path = Path(config.section_cards.path)
-        if final_sc_path.exists():
-            stat = final_sc_path.stat()
-            sc_mtime = stat.st_mtime
-            sc_size = stat.st_size
-    except OSError:
-        pass
+        sc_mtime, sc_size, sc_signature = _compute_sc_sig(final_sc_path)
 
     _RUNTIME_CACHE = {
         "config_mtime": config_mtime,
         "config_size": config_size,
         "sc_mtime": sc_mtime,
         "sc_size": sc_size,
+        "sc_signature": sc_signature,
         "config": config,
         "cards": cards,
         "card_warnings": card_warnings,
@@ -793,11 +806,7 @@ def _load_runtime() -> tuple[
 
 def _is_degrading_pack_warning(warning: str) -> bool:
     """Keep informational budget/safety notices from changing pack status."""
-    return (
-        not warning.startswith("LaTeX Safety:")
-        and not warning.startswith("Note:")
-        and "candidate span(s) were dropped" not in warning
-    )
+    return is_degrading_pack_warning(warning)
 
 
 def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
@@ -1721,14 +1730,20 @@ def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
             if "key_terms" in sec_over and sec_over["key_terms"]:
                 if value in sec_over["key_terms"]:
                     sec_over["key_terms"].remove(value)
+                if not sec_over["key_terms"]:
+                    del sec_over["key_terms"]
         elif field == "facts":
             if "must_preserve" in sec_over and sec_over["must_preserve"]:
                 if value in sec_over["must_preserve"]:
                     sec_over["must_preserve"].remove(value)
+                if not sec_over["must_preserve"]:
+                    del sec_over["must_preserve"]
         elif field == "constraints":
             if "constraints" in sec_over and sec_over["constraints"]:
                 if value in sec_over["constraints"]:
                     sec_over["constraints"].remove(value)
+                if not sec_over["constraints"]:
+                    del sec_over["constraints"]
 
         # Update lock decisions
         lock_data: dict[str, Any] = {"sections": {}}

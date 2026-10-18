@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +13,8 @@ from writing_context_rtfm.config import AppConfig
 from writing_context_rtfm.hashing import stable_hash
 from writing_context_rtfm.local_models import LocalSentenceEncoder, local_encoder_key
 from writing_context_rtfm.providers.base import BaseContextProvider
+from writing_context_rtfm.retrieval import RetrievalEngine
+from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 from writing_context_rtfm.schemas import SourceSpan
 from writing_context_rtfm.storage import ExtensionStore
 from writing_context_rtfm.utils import resolve_rtfm_db_path
@@ -31,9 +32,11 @@ class LocalSemanticSearchProvider(BaseContextProvider):
         config: AppConfig,
         *,
         encoder: LocalSentenceEncoder | None = None,
+        engine: RetrievalEngine | None = None,
     ):
         self.config = config
         self._encoder = encoder
+        self._engine = engine
 
     @property
     def provider_id(self) -> str:
@@ -163,43 +166,55 @@ class LocalSemanticSearchProvider(BaseContextProvider):
         ranked_indices = np.argsort(best_scores)[::-1]
         minimum = float(extra.get("min_score", 0.5))
 
+        candidate_indices = [
+            int(idx) for idx in ranked_indices if float(best_scores[idx]) >= minimum
+        ]
+        if not candidate_indices:
+            return []
+        candidate_cids = [chunk_ids[idx] for idx in candidate_indices]
+        chunk_map: dict[str, dict[str, Any]]
+        if self._engine is not None:
+            by_id_res = self._engine.get_chunks_by_ids(candidate_cids)
+            chunk_map = {
+                cid: {
+                    "file_path": res.path,
+                    "line_start": res.line_start,
+                    "line_end": res.line_end,
+                    "content": res.snippet,
+                }
+                for cid, res in by_id_res.items()
+            }
+        else:
+            rows = RTFMAdapter.list_indexed_chunks_from_db(
+                rtfm_db_path, chunk_ids=candidate_cids
+            )
+            chunk_map = {str(r["chunk_id"]): r for r in rows}
+
         spans: list[SourceSpan] = []
-        with sqlite3.connect(rtfm_db_path, check_same_thread=False) as conn:
-            conn.row_factory = sqlite3.Row
-            for index in ranked_indices:
-                if len(spans) >= limit:
-                    break
-                score = float(best_scores[index])
-                if score < minimum:
-                    continue
-                row = conn.execute(
-                    """
-                    SELECT c.content, b.filename AS file_path, c.line_start, c.line_end
-                    FROM chunks c
-                    JOIN books b ON c.book_id = b.id
-                    WHERE c.chunk_id = ?
-                    """,
-                    (chunk_ids[index],),
-                ).fetchone()
-                if row is None:
-                    continue
-                spans.append(
-                    SourceSpan(
-                        path=str(row["file_path"]),
-                        line_start=row["line_start"],
-                        line_end=row["line_end"],
-                        reason=f"Local semantic match via {self.model_id}",
-                        score=round(score, 6),
-                        retrieval_score=round(score, 6),
-                        priority="supporting",
-                        source_role="local_context",
-                        query=queries[int(best_queries[index])],
-                        metadata={
-                            "snippet": str(row["content"]),
-                            "provider_id": self.provider_id,
-                            "embedding_model": self.model_id,
-                            "embedding_model_key": self.model_key,
-                        },
-                    )
+        for index in candidate_indices:
+            if len(spans) >= limit:
+                break
+            score = float(best_scores[index])
+            row = chunk_map.get(chunk_ids[index])
+            if row is None:
+                continue
+            spans.append(
+                SourceSpan(
+                    path=str(row["file_path"]),
+                    line_start=int(row["line_start"]) if row["line_start"] is not None else None,
+                    line_end=int(row["line_end"]) if row["line_end"] is not None else None,
+                    reason=f"Local semantic match via {self.model_id}",
+                    score=round(score, 6),
+                    retrieval_score=round(score, 6),
+                    priority="supporting",
+                    source_role="local_context",
+                    query=queries[int(best_queries[index])],
+                    metadata={
+                        "snippet": str(row["content"]),
+                        "provider_id": self.provider_id,
+                        "embedding_model": self.model_id,
+                        "embedding_model_key": self.model_key,
+                    },
                 )
+            )
         return spans

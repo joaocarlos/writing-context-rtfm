@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import Counter
 from pathlib import Path
 
-from writing_context_rtfm.benchmark import ArtifactStore, audit_case_annotations, load_cases
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.eval.benchmark import ArtifactStore, audit_case_annotations, load_cases
 
 
 def main() -> int:

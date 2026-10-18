@@ -1,3 +1,3 @@
 """writing-context-rtfm package."""
 
-__version__ = "0.23.10"
+__version__ = "0.30.0"

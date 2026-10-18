@@ -1,18 +1,18 @@
 # Model Context Protocol (MCP) Tools & Prompts Reference
 
-`writing-context-rtfm` exposes an 18-tool MCP interface designed to provide AI coding and writing agents (Claude Desktop, Cursor, Claude Code, Roo Code, Antigravity) with surgical context, section constraints, candidate lifecycle diagnostics, terminology auditing, and reference graph intelligence.
+`writing-context-rtfm` exposes a **5-tool primary MCP interface** via `tools/list` (`get_writing_context_pack`, `get_proofreading_context_pack`, `request_more_context`, `submit_generation_feedback`, and `manage_section_cards`) to keep agent tool-definition token overhead minimal, while maintaining **backward-compatible `tools/call` aliases** for granular section-card, terminology, graph, and index operations.
 
 ---
 
-## Tool Summary Matrix
+## Primary Tool Summary Matrix (`tools/list`)
 
 | Tool Name | Primary Purpose | Category |
 | :--- | :--- | :--- |
-| [`get_writing_context_pack`](#1-get_writing_context_pack) | Retrieve surgical context pack for drafting/rewriting sections (supports write, rewrite, adapt, compress, and include_diagnostics). | Core Writing |
+| [`get_writing_context_pack`](#1-get_writing_context_pack) | Retrieve surgical context pack for drafting/rewriting sections (supports `write`, `rewrite`, `adapt`, `compress`, `profile`, and `include_diagnostics`). | Core Writing |
 | [`get_proofreading_context_pack`](#2-get_proofreading_context_pack) | Retrieve context and immutability rules for proofreading/polishing text. | Proofreading |
 | [`request_more_context`](#3-request_more_context) | Paginate and fetch additional background spans for a previous run. | Pagination |
 | [`submit_generation_feedback`](#4-submit_generation_feedback) | Submit evaluation feedback on retrieved context to optimize cache. | Evaluation |
-| [`manage_section_cards`](#5-manage_section_cards) | Unified management for cards, candidates, diffs, history, and structural manuscript inspection (init, review, accept, reject, edit, explain, diff, history, inspect, graph, term, audit). | Card & Structure Management |
+| [`manage_section_cards`](#5-manage_section_cards) | Unified management for cards, candidates, diffs, history, and structural manuscript inspection (`init`, `review`, `accept`, `reject`, `edit`, `explain`, `diff`, `history`, `inspect`, `graph`, `term`, `audit`). | Card & Structure Management |
 
 
 ---
@@ -26,6 +26,9 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
 * **`task`** (*string*, required): Description of the writing or revision task.
 * **`target`** (*string*, optional): Section identifier (e.g. `section_methodology`, `subsec:hardware_eval`) or file path.
 * **`token_budget`** (*integer*, optional): Maximum token budget. Defaults to the configured context budget, typically `6000`. If non-negotiable target prose exceeds a soft budget, the engine auto-scales to preserve atomicity.
+* **`mode`** (*string*, optional, default `"auto"`): Functional writing mode (`"auto"`, `"write"`, `"rewrite"`, `"adapt"`, `"compress"`).
+* **`profile`** (*string*, optional, default `"auto"`): Execution profile (`"auto"`, `"fast"`, `"quality"`).
+* **`include_diagnostics`** (*boolean*, optional, default `false`): When true, attaches candidate lifecycle traces, funnel counts, and ownership audit records under `diagnostics`.
 * **`must_consider`** (*array of strings*, optional): Required evidence atoms. Add each concrete concept, fact, protected literal, or citation key that the returned context must support. The pack reports coverage in `quality.atomic_coverage`.
 * **`task_type`** (*string*, optional): One of `"write_new_section"`, `"revise_existing_section"`, `"proofread"`, `"expand"`, `"condense"`, `"align_with_previous_sections"`, or `"review"`.
 * **`pack_mode`** (*string*, optional, default `"standard"`): Depth mode (`"minimal"`, `"standard"`, `"deep"`).
@@ -34,8 +37,8 @@ Retrieves a compact, prioritized writing context pack containing unbroken target
 
 ---
 
-### 2. `explain_context_pack`
-Generates a writing context pack identical to `get_writing_context_pack`, but attaches a complete candidate trace lifecycle and funnel breakdown under `diagnostics`.
+### `explain_context_pack` (Legacy `tools/call` Alias for `get_writing_context_pack(..., include_diagnostics=True)`)
+Generates a writing context pack identical to `get_writing_context_pack` with `include_diagnostics=True`, attaching a complete candidate trace lifecycle and funnel breakdown under `diagnostics`.
 
 > **Note on Diagnostics**: Diagnostics expose internal pipeline filtering and composition decisions for debugging and transparency. They do not constitute a semantic quality score or guarantee that omitted evidence is irrelevant.
 
@@ -133,7 +136,22 @@ Logs downstream agent evaluation metrics (e.g. helpfulness, constraint satisfact
 
 ---
 
-## 2. Terminology & Glossary Tools
+### 5. `manage_section_cards`
+Unified tool for section card management, candidate review, terminology lookup, and structural manuscript inspection.
+
+#### Parameters
+* **`action`** (*string*, required): One of `"init"`, `"review"`, `"accept"`, `"reject"`, `"edit"`, `"explain"`, `"diff"`, `"history"`, `"inspect"`, `"graph"`, `"term"`, or `"audit"`.
+* **`section_id`** (*string*, optional): Target section ID (for `review`, `accept`, `reject`, `edit`, `explain`, `diff`, `history`, `inspect`; aliases `target` as well).
+* **`field`** (*string*, optional): Card field name (for `accept`, `reject`, `edit`, `explain`).
+* **`value`** (*any*, optional): Candidate or edited value (for `accept`, `reject`, `edit`, `explain`).
+* **`term`** (*string*, optional): Technical term or acronym (for `action="term"`).
+* **`delete`** (*boolean*, optional, default `false`): Delete override field when `action="edit"`.
+* **`limit`** (*integer*, optional, default `50`): History limit when `action="history"`.
+* **`project_root`** (*string*, optional): Root workspace path.
+
+---
+
+## 2. Terminology & Glossary Operations (Direct `tools/call` Aliases)
 
 ### 5. `audit_manuscript_terminology`
 Scans the manuscript index against the project glossary and section key terms. Canonical terms,

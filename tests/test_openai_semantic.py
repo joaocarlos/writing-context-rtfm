@@ -106,12 +106,12 @@ def test_sync_chunks(mock_store_class, mock_get_embeddings, mock_config):
         assert store_args[0]["chunk_id"] == "c1"
 
 
-@patch("writing_context_rtfm.providers.openai_semantic.sqlite3.connect")
+@patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter.list_indexed_chunks_from_db")
 @patch("writing_context_rtfm.providers.openai_semantic.ExtensionStore")
 @patch("writing_context_rtfm.providers.openai_semantic.get_openai_embeddings")
 @patch("writing_context_rtfm.utils.resolve_rtfm_db_path")
 def test_fetch_context(
-    mock_resolve, mock_get_embeddings, mock_store_class, mock_connect, mock_config
+    mock_resolve, mock_get_embeddings, mock_store_class, mock_list_chunks, mock_config
 ):
     provider = OpenAISemanticSearchProvider(mock_config)
     mock_resolve.return_value = "dummy.db"
@@ -131,15 +131,15 @@ def test_fetch_context(
 
     with patch.object(provider, "_get_api_key", return_value="test_key"):
         mock_get_embeddings.return_value = [[1.0, 0.0]]
-
-        # Mock SQLite fetchone
-        mock_cursor = MagicMock()
-        mock_cursor.fetchone.side_effect = [
-            {"content": "Content C1", "file_path": "a.tex", "line_start": 1, "line_end": 5},
+        mock_list_chunks.return_value = [
+            {
+                "chunk_id": "c1",
+                "content": "Content C1",
+                "file_path": "a.tex",
+                "line_start": 1,
+                "line_end": 5,
+            }
         ]
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_connect.return_value = mock_conn
 
         spans = provider.fetch_context(["query text"], None, 1)
 
@@ -148,8 +148,4 @@ def test_fetch_context(
         assert spans[0].path == "a.tex"
         assert spans[0].score > 0.99
         assert spans[0].metadata["snippet"] == "Content C1"
-
-        # Verify DB fetch was for c1
-        execute_args = mock_cursor.execute.call_args[0]
-        assert "WHERE c.chunk_id = ?" in execute_args[0]
-        assert execute_args[1] == ("c1",)
+        mock_list_chunks.assert_called_once_with("dummy.db", chunk_ids=["c1"])

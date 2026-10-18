@@ -31,6 +31,7 @@ class RetrievalEngineHealth:
     total_chunks: int = 0
     total_books: int = 0
     has_embeddings: bool = False
+    has_fts: bool = False
     details: str = ""
 
 
@@ -66,4 +67,8 @@ class RetrievalEngine(Protocol):
 
     def get_db_path(self) -> Path | None:
         """Return the resolved filesystem path to the retrieval database, if applicable."""
+        ...
+
+    def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, RTFMResult]:
+        """Retrieve indexed chunks keyed by chunk ID via the retrieval boundary."""
         ...

@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from writing_context_rtfm.benchmark import (
+from tests.eval.benchmark import (
     STRATEGIES,
     ArtifactKey,
     ArtifactStore,
@@ -325,10 +325,10 @@ def test_rtfm_indexer_uses_synchronous_explicit_helper(tmp_path: Path, monkeypat
         return subprocess.CompletedProcess(command, 0, '{"books": 1, "chunks": 1}', "")
 
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.shutil.which",
+        "tests.eval.benchmark.shutil.which",
         lambda _name: pytest.fail("explicit indexing must not inspect or invoke the RTFM CLI"),
     )
-    monkeypatch.setattr("writing_context_rtfm.benchmark.subprocess.run", fake_run)
+    monkeypatch.setattr("tests.eval.benchmark.subprocess.run", fake_run)
 
     RTFMExplicitFileIndexer().index_files(workspace, ["main.tex"])
 
@@ -369,7 +369,7 @@ def test_rtfm_topk_preserves_raw_candidates_before_budget(
         RTFMResult("evidence.tex", 1, 3, "stratified sampling", 0.9, {"rank": 2}),
     ]
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.RTFMAdapter.search",
+        "tests.eval.benchmark.RTFMAdapter.search",
         lambda *_args, **_kwargs: results,
     )
 
@@ -847,9 +847,9 @@ def test_cli_process_group_is_isolated_and_reaped(
         observed["popen"] = kwargs
         return FakeProcess()
 
-    monkeypatch.setattr("writing_context_rtfm.benchmark.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("tests.eval.benchmark.subprocess.Popen", fake_popen)
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.os.killpg",
+        "tests.eval.benchmark.os.killpg",
         lambda pid, sig: signals.append((pid, sig)),
     )
 
@@ -953,9 +953,9 @@ def test_cli_model_clients_are_isolated_and_pinned(
         return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+        "tests.eval.benchmark.shutil.which", lambda _name: str(executable)
     )
-    monkeypatch.setattr("writing_context_rtfm.benchmark._run_cli_process_group", fake_run)
+    monkeypatch.setattr("tests.eval.benchmark._run_cli_process_group", fake_run)
     spec = ModelSpec(
         provider=provider,
         model="exact-model-id",
@@ -990,10 +990,10 @@ def test_cli_model_version_mismatch_fails_closed(
     executable = tmp_path / "gemini"
     executable.touch(mode=0o700)
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+        "tests.eval.benchmark.shutil.which", lambda _name: str(executable)
     )
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark._run_cli_process_group",
+        "tests.eval.benchmark._run_cli_process_group",
         lambda command, **kwargs: subprocess.CompletedProcess(
             command, 0, stdout="gemini 2.0.0\n", stderr=""
         ),
@@ -1016,10 +1016,10 @@ def test_codex_cli_without_version_accepts_installed_version(
     executable = tmp_path / "codex"
     executable.touch(mode=0o700)
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+        "tests.eval.benchmark.shutil.which", lambda _name: str(executable)
     )
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark._run_cli_process_group",
+        "tests.eval.benchmark._run_cli_process_group",
         lambda command, **kwargs: subprocess.CompletedProcess(
             command, 0, stdout="codex-cli 99.0.0\n", stderr=""
         ),
@@ -1046,10 +1046,10 @@ def test_antigravity_model_mismatch_fails_closed(
         )
     )
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.shutil.which", lambda _name: str(executable)
+        "tests.eval.benchmark.shutil.which", lambda _name: str(executable)
     )
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark._run_cli_process_group",
+        "tests.eval.benchmark._run_cli_process_group",
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0, stdout=stream, stderr=""),
     )
     client = CLIModelClient(
@@ -1195,7 +1195,7 @@ def test_offline_end_to_end_all_strategies_and_anonymized_report(
         private_root=private_root,
         indexer=RecordingIndexer(),
     )
-    monkeypatch.setattr("writing_context_rtfm.benchmark.shutil.which", lambda _name: None)
+    monkeypatch.setattr("tests.eval.benchmark.shutil.which", lambda _name: None)
     artifacts = ArtifactStore(tmp_path / "artifacts.local")
     retrievals = run_retrieval(
         [case],
@@ -1293,7 +1293,7 @@ def test_offline_end_to_end_all_strategies_and_anonymized_report(
     stored_retrieval["payload"]["metrics"]["ndcg"] = 9.0
     retrieval_path.write_text(json.dumps(stored_retrieval), encoding="utf-8")
     monkeypatch.setattr(
-        "writing_context_rtfm.benchmark.current_code_revision",
+        "tests.eval.benchmark.current_code_revision",
         lambda: "analysis-revision",
     )
 
@@ -1323,7 +1323,7 @@ def test_report_keeps_resolved_criteria_from_unresolved_judge_pairs(
         private_root=private_root,
         indexer=RecordingIndexer(),
     )
-    monkeypatch.setattr("writing_context_rtfm.benchmark.shutil.which", lambda _name: None)
+    monkeypatch.setattr("tests.eval.benchmark.shutil.which", lambda _name: None)
     artifacts = ArtifactStore(tmp_path / "artifacts.local")
     run_retrieval(
         [case],

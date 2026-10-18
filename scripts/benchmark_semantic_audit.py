@@ -764,7 +764,8 @@ class SemanticBenchmarkRunner:
 
         import re
 
-        from writing_context_rtfm.benchmark import load_cases, load_prepared
+        from tests.eval.benchmark import load_cases, load_prepared
+
         from writing_context_rtfm.section_cards import load_section_cards
 
         try:

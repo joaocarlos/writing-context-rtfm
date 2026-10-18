@@ -44,6 +44,7 @@ from writing_context_rtfm.schemas import (
 from writing_context_rtfm.section_cards import (
     SectionCard,
     SectionCards,
+    get_section_cards_files,
     normalize_terminology,
 )
 from writing_context_rtfm.storage import ExtensionStore
@@ -486,6 +487,15 @@ class ContextPackGenerator:
         except OSError:
             return fallback_val
 
+    def _get_section_cards_hash(self, sc_path: Path, fallback_val: str) -> str:
+        candidates = get_section_cards_files(sc_path)
+        split_files = [p for p in candidates[1:] if p.exists()]
+        if split_files:
+            existing = [p for p in candidates if p.exists()]
+            parts = [f"{p.name}:{self._get_file_hash(p, '')}" for p in existing]
+            return stable_hash("|".join(parts))
+        return self._get_file_hash(sc_path, fallback_val)
+
     @staticmethod
     def _infer_writing_mode(
         mode: str | None,
@@ -494,6 +504,7 @@ class ContextPackGenerator:
         target_path: str | None,
         pr: str,
         target_card: SectionCard | None,
+        profile: str = "auto",
     ) -> str:
         """Infer functional writing mode: write, rewrite, adapt, compress."""
         if mode and mode.lower() != "auto":
@@ -518,36 +529,37 @@ class ContextPackGenerator:
                 return "write"
             return "rewrite"
 
-        # Priority 3: Local Semantic Embeddings Intent Classification
-        semantic_intent = classify_task_intent(task)
-        if semantic_intent and semantic_intent.is_confident:
-            if semantic_intent.intent == "delete":
-                if target_path:
-                    full = Path(pr) / target_path
-                    if not full.exists():
-                        return "write"
-                    try:
-                        content = full.read_text(encoding="utf-8", errors="replace").strip()
-                        if not content:
-                            return "write"
-                    except Exception:
-                        return "write"
-                elif target_card and not target_card.path:
-                    return "write"
-                return "rewrite"
-            if semantic_intent.intent == "compress":
-                return "compress"
-            if semantic_intent.intent == "adapt":
-                return "adapt"
-            if semantic_intent.intent == "write":
-                if not target_path or not (Path(pr) / target_path).exists():
-                    return "write"
-
-        # Priority 4: Bounded regex fallback (when semantic confidence is low or model offline)
+        # Priority 2: High-precision deterministic regex patterns
         if _COMPRESS_INTENT_PATTERN.search(task):
             return "compress"
         if _ADAPT_INTENT_PATTERN.search(task):
             return "adapt"
+
+        # Priority 3: Local Semantic Embeddings Intent Classification (skipped in fast profile)
+        if profile != "fast":
+            semantic_intent = classify_task_intent(task)
+            if semantic_intent and semantic_intent.is_confident:
+                if semantic_intent.intent == "delete":
+                    if target_path:
+                        full = Path(pr) / target_path
+                        if not full.exists():
+                            return "write"
+                        try:
+                            content = full.read_text(encoding="utf-8", errors="replace").strip()
+                            if not content:
+                                return "write"
+                        except Exception:
+                            return "write"
+                    elif target_card and not target_card.path:
+                        return "write"
+                    return "rewrite"
+                if semantic_intent.intent == "compress":
+                    return "compress"
+                if semantic_intent.intent == "adapt":
+                    return "adapt"
+                if semantic_intent.intent == "write":
+                    if not target_path or not (Path(pr) / target_path).exists():
+                        return "write"
 
         if target_path:
             full = Path(pr) / target_path
@@ -568,6 +580,19 @@ class ContextPackGenerator:
         self, target: str | None, pr: str, task: str | None = None
     ) -> tuple[str | None, SectionCard | None, str | None]:
         """Resolves target string to (card_key, card, path), with heuristic inference from task if target is omitted."""
+        valid_num_prefixes = {
+            "",
+            "chapter",
+            "chap",
+            "ch",
+            "section",
+            "sec",
+            "s",
+            "part",
+            "cap",
+            "capitulo",
+            "secao",
+        }
         if not target and task:
             # 0a. Check for explicit file references in task (e.g. chapter6.tex, intro.md)
             file_candidates = re.findall(
@@ -585,13 +610,17 @@ class ContextPackGenerator:
                             c_stem = Path(card.path).stem.lower()
                             if fc_clean == c_name or fc_stem == c_stem:
                                 return key, card, card.path
-                            # Check numerical equivalence (e.g. chapter6 vs chapter06)
+                            # Check numerical equivalence (e.g. chapter6 vs chapter06 or 06_methods)
                             m_fc = re.search(r"(\d+)", fc_stem)
                             m_c = re.search(r"(\d+)", c_stem)
                             if m_fc and m_c and int(m_fc.group(1)) == int(m_c.group(1)):
                                 prefix_fc = fc_stem[: m_fc.start()].rstrip("._-")
                                 prefix_c = c_stem[: m_c.start()].rstrip("._-")
-                                if prefix_fc == prefix_c or not prefix_fc or not prefix_c:
+                                if prefix_fc == prefix_c or (
+                                    (not prefix_fc or not prefix_c)
+                                    and prefix_fc in valid_num_prefixes
+                                    and prefix_c in valid_num_prefixes
+                                ):
                                     return key, card, card.path
                         if key.lower() in (fc_clean, fc_stem):
                             return key, card, card.path
@@ -608,7 +637,12 @@ class ContextPackGenerator:
                             return None, None, str(sub_cand.relative_to(Path(pr)))
 
             # 0b. Attempt chapter/section reference extraction with zero-padding tolerance
-            match = re.search(
+            dest_match = re.search(
+                r"\b(?:into|to|in|for|para|no|na|em)\s+(?:the\s+)?(?:chapter|cap[ií]tulo|section|se[çc][aã]o)\s*([0-9]+|[a-zA-Z0-9_\-]+)\b",
+                task,
+                re.IGNORECASE,
+            )
+            match = dest_match or re.search(
                 r"\b(?:chapter|cap[ií]tulo|section|se[çc][aã]o)\s*([0-9]+|[a-zA-Z0-9_\-]+)\b",
                 task,
                 re.IGNORECASE,
@@ -701,7 +735,11 @@ class ContextPackGenerator:
                     if m_t and m_c and int(m_t.group(1)) == int(m_c.group(1)):
                         t_prefix = target_lower[: m_t.start()].rstrip("._-")
                         c_prefix = card_path.stem.lower()[: m_c.start()].rstrip("._-")
-                        if t_prefix == c_prefix or not t_prefix or not c_prefix:
+                        if t_prefix == c_prefix or (
+                            (not t_prefix or not c_prefix)
+                            and t_prefix in valid_num_prefixes
+                            and c_prefix in valid_num_prefixes
+                        ):
                             return key, card, card.path
 
         # 5. Check if target matches a virtual section node in root document files (single-file or multi-file)
@@ -1329,6 +1367,7 @@ class ContextPackGenerator:
             target_path=target_path,
             pr=pr,
             target_card=target_card,
+            profile=self.config.profile,
         )
 
         # Apply pack mode defaults / overrides
@@ -1390,10 +1429,10 @@ class ContextPackGenerator:
         config_path = Path(self.config.rtfm.project_root) / ".writing-context" / "config.yaml"
         config_hash = self._get_file_hash(config_path, stable_hash(str(self.config.version)))
 
-        # Calculate real section cards content hash
+        # Calculate real section cards content hash (including v2 split files)
         sc_path = Path(self.config.section_cards.path)
         sc_fallback = stable_hash(str(self.section_cards.version) if self.section_cards else "none")
-        sc_hash = self._get_file_hash(sc_path, sc_fallback)
+        sc_hash = self._get_section_cards_hash(sc_path, sc_fallback)
 
         # Compute combined retrieval fingerprint (RTFM DB + provider fingerprints)
         rtfm_db = resolve_rtfm_db_path(Path(self.config.rtfm.project_root))
@@ -1543,14 +1582,15 @@ class ContextPackGenerator:
                                     stream_key="target_range",
                                 )
 
-                    # Case B: Target section specified without line numbers -> Atomically extract target section
-                    elif target is not None:
+                    # Case B: Target section resolved without line numbers -> Atomically extract target section
+                    else:
                         doc_parser_target = VirtualDocumentParser(pr)
                         with contextlib.suppress(Exception):
                             doc_parser_target.parse(target_path)
 
-                        target_node = doc_parser_target.find_section_node(
-                            target or resolved_key or ""
+                        lookup_key = target or resolved_key or ""
+                        target_node = (
+                            doc_parser_target.find_section_node(lookup_key) if lookup_key else None
                         )
                         if target_node and target_node.source_path == target_path:
                             start = max(1, min(target_node.line_start, num_lines))
@@ -1561,11 +1601,16 @@ class ContextPackGenerator:
 
                         if start <= end and num_lines > 0:
                             target_snippet = "\n".join(lines[start - 1 : end])
+                            target_label = (
+                                target_card.title
+                                if target_card and target_card.title
+                                else (target or resolved_key or target_path)
+                            )
                             target_span = SourceSpan(
                                 path=target_path,
                                 line_start=start,
                                 line_end=end,
-                                reason=f"Target section text (unbroken: {target_card.title if target_card and target_card.title else target})",
+                                reason=f"Target section text (unbroken: {target_label})",
                                 score=1.0,
                                 structural_score=1.0,
                                 priority="essential",
@@ -1975,7 +2020,7 @@ class ContextPackGenerator:
                 try:
                     p_spans = provider.fetch_context(
                         queries,
-                        target,
+                        resolved_key or target,
                         limit=provider_limit,
                         query_type_map=query_type_map,
                         task_type=task_type,
@@ -2238,14 +2283,13 @@ class ContextPackGenerator:
         # --- Apply MMR Diversity Re-ranking ---
         filtered = apply_mmr_diversity(filtered, lambda_param=0.75)
 
-        # Prioritize essential target text spans at the top
+        # Prioritize essential target text spans at the top while preserving MMR diversity order within each tier
         filtered = sorted(
             filtered,
             key=lambda s: (
                 0
                 if (s.priority == "essential" or s.source_role == "target_text")
-                else (1 if s.priority == "supporting" else 2),
-                -s.score,
+                else (1 if s.priority == "supporting" else 2)
             ),
         )
         self._record_diagnostic("diversified", filtered)
@@ -2643,16 +2687,7 @@ class ContextPackGenerator:
         quality.estimated_tokens = total_tokens
 
         run_id = str(uuid.uuid4())
-        has_degrading = any(
-            not w.startswith("LaTeX Safety:")
-            and not w.startswith("Note:")
-            and not w.startswith("Budget overflow:")
-            and not w.startswith("Card uncertainty:")
-            and not w.startswith("Card audit:")
-            and not w.startswith("Pre-flight budget")
-            and "candidate span(s) were dropped" not in w
-            for w in warnings
-        )
+        has_degrading = any(is_degrading_pack_warning(w) for w in warnings)
         if status == "budget_overflow":
             status_str = "budget_overflow"
         elif has_degrading or status == "degraded":
@@ -2674,12 +2709,41 @@ class ContextPackGenerator:
         else:
             baseline_mode = "section_neighborhood"
 
+        dep_paths_list: list[str] = []
+        if target_card and self.section_cards and self.section_cards.sections:
+            for dep_id in target_card.depends_on or []:
+                dep_c = self.section_cards.sections.get(dep_id)
+                if (
+                    dep_c
+                    and dep_c.path
+                    and dep_c.path != target_path
+                    and dep_c.path not in dep_paths_list
+                ):
+                    dep_paths_list.append(dep_c.path)
+        for dc in dep_cards:
+            if dc.path and dc.path != target_path and dc.path not in dep_paths_list:
+                dep_paths_list.append(dc.path)
+        for s in selected:
+            if (
+                s.source_role == "dependency"
+                and s.path
+                and s.path != target_path
+                and s.path not in dep_paths_list
+            ):
+                dep_paths_list.append(s.path)
+
         latency_ms = (time.perf_counter() - t0) * 1000.0
         instruction_tokens = count_tokens(task, model_family=model_family)
         baseline_doc_tokens = self._compute_workspace_document_tokens(pr, model_family=model_family)
         baseline_realistic_tokens, baseline_tokens_raw, is_capped = (
             self._compute_realistic_baseline_tokens(
-                pr, target_path, baseline_mode, model_family, baseline_doc_tokens, total_tokens
+                pr,
+                target_path,
+                baseline_mode,
+                model_family,
+                baseline_doc_tokens,
+                total_tokens,
+                dependency_paths=dep_paths_list,
             )
         )
         schema_overhead = 420
@@ -2788,6 +2852,7 @@ class ContextPackGenerator:
         model_family: str,
         total_workspace_tokens: int,
         pack_tokens: int,
+        dependency_paths: list[str] | None = None,
     ) -> tuple[int, int, bool]:
         return compute_realistic_baseline_tokens(
             project_root=project_root,
@@ -2796,6 +2861,7 @@ class ContextPackGenerator:
             model_family=model_family,
             total_workspace_tokens=total_workspace_tokens,
             pack_tokens=pack_tokens,
+            dependency_paths=dependency_paths,
         )
 
     # -----------------------------------------------------------------------
@@ -3028,9 +3094,45 @@ class ContextPackGenerator:
                     query=span.query,
                     metadata=updated_meta,
                     source_role=role,
+                    retrieval_score=span.retrieval_score,
+                    fusion_score=span.fusion_score,
+                    structural_score=span.structural_score,
                 )
             )
         return result
+
+
+def is_degrading_pack_warning(warning: str) -> bool:
+    """Return True if a pack warning represents a degrading condition rather than an informational note."""
+    return (
+        not warning.startswith("LaTeX Safety:")
+        and not warning.startswith("Note:")
+        and not warning.startswith("Budget overflow:")
+        and not warning.startswith("Card uncertainty:")
+        and not warning.startswith("Card audit:")
+        and not warning.startswith("Pre-flight budget")
+        and "candidate span(s) were dropped" not in warning
+    )
+
+
+_WORKSPACE_FILE_TOKENS_CACHE: dict[tuple[str, float, int, str], int] = {}
+
+
+def _count_file_tokens_cached(path_obj: Path, model_family: str) -> int:
+    try:
+        st = path_obj.stat()
+        key = (str(path_obj.resolve()), st.st_mtime, st.st_size, model_family)
+        cached = _WORKSPACE_FILE_TOKENS_CACHE.get(key)
+        if cached is not None:
+            return cached
+        content = path_obj.read_text(encoding="utf-8", errors="replace")
+        tokens = count_tokens(content, model_family=model_family)
+        if len(_WORKSPACE_FILE_TOKENS_CACHE) > 2048:
+            _WORKSPACE_FILE_TOKENS_CACHE.clear()
+        _WORKSPACE_FILE_TOKENS_CACHE[key] = tokens
+        return tokens
+    except Exception:
+        return 0
 
 
 def compute_workspace_document_tokens(project_root: str, model_family: str = "openai") -> int:
@@ -3074,11 +3176,7 @@ def compute_workspace_document_tokens(project_root: str, model_family: str = "op
                 continue
             if is_path_ignored(rel_str, spec, is_dir=False):
                 continue
-            try:
-                content = p.read_text(encoding="utf-8", errors="replace")
-                total_tokens += count_tokens(content, model_family=model_family)
-            except Exception:
-                continue
+            total_tokens += _count_file_tokens_cached(p, model_family=model_family)
     except Exception:
         return 0
     return total_tokens
@@ -3091,50 +3189,68 @@ def compute_realistic_baseline_tokens(
     model_family: str,
     total_workspace_tokens: int,
     pack_tokens: int,
+    dependency_paths: list[str] | None = None,
 ) -> tuple[int, int, bool]:
     """Compute realistic counterfactual tokens representing what a human author actually pastes.
 
+    Calculated from the actual tokens of the target file plus its 1-hop dependencies
+    (depends_on), or a proportional fallback when no target file exists.
+
     Returns: (realistic_tokens, baseline_tokens_raw, is_capped)
-    Modes:
-    - 'section_neighborhood': Target section + adjacent context (~5k–15k tokens).
-    - 'chapter': Entire target chapter/file (~20k–50k tokens).
     """
+    def _fallback_without_target() -> tuple[int, int, bool]:
+        if baseline_mode == "full_doc" and total_workspace_tokens > 0:
+            return total_workspace_tokens, total_workspace_tokens, False
+        if baseline_mode == "chapter":
+            raw_val = (
+                max(pack_tokens * 3, int(round(total_workspace_tokens * 0.5)))
+                if total_workspace_tokens > 0
+                else pack_tokens * 3
+            )
+        else:
+            raw_val = (
+                max(pack_tokens * 2, int(round(total_workspace_tokens * 0.25)))
+                if total_workspace_tokens > 0
+                else pack_tokens * 2
+            )
+        if total_workspace_tokens > 0 and raw_val > total_workspace_tokens:
+            return total_workspace_tokens, raw_val, True
+        return raw_val, raw_val, False
+
     if not target_path:
-        raw = (
-            max(pack_tokens * 4, 25000)
-            if baseline_mode == "chapter"
-            else max(pack_tokens * 2, 8000)
-        )
-        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-            return total_workspace_tokens, raw, True
-        return raw, raw, False
+        return _fallback_without_target()
 
     full_path = Path(project_root) / target_path
     if not full_path.exists() or not full_path.is_file():
-        raw = (
-            max(pack_tokens * 4, 25000)
-            if baseline_mode == "chapter"
-            else max(pack_tokens * 2, 8000)
-        )
-        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-            return total_workspace_tokens, raw, True
-        return raw, raw, False
+        return _fallback_without_target()
 
     try:
-        content = full_path.read_text(encoding="utf-8", errors="replace")
-        file_tokens = count_tokens(content, model_family=model_family)
-        if baseline_mode == "chapter":
-            raw = max(file_tokens, 25000)
-        elif file_tokens > 15000:
-            raw = min(file_tokens, max(pack_tokens * 2, 10000))
+        file_tokens = _count_file_tokens_cached(full_path, model_family=model_family)
+        if file_tokens <= 0:
+            return _fallback_without_target()
+
+        dep_tokens = 0
+        seen_paths: set[str] = {str(full_path.resolve())}
+        for dp in dependency_paths or []:
+            dp_full = Path(project_root) / dp
+            if dp_full.exists() and dp_full.is_file():
+                resolved_str = str(dp_full.resolve())
+                if resolved_str not in seen_paths:
+                    seen_paths.add(resolved_str)
+                    dep_tokens += _count_file_tokens_cached(dp_full, model_family=model_family)
+
+        if dep_tokens > 0:
+            raw = file_tokens + dep_tokens
+            if baseline_mode == "chapter":
+                raw = max(raw, file_tokens * 2)
         else:
-            raw = max(file_tokens * 2, 8000)
+            if baseline_mode == "chapter":
+                raw = file_tokens * 2
+            else:
+                raw = max(file_tokens + 1, int(round(file_tokens * 1.5)))
 
         if total_workspace_tokens > 0 and raw > total_workspace_tokens:
             return total_workspace_tokens, raw, True
         return raw, raw, False
     except Exception:
-        raw = max(pack_tokens * 2, 8000)
-        if total_workspace_tokens > 0 and raw > total_workspace_tokens:
-            return total_workspace_tokens, raw, True
-        return raw, raw, False
+        return _fallback_without_target()

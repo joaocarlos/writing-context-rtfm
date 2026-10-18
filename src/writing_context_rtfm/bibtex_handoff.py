@@ -346,7 +346,7 @@ class BibTeXHandoffPolicy:
 
 
 def build_bibtex_handoff_freeze(cases_path: Path, private_root: Path) -> dict[str, Any]:
-    from writing_context_rtfm.candidate_exposure import build_pilot_v1_freeze
+    from tests.eval.candidate_exposure import build_pilot_v1_freeze
 
     base = build_pilot_v1_freeze(cases_path, private_root)
     payload = {
@@ -374,7 +374,7 @@ def build_bibtex_handoff_freeze(cases_path: Path, private_root: Path) -> dict[st
 def write_bibtex_handoff_freeze(
     cases_path: Path, private_root: Path, output: Path
 ) -> dict[str, Any]:
-    from writing_context_rtfm.benchmark import _atomic_json
+    from tests.eval.benchmark import _atomic_json
 
     freeze = build_bibtex_handoff_freeze(cases_path, private_root)
     _atomic_json(output, freeze, mode=0o600)
@@ -401,7 +401,7 @@ def run_bibtex_handoff(
     freeze_path: Path,
     output: Path,
 ) -> dict[str, Any]:
-    from writing_context_rtfm.benchmark import (
+    from tests.eval.benchmark import (
         ProductionRetrievalBackend,
         _atomic_json,
         cases_for_stage,
@@ -410,7 +410,7 @@ def run_bibtex_handoff(
         load_prepared,
         retrieval_metrics,
     )
-    from writing_context_rtfm.candidate_exposure import (
+    from tests.eval.candidate_exposure import (
         POLICY_SPECS,
         CandidateExposurePolicy,
     )
@@ -680,7 +680,7 @@ def build_bibtex_handoff_report(results: dict[str, Any]) -> dict[str, Any]:
 def write_bibtex_handoff_report(results_path: Path, output: Path) -> dict[str, Any]:
     import json
 
-    from writing_context_rtfm.benchmark import _atomic_json
+    from tests.eval.benchmark import _atomic_json
 
     results = json.loads(results_path.read_text(encoding="utf-8"))
     report = build_bibtex_handoff_report(results)

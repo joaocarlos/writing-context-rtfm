@@ -66,6 +66,9 @@ class TestRetrievalEngineProtocolContract:
             def get_db_path(self) -> Path | None:
                 return None
 
+            def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, RTFMResult]:
+                return {}
+
         engine = MockEngine()
         assert isinstance(engine, RetrievalEngine)
 
@@ -195,6 +198,15 @@ class TestRTFMDatabaseSchemaContract:
         adapter = RTFMAdapter(project_root=str(tmp_path), allow_cli_fallback=False)
         results = adapter.search("   ", corpus="default", limit=5)
         assert results == []
+
+    def test_get_chunks_by_ids_and_has_fts_contract(self, tmp_path: Path, mock_rtfm_db: Path):
+        adapter = RTFMAdapter(project_root=str(tmp_path), allow_cli_fallback=False)
+        chunks = adapter.get_chunks_by_ids(["1"])
+        assert "1" in chunks
+        assert chunks["1"].path == "sections/intro.tex"
+        assert "Quantum optimization" in (chunks["1"].snippet or "")
+        health = adapter.health_check()
+        assert health.has_fts is True
 
 
 class TestFailureIsolationContract:

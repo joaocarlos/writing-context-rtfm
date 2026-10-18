@@ -150,7 +150,7 @@ class ProofreadPackGenerator:
         local_ctx = self._get_local_context(target_file, line_start, line_end, lines=lines)
 
         # 2. Find section card
-        section_card = self._find_section_card(target_file)
+        section_card = self._find_section_card(target_file, line_start=line_start)
         target_info = ProofreadingTarget(
             file_path=target_file,
             line_start=line_start,
@@ -346,19 +346,38 @@ class ProofreadPackGenerator:
 
         return LocalContext(target_span, previous_paragraph, next_paragraph)
 
-    def _find_section_card(self, target_file: str) -> SectionCard | None:
+    def _find_section_card(
+        self, target_file: str, line_start: int | None = None
+    ) -> SectionCard | None:
         if not self.section_cards:
             return None
 
         # Normalize and resolve target path to absolute
         target_abs = Path(target_file).resolve()
+        matching_cards: list[SectionCard] = []
         for card in self.section_cards.sections.values():
             if card.path:
-                # Resolve card path relative to the project root
                 card_abs = Path(self.config.rtfm.project_root).joinpath(card.path).resolve()
                 if card_abs == target_abs:
+                    matching_cards.append(card)
+        if not matching_cards:
+            return None
+        if len(matching_cards) == 1 or line_start is None:
+            return matching_cards[0]
+
+        try:
+            from writing_context_rtfm.virtual_doc import VirtualDocumentParser
+
+            parser = VirtualDocumentParser(self.config.rtfm.project_root)
+            rel_path = matching_cards[0].path or target_file
+            parser.parse(rel_path)
+            for card in matching_cards:
+                node = parser.find_section_node(card.selector or card.id or card.title or "")
+                if node and node.line_start <= line_start <= node.line_end:
                     return card
-        return None
+        except Exception:
+            pass
+        return matching_cards[0]
 
     def _get_prior_usage(
         self, terms: list[str], exclude_file: str, warnings: list[str]

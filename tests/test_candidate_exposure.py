@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from writing_context_rtfm.candidate_exposure import (
+from tests.eval.candidate_exposure import (
     POLICY_SPECS,
     CandidateExposurePolicy,
     build_candidate_exposure_report,

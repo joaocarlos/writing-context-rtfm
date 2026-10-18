@@ -88,26 +88,34 @@ class LocalIntentClassifier:
         model: Any | None = None,
         confidence_threshold: float = 0.55,
         margin_threshold: float = 0.05,
+        local_files_only: bool = True,
     ):
         self.model_id = model_id
         self._model = model
         self.confidence_threshold = confidence_threshold
         self.margin_threshold = margin_threshold
+        self.local_files_only = local_files_only
+        self._load_failed = False
         self._prototype_embeddings: dict[str, Any] | None = None
         self._cache: dict[str, IntentClassificationResult] = {}
 
     def _get_model(self) -> Any | None:
         if self._model is not None:
             return self._model
+        if self._load_failed:
+            return None
         try:
             st = importlib.import_module("sentence_transformers")
-            # Prefer local cache if offline, otherwise standard initialization
             try:
                 self._model = st.SentenceTransformer(self.model_id, local_files_only=True)
             except Exception:
+                if self.local_files_only:
+                    self._load_failed = True
+                    return None
                 self._model = st.SentenceTransformer(self.model_id)
             return self._model
         except Exception as e:
+            self._load_failed = True
             logger.debug("Local embedding model '%s' unavailable: %s", self.model_id, e)
             return None
 

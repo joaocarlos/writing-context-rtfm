@@ -234,8 +234,8 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
         return {"status": "error", "message": "Failed to load section cards"}
     adapter = RTFMAdapter(str(root))
 
-    # Map each section path to its declared section card and build a canonical registry.
-    path_to_section: dict[str, str] = {}
+    # Map each section path to its declared section cards and build a canonical registry.
+    path_to_sections: dict[str, list[str]] = {}
     glossary = normalize_terminology(section_cards.document.terminology)
     registry: dict[str, dict[str, Any]] = {}
     form_to_canonical: dict[str, str] = {}
@@ -256,7 +256,7 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
             p = Path(scard.path)
             if p.is_absolute():
                 p = p.relative_to(root)
-            path_to_section[str(p)] = sid
+            path_to_sections.setdefault(str(p), []).append(sid)
 
         for term in scard.key_terms or []:
             key = form_to_canonical.get(term.casefold(), term.casefold())
@@ -361,19 +361,23 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
             for occurrence in deduplicated
         }
         for p_str in occurring_paths:
-            sid_occurrence = path_to_section.get(p_str)
-            if sid_occurrence and sids:
-                declares = sid_occurrence in sids
-                occ_card = section_cards.sections.get(sid_occurrence)
-                if not declares and occ_card:
-                    declares = any(sid in (occ_card.depends_on or []) for sid in sids)
+            sids_occurrence = path_to_sections.get(p_str, [])
+            if sids_occurrence and sids:
+                declares = any(sid_occ in sids for sid_occ in sids_occurrence)
                 if not declares:
+                    for sid_occ in sids_occurrence:
+                        occ_card = section_cards.sections.get(sid_occ)
+                        if occ_card and any(sid in (occ_card.depends_on or []) for sid in sids):
+                            declares = True
+                            break
+                if not declares:
+                    sid_occurrence = sids_occurrence[0]
                     warnings.append(
                         f"Term '{canonical}' is used in '{p_str}' (Section '{sid_occurrence}'), "
                         f"but '{sid_occurrence}' neither declares it nor depends on sections "
                         f"that do ({sids})."
                     )
-            elif not sid_occurrence:
+            elif not sids_occurrence:
                 warnings.append(f"Term '{canonical}' is used in unmapped file '{p_str}'.")
 
         report[key] = {
@@ -691,29 +695,37 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
             elif ref_key in all_nodes and ref_key != sid:
                 resolved_deps.add(ref_key)
 
-        # Normalize and preserve any accepted/verified dependencies from previous scan
+        # Normalize and preserve any accepted/verified/rejected dependencies from previous scan
         existing_deps_records = ex_sec.get("dependencies", [])
+        sec_decisions = (lock_sections.get(sid) or {}).get("decisions") or {}
         final_deps: list[dict[str, Any]] = []
         seen_targets: set[str] = set()
 
         for d in existing_deps_records:
             if isinstance(d, dict):
                 tgt = d.get("target")
-                status = d.get("status")
                 if tgt and tgt in label_to_sid:
                     tgt = label_to_sid[tgt]
+                status = (
+                    (sec_decisions.get(f"dependencies:{tgt}") if tgt else None)
+                    or d.get("status")
+                    or "generated"
+                )
                 if tgt and tgt in all_nodes and tgt != sid and tgt not in seen_targets:
-                    if status in ("accepted", "verified", "override"):
+                    if status in ("accepted", "verified", "override", "rejected"):
                         final_deps.append({"target": tgt, "status": status})
                         seen_targets.add(tgt)
             elif isinstance(d, str):
                 tgt = label_to_sid.get(d, d)
+                status = sec_decisions.get(f"dependencies:{tgt}") or "generated"
                 if tgt in all_nodes and tgt != sid and tgt not in seen_targets:
+                    final_deps.append({"target": tgt, "status": status})
                     seen_targets.add(tgt)
 
         for dep in sorted(resolved_deps):
             if dep not in seen_targets and dep in all_nodes:
-                final_deps.append({"target": dep, "status": "generated"})
+                dep_status = sec_decisions.get(f"dependencies:{dep}") or "generated"
+                final_deps.append({"target": dep, "status": dep_status})
                 seen_targets.add(dep)
 
         gen_cards["sections"][sid] = {
@@ -746,12 +758,55 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
             "algorithms": node.algorithms,
         }
 
-        # Rule-based acronym extraction
+        # Rule-based acronym extraction (filtering comments, LaTeX commands, Roman numerals, and stopwords)
         try:
             source_file = root / node.source_path
             if source_file.is_file():
-                text = source_file.read_text(encoding="utf-8")[node.char_start : node.char_end]
-                acronyms = set(re.findall(r"\b[A-Z]{2,6}\b", text))
+                raw_text = source_file.read_text(encoding="utf-8")[node.char_start : node.char_end]
+                no_comments = re.sub(r"(?<!\\)%.*$", "", raw_text, flags=re.MULTILINE)
+                no_ref_cmds = re.sub(
+                    r"\\(?:cite[a-zA-Z]*|ref|eqref|cref|Cref|autoref|pageref|label|begin|end|usepackage|documentclass|input|include|includegraphics|bibliography|bibliographystyle)\*?(?:\[[^\]]*\])?(?:\{[^}]*\})*",
+                    " ",
+                    no_comments,
+                )
+                clean_text = re.sub(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?", " ", no_ref_cmds)
+                acronym_noise = {
+                    "II",
+                    "III",
+                    "IV",
+                    "VI",
+                    "VII",
+                    "VIII",
+                    "IX",
+                    "XI",
+                    "XII",
+                    "TODO",
+                    "NOTE",
+                    "FIXME",
+                    "FIG",
+                    "TAB",
+                    "EQ",
+                    "SEC",
+                    "REF",
+                    "PDF",
+                    "URL",
+                    "DOI",
+                    "ISBN",
+                    "ISSN",
+                    "AND",
+                    "THE",
+                    "FOR",
+                    "NOT",
+                    "WITH",
+                    "FROM",
+                    "THIS",
+                    "THAT",
+                }
+                acronyms = {
+                    acr
+                    for acr in re.findall(r"\b[A-Z]{2,6}\b", clean_text)
+                    if acr not in acronym_noise
+                }
                 if acronyms:
                     if not gen_cards["sections"][sid]["key_terms"]:
                         gen_cards["sections"][sid]["key_terms"] = []
@@ -761,13 +816,14 @@ def cards_scan_command(project_root: str) -> dict[str, Any]:
                         for kt in gen_cards["sections"][sid]["key_terms"]
                         if isinstance(kt, dict)
                     }
-                    for acr in acronyms:
+                    for acr in sorted(acronyms):
                         if acr not in existing_kt_vals:
+                            kt_status = sec_decisions.get(f"key_terms:{acr}") or "generated"
                             gen_cards["sections"][sid]["key_terms"].append(
                                 {
                                     "value": acr,
                                     "confidence": 0.95,
-                                    "status": "generated",
+                                    "status": kt_status,
                                     "evidence": "Rule-based acronym extraction",
                                 }
                             )

@@ -51,11 +51,12 @@ def get_active_reranker(config: AppConfig, store: Any = None) -> SpanReranker | 
     if not enabled or importlib.util.find_spec("sentence_transformers") is None:
         return None
     extra = _provider_extra(config, "local_reranker")
+    raw_max_len = extra.get("max_length")
     return LocalCrossEncoderReranker(
         str(extra.get("model", "Alibaba-NLP/gte-reranker-modernbert-base")),
         device=str(extra.get("device", "auto")),
         batch_size=int(extra.get("batch_size", 8)),
-        max_length=int(extra.get("max_length", 512)),
+        max_length=int(raw_max_len) if raw_max_len is not None else None,
         candidate_limit=int(extra.get("candidate_limit", 20)),
         blend_weight=float(extra.get("blend_weight", 0.25)),
         revision=str(extra["revision"]) if extra.get("revision") else None,

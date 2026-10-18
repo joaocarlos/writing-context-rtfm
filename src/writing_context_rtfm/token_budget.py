@@ -255,13 +255,11 @@ def compute_counterfactual_savings(
     # 1. Realistic baseline
     if baseline_realistic_tokens is None or baseline_realistic_tokens <= 0:
         if baseline_mode == "chapter":
-            baseline_realistic_tokens = min(
-                baseline_doc_tokens, max(effective_pack_cost * 4, 25000)
-            )
+            baseline_realistic_tokens = min(baseline_doc_tokens, effective_pack_cost * 3)
         elif baseline_mode == "full_doc":
             baseline_realistic_tokens = baseline_doc_tokens
         else:
-            baseline_realistic_tokens = min(baseline_doc_tokens, max(effective_pack_cost * 2, 8000))
+            baseline_realistic_tokens = min(baseline_doc_tokens, effective_pack_cost * 2)
 
     safe_realistic = max(baseline_realistic_tokens, 1)
     safe_raw = baseline_tokens_raw if baseline_tokens_raw is not None else safe_realistic

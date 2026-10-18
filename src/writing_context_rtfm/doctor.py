@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import platform
 import shutil
-import sqlite3
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -197,15 +196,19 @@ def check_dependencies() -> DiagnosticCategory:
 
 
 def check_index(project_root: Path) -> DiagnosticCategory:
+    from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+
     cat = DiagnosticCategory(category="Retrieval Index (RTFM)")
-    db_path = resolve_rtfm_db_path(project_root)
+    adapter = RTFMAdapter(project_root=str(project_root))
+    health = adapter.health_check()
+    db_path = health.db_path or resolve_rtfm_db_path(project_root)
 
     try:
         rel_db = str(db_path.relative_to(project_root))
     except ValueError:
         rel_db = str(db_path)
 
-    if not db_path.exists():
+    if not health.db_exists:
         cat.items.append(
             DiagnosticItem(
                 name="RTFM DB",
@@ -225,80 +228,57 @@ def check_index(project_root: Path) -> DiagnosticCategory:
         )
     )
 
-    try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT count(*) FROM chunks")
-            chunks_count = cursor.fetchone()[0]
-            cursor.execute("SELECT count(*) FROM books")
-            books_count = cursor.fetchone()[0]
-
-            cat.items.append(
-                DiagnosticItem(
-                    name="Indexed Corpus Content",
-                    status="OK" if chunks_count > 0 else "WARN",
-                    message=f"{chunks_count} chunks across {books_count} document(s)",
-                    remediation="Sync manuscript files into the index: 'writing-context-rtfm sync'"
-                    if chunks_count == 0
-                    else None,
-                )
-            )
-
-            # Check FTS table
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
-            )
-            fts_exists = cursor.fetchone() is not None
-            if fts_exists:
-                cat.items.append(
-                    DiagnosticItem(
-                        name="FTS5 Full-Text Search",
-                        status="OK",
-                        message="FTS5 chunks_fts index active",
-                    )
-                )
-            else:
-                cat.items.append(
-                    DiagnosticItem(
-                        name="FTS5 Full-Text Search",
-                        status="WARN",
-                        message="chunks_fts table not found in database",
-                        remediation="Rebuild RTFM index with: 'writing-context-rtfm sync'",
-                    )
-                )
-
-            # Check embeddings coverage
-            tables = {
-                row[0]
-                for row in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            }
-            has_embeds = False
-            if "embeddings" in tables or "chunk_embeddings" in tables:
-                has_embeds = True
-            else:
-                cols = {row[1] for row in cursor.execute("PRAGMA table_info(chunks)")}
-                if "embedding" in cols or "vector" in cols:
-                    has_embeds = True
-
-            cat.items.append(
-                DiagnosticItem(
-                    name="Vector Embeddings",
-                    status="OK" if has_embeds else "OK",
-                    message="Available for semantic search"
-                    if has_embeds
-                    else "Not generated (FTS BM25 search will be used)",
-                )
-            )
-
-    except Exception as e:
+    if "DB read error:" in health.details:
         cat.items.append(
             DiagnosticItem(
                 name="Index Database Integrity",
                 status="FAIL",
-                message=f"Database query error: {e}",
+                message=f"Database query error: {health.details}",
                 remediation="Re-sync library index: 'writing-context-rtfm sync'",
             )
         )
+        return cat
+
+    chunks_count = health.total_chunks
+    books_count = health.total_books
+    cat.items.append(
+        DiagnosticItem(
+            name="Indexed Corpus Content",
+            status="OK" if chunks_count > 0 else "WARN",
+            message=f"{chunks_count} chunks across {books_count} document(s)",
+            remediation="Sync manuscript files into the index: 'writing-context-rtfm sync'"
+            if chunks_count == 0
+            else None,
+        )
+    )
+
+    if health.has_fts:
+        cat.items.append(
+            DiagnosticItem(
+                name="FTS5 Full-Text Search",
+                status="OK",
+                message="FTS5 chunks_fts index active",
+            )
+        )
+    else:
+        cat.items.append(
+            DiagnosticItem(
+                name="FTS5 Full-Text Search",
+                status="WARN",
+                message="chunks_fts table not found in database",
+                remediation="Rebuild RTFM index with: 'writing-context-rtfm sync'",
+            )
+        )
+
+    cat.items.append(
+        DiagnosticItem(
+            name="Vector Embeddings",
+            status="OK",
+            message="Available for semantic search"
+            if health.has_embeddings
+            else "Not generated (FTS BM25 search will be used)",
+        )
+    )
 
     return cat
 
@@ -763,7 +743,7 @@ def run_doctor_fix(project_root: str | Path = ".") -> list[str]:
             store.init_db()
             actions.append("Initialized SQLite cache database schema")
         else:
-            with sqlite3.connect(str(cache_path)) as conn:
+            with store._connect() as conn:
                 cur = conn.cursor()
                 tables = {
                     row[0]
@@ -786,26 +766,17 @@ def run_doctor_fix(project_root: str | Path = ".") -> list[str]:
     # 5. RTFM Index sync if DB is missing or empty, but only if .rtfm exists in project root
     rtfm_dir = root / ".rtfm"
     if rtfm_dir.exists():
-        db_path = resolve_rtfm_db_path(root)
-        needs_sync = False
-        if not db_path.exists():
-            needs_sync = True
-        else:
-            try:
-                with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-                    cur = conn.cursor()
-                    cur.execute("SELECT count(*) FROM chunks")
-                    count = cur.fetchone()[0]
-                    if count == 0:
-                        needs_sync = True
-            except Exception:
-                needs_sync = True
+        from writing_context_rtfm.rtfm_adapter import RTFMAdapter
 
+        adapter = RTFMAdapter(project_root=str(root))
+        health = adapter.health_check()
+        needs_sync = (
+            not health.db_exists
+            or health.total_chunks == 0
+            or "DB read error:" in health.details
+        )
         if needs_sync:
             try:
-                from writing_context_rtfm.rtfm_adapter import RTFMAdapter
-
-                adapter = RTFMAdapter(project_root=str(root))
                 adapter.sync(str(root), corpus=config.rtfm.corpus)
                 actions.append("Synchronized RTFM retrieval index (synced)")
             except Exception as e:

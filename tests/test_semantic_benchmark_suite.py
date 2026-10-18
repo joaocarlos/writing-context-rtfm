@@ -39,9 +39,10 @@ def test_semantic_audit_scenarios_e2e() -> None:
     runner = SemanticBenchmarkRunner()
     results = runner.run_all_scenarios()
 
-    # Scenario 1: Math / Survey Trap
+    # Scenario 1: Math / Survey Trap (with MMR active, fast diversifies 1 of 2 gold chunks vs 14 identical clones; thorough/auto achieve 1.0)
     s1 = results["scenario_1_math"]
-    assert s1["fast"]["recall@3"] == 0.0
+    assert s1["fast"]["recall@3"] == 0.5
+    assert s1["fast"]["ndcg@3"] < s1["thorough_cold"]["ndcg@3"]
     assert s1["thorough_cold"]["recall@3"] == 1.0
     assert s1["thorough_cold"]["ndcg@3"] == 1.0
     assert s1["auto"]["recall@3"] == 1.0

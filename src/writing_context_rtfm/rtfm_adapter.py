@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from writing_context_rtfm.retrieval import (
     RetrievalEngine,
@@ -245,6 +246,80 @@ class RTFMAdapter(RetrievalEngine):
             return compute_rtfm_fingerprint(db_path)
         return "no-rtfm-db"
 
+    @staticmethod
+    def list_indexed_chunks_from_db(
+        db_path: Path | str, chunk_ids: list[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Read indexed chunks from an RTFM SQLite database across schema variants."""
+        resolved = Path(db_path)
+        if not resolved.is_file():
+            return []
+        import sqlite3
+
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(f"file:{resolved}?mode=ro", uri=True, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            book_columns = {
+                str(row["name"]) for row in cursor.execute("PRAGMA table_info(books)")
+            }
+            book_file_col = "path" if "path" in book_columns else "filename"
+            chunk_columns = {
+                str(row["name"]) for row in cursor.execute("PRAGMA table_info(chunks)")
+            }
+            chunk_id_col = "chunk_id" if "chunk_id" in chunk_columns else "id"
+
+            sql = f"""
+                SELECT c.{chunk_id_col} AS chunk_id, c.content,
+                       b.{book_file_col} AS file_path, c.line_start, c.line_end
+                FROM chunks c
+                JOIN books b ON c.book_id = b.id
+            """
+            params: list[Any] = []
+            if chunk_ids is not None:
+                if not chunk_ids:
+                    return []
+                placeholders = ",".join("?" for _ in chunk_ids)
+                sql += f" WHERE CAST(c.{chunk_id_col} AS TEXT) IN ({placeholders})"
+                params.extend(str(cid) for cid in chunk_ids)
+
+            rows = cursor.execute(sql, params).fetchall()
+            return [
+                {
+                    "chunk_id": str(row["chunk_id"]),
+                    "content": str(row["content"] or ""),
+                    "file_path": str(row["file_path"] or ""),
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"],
+                }
+                for row in rows
+            ]
+        except Exception:
+            return []
+        finally:
+            if conn is not None:
+                with contextlib.suppress(Exception):
+                    conn.close()
+
+    def get_chunks_by_ids(self, chunk_ids: list[str]) -> dict[str, RTFMResult]:
+        """Retrieve indexed chunks keyed by chunk ID via the retrieval boundary."""
+        db_path = self.get_db_path()
+        if not db_path:
+            return {}
+        rows = self.list_indexed_chunks_from_db(db_path, chunk_ids=chunk_ids)
+        return {
+            row["chunk_id"]: RTFMResult(
+                path=row["file_path"],
+                line_start=row["line_start"],
+                line_end=row["line_end"],
+                snippet=row["content"],
+                score=1.0,
+                metadata={"chunk_id": row["chunk_id"]},
+            )
+            for row in rows
+        }
+
     def health_check(self) -> RetrievalEngineHealth:
         """Perform a quick health and readiness diagnostic on RTFM."""
         db_path = self.get_db_path()
@@ -268,6 +343,7 @@ class RTFMAdapter(RetrievalEngine):
         total_chunks = 0
         total_books = 0
         has_embeddings = False
+        has_fts = False
         details: list[str] = []
 
         if db_exists and db_path:
@@ -287,6 +363,7 @@ class RTFMAdapter(RetrievalEngine):
                             "SELECT name FROM sqlite_master WHERE type='table'"
                         )
                     }
+                    has_fts = "chunks_fts" in tables
                     if "embeddings" in tables or "chunk_embeddings" in tables:
                         has_embeddings = True
                     else:
@@ -310,5 +387,6 @@ class RTFMAdapter(RetrievalEngine):
             total_chunks=total_chunks,
             total_books=total_books,
             has_embeddings=has_embeddings,
+            has_fts=has_fts,
             details="; ".join(details),
         )

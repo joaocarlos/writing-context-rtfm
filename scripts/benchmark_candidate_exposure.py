@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from writing_context_rtfm.candidate_exposure import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.eval.candidate_exposure import (
     run_candidate_exposure,
     write_candidate_exposure_report,
     write_pilot_v1_freeze,

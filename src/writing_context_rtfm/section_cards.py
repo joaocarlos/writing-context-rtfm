@@ -100,6 +100,27 @@ def _merge_terminology(generated: Any, overrides: Any) -> dict[str, dict[str, An
     return merged
 
 
+def get_section_cards_files(
+    path: str | Path = ".writing-context/section_cards.yaml",
+) -> list[Path]:
+    """Return all candidate files that make up the section cards state (legacy and v2 split)."""
+    path_obj = Path(path)
+    parent = path_obj.parent
+    candidates = [
+        path_obj,
+        parent / "cards.generated.yaml",
+        parent / "cards.overrides.yaml",
+        parent / "cards.lock.json",
+    ]
+    seen: set[Path] = set()
+    result: list[Path] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+
 def migrate_legacy_cards(project_root: str) -> bool:
     """Migrates legacy section_cards.yaml to split cards structure."""
     root = Path(project_root).resolve()
@@ -115,19 +136,29 @@ def migrate_legacy_cards(project_root: str) -> bool:
         except Exception:
             return False
 
-        overrides = {"version": 2, "document": legacy_data.get("document", {}), "sections": {}}
+        overrides: dict[str, Any] = {
+            "version": 2,
+            "document": legacy_data.get("document") or {},
+            "sections": {},
+        }
 
-        legacy_sections = legacy_data.get("sections", {})
+        legacy_sections = legacy_data.get("sections") or {}
         for sid, sdata in legacy_sections.items():
-            overrides["sections"][sid] = {
+            sdata = sdata or {}
+            sec_entry: dict[str, Any] = {
                 "title": sdata.get("title"),
-                "purpose": sdata.get("role"),
+                "purpose": sdata.get("role") or sdata.get("purpose"),
                 "key_terms": sdata.get("key_terms"),
                 "depends_on": sdata.get("depends_on"),
                 "must_preserve": sdata.get("must_preserve"),
                 "avoid": sdata.get("avoid"),
                 "constraints": sdata.get("constraints"),
             }
+            if sdata.get("path"):
+                sec_entry["path"] = sdata.get("path")
+            if sdata.get("selector"):
+                sec_entry["selector"] = sdata.get("selector")
+            overrides["sections"][sid] = sec_entry
 
         # Save overrides
         overrides_path.parent.mkdir(exist_ok=True)
@@ -159,8 +190,8 @@ def _merge_split_cards(
     generated: dict[str, Any], overrides: dict[str, Any], lock: dict[str, Any]
 ) -> SectionCards:
     """Merges cards.generated.yaml, cards.overrides.yaml, and cards.lock.json into SectionCards."""
-    gen_doc = generated.get("document", {})
-    over_doc = overrides.get("document", {})
+    gen_doc = (generated.get("document") if isinstance(generated, dict) else None) or {}
+    over_doc = (overrides.get("document") if isinstance(overrides, dict) else None) or {}
 
     doc_title = over_doc.get("title") or gen_doc.get("title")
     doc_thesis = over_doc.get("thesis") or gen_doc.get("thesis")
@@ -172,52 +203,99 @@ def _merge_split_cards(
     )
 
     sections: dict[str, SectionCard] = {}
-    gen_sections = generated.get("sections", {})
-    over_sections = overrides.get("sections", {})
+    gen_sections = (generated.get("sections") if isinstance(generated, dict) else None) or {}
+    over_sections = (overrides.get("sections") if isinstance(overrides, dict) else None) or {}
+    lock_sections = (lock.get("sections") if isinstance(lock, dict) else None) or {}
 
     all_section_ids = set(gen_sections.keys()).union(set(over_sections.keys()))
 
     for sid in all_section_ids:
-        gs = gen_sections.get(sid, {}) or {}
-        os_data = over_sections.get(sid, {}) or {}
+        gs = gen_sections.get(sid) or {}
+        os_data = over_sections.get(sid) or {}
+        sec_lock = lock_sections.get(sid) or {}
+        sec_decisions = (
+            (sec_lock.get("decisions") if isinstance(sec_lock, dict) else None) or {}
+        )
 
+        structure_obj = gs.get("structure") or {}
+        identity_obj = gs.get("identity") or {}
         title = (
             os_data.get("title")
-            or gs.get("structure", {}).get("title")
+            or (structure_obj.get("title") if isinstance(structure_obj, dict) else None)
             or sid.replace("section_", "").replace("_", " ").title()
         )
-        path = gs.get("identity", {}).get("source") or os_data.get("path")
-        selector = gs.get("identity", {}).get("selector") or os_data.get("selector")
-        purpose = (
-            os_data.get("purpose")
-            or gs.get("purpose", {}).get("value")
-            or os_data.get("role")
-            or gs.get("rhetorical_role", {}).get("value")
+        path = os_data.get("path") or (
+            identity_obj.get("source") if isinstance(identity_obj, dict) else None
+        )
+        selector = os_data.get("selector") or (
+            identity_obj.get("selector") if isinstance(identity_obj, dict) else None
         )
 
+        purpose_obj = gs.get("purpose") or {}
+        purpose_status = sec_decisions.get("purpose") or (
+            purpose_obj.get("status", "generated")
+            if isinstance(purpose_obj, dict)
+            else "generated"
+        )
+        gen_purpose = (
+            purpose_obj.get("value")
+            if isinstance(purpose_obj, dict) and purpose_status != "rejected"
+            else None
+        )
+        role_obj = gs.get("rhetorical_role") or {}
+        gen_role = role_obj.get("value") if isinstance(role_obj, dict) else None
+        purpose = os_data.get("purpose") or gen_purpose or os_data.get("role") or gen_role
+
         unverified_key_terms: list[str] = []
-        if "key_terms" in os_data and os_data["key_terms"] is not None:
-            key_terms = os_data["key_terms"]
-        else:
-            key_terms = []
-            for kt in gs.get("key_terms", []):
-                val = kt.get("value") if isinstance(kt, dict) else kt
-                status = kt.get("status") if isinstance(kt, dict) else "generated"
-                if status != "rejected" and val:
+        key_terms: list[str] = []
+        over_kts = os_data.get("key_terms")
+        over_kt_set: set[str] = set()
+        if isinstance(over_kts, list):
+            for item in over_kts:
+                if item and str(item) not in key_terms:
+                    key_terms.append(str(item))
+                    over_kt_set.add(str(item))
+        elif isinstance(over_kts, dict):
+            for k in over_kts:
+                if k and str(k) not in key_terms:
+                    key_terms.append(str(k))
+                    over_kt_set.add(str(k))
+
+        for kt in gs.get("key_terms") or []:
+            val = kt.get("value") if isinstance(kt, dict) else kt
+            if not val:
+                continue
+            status = (
+                sec_decisions.get(f"key_terms:{val}")
+                or (kt.get("status") if isinstance(kt, dict) else None)
+                or "generated"
+            )
+            if status != "rejected":
+                if val not in key_terms:
                     key_terms.append(val)
-                    if status not in ("accepted", "verified", "override"):
-                        unverified_key_terms.append(val)
+                if status not in ("accepted", "verified", "override") and val not in over_kt_set:
+                    unverified_key_terms.append(val)
+            elif val in key_terms and val not in over_kt_set:
+                key_terms.remove(val)
 
         unverified_dependencies: list[str] = []
-        if "depends_on" in os_data and os_data["depends_on"] is not None:
-            depends_on = os_data["depends_on"]
+        over_deps = os_data.get("depends_on")
+        if isinstance(over_deps, list) and len(over_deps) > 0:
+            depends_on = list(over_deps)
         else:
             depends_on = []
-            for dep in gs.get("dependencies", []):
+            for dep in gs.get("dependencies") or []:
                 target = dep.get("target") if isinstance(dep, dict) else dep
-                status = dep.get("status") if isinstance(dep, dict) else "generated"
-                if status != "rejected" and target:
-                    depends_on.append(target)
+                if not target:
+                    continue
+                status = (
+                    sec_decisions.get(f"dependencies:{target}")
+                    or (dep.get("status") if isinstance(dep, dict) else None)
+                    or "generated"
+                )
+                if status != "rejected":
+                    if target not in depends_on:
+                        depends_on.append(target)
                     if status not in ("accepted", "verified", "override"):
                         unverified_dependencies.append(target)
 
@@ -228,9 +306,15 @@ def _merge_split_cards(
         for p in must_preserve:
             verified_facts.append({"value": p, "status": "override", "source": sid})
 
-        for fact in gs.get("facts", []):
+        for fact in gs.get("facts") or []:
             val = fact.get("value") if isinstance(fact, dict) else fact
-            status = fact.get("status") if isinstance(fact, dict) else "generated"
+            if not val:
+                continue
+            status = (
+                sec_decisions.get(f"facts:{val}")
+                or (fact.get("status") if isinstance(fact, dict) else None)
+                or "generated"
+            )
             if status in ("accepted", "verified") and val:
                 if val not in must_preserve:
                     must_preserve.append(val)
@@ -238,10 +322,16 @@ def _merge_split_cards(
                     verified_facts.append({"value": val, "status": status, "source": sid})
 
         avoid = list(os_data.get("avoid") or [])
-        for constraint in gs.get("constraints", []):
+        for constraint in gs.get("constraints") or []:
             val = constraint.get("value") if isinstance(constraint, dict) else constraint
+            if not val:
+                continue
             c_type = constraint.get("type") if isinstance(constraint, dict) else ""
-            status = constraint.get("status") if isinstance(constraint, dict) else "generated"
+            status = (
+                sec_decisions.get(f"constraints:{val}")
+                or (constraint.get("status") if isinstance(constraint, dict) else None)
+                or "generated"
+            )
             if (
                 status in ("accepted", "verified")
                 and c_type in ("terminology_avoidance", "prohibited_claims")
@@ -251,15 +341,21 @@ def _merge_split_cards(
                 avoid.append(val)
 
         constraints = list(os_data.get("constraints") or [])
-        for se in os_data.get("scope_exclusions", []):
+        for se in os_data.get("scope_exclusions") or []:
             if se not in constraints:
                 constraints.append(se)
-        for tp in os_data.get("terminology_preferences", []):
+        for tp in os_data.get("terminology_preferences") or []:
             if tp not in constraints:
                 constraints.append(tp)
-        for constraint in gs.get("constraints", []):
+        for constraint in gs.get("constraints") or []:
             val = constraint.get("value") if isinstance(constraint, dict) else constraint
-            status = constraint.get("status") if isinstance(constraint, dict) else "generated"
+            if not val:
+                continue
+            status = (
+                sec_decisions.get(f"constraints:{val}")
+                or (constraint.get("status") if isinstance(constraint, dict) else None)
+                or "generated"
+            )
             if status in ("accepted", "verified") and val and val not in constraints:
                 constraints.append(val)
 
@@ -279,7 +375,12 @@ def _merge_split_cards(
             selector=selector,
         )
 
-    return SectionCards(version=generated.get("version", 2), document=document, sections=sections)
+    version_val = (
+        (generated.get("version") if isinstance(generated, dict) else None)
+        or (overrides.get("version") if isinstance(overrides, dict) else None)
+        or 2
+    )
+    return SectionCards(version=version_val, document=document, sections=sections)
 
 
 merge_cards = _merge_split_cards
@@ -296,10 +397,12 @@ def load_section_cards(
     overrides_path = parent / "cards.overrides.yaml"
     lock_path = parent / "cards.lock.json"
 
-    if generated_path.exists():
+    if generated_path.exists() or overrides_path.exists():
         try:
-            with open(generated_path, encoding="utf-8") as f:
-                gen_data = yaml.safe_load(f) or {}
+            gen_data: dict[str, Any] = {}
+            if generated_path.exists():
+                with open(generated_path, encoding="utf-8") as f:
+                    gen_data = yaml.safe_load(f) or {}
 
             overrides_data: dict[str, Any] = {}
             if overrides_path.exists():

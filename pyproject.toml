@@ -10,7 +10,7 @@ exclude = [
 
 [project]
 name = "writing-context-rtfm"
-version = "0.23.10"
+version = "0.30.0"
 description = "Context engine prioritizing RTFM search results into compact context packs"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -74,6 +74,7 @@ ignore = ["E501", "E402", "N806", "B023", "SIM102", "SIM117"]
 
 [tool.mypy]
 python_version = "3.13"
+mypy_path = ["src", "."]
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -122,4 +123,4 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]

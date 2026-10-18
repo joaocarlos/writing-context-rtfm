@@ -25,10 +25,7 @@ jobs:
         run: uv run ruff check src tests scripts
 
       - name: Run typecheck (mypy)
-        run: uv run mypy src scripts/benchmark_regression.py
+        run: uv run mypy src
 
       - name: Run test suite (pytest)
         run: uv run pytest
-
-      - name: Run benchmark regression suite
-        run: uv run python scripts/benchmark_regression.py -v

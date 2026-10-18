@@ -4,7 +4,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.sdist]
 exclude = [
-    "benchmark/**",
     "test-project/**",
 ]
 
@@ -74,7 +73,7 @@ ignore = ["E501", "E402", "N806", "B023", "SIM102", "SIM117"]
 
 [tool.mypy]
 python_version = "3.13"
-mypy_path = ["src", "."]
+mypy_path = ["src"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true

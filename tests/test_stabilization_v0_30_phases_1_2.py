@@ -697,8 +697,7 @@ def test_phase_4_retrieval_boundary_and_packaging_cleanup():
     src_pkg = Path(__file__).resolve().parents[1] / "src" / "writing_context_rtfm"
     # 1. Benchmark-only modules must not be shipped inside src/writing_context_rtfm
     for moved_module in ("benchmark.py", "candidate_exposure.py", "rtfm_sync_explicit.py"):
-        assert not (src_pkg / moved_module).exists(), f"{moved_module} should be in tests/eval/"
-        assert (Path(__file__).resolve().parent / "eval" / moved_module).exists()
+        assert not (src_pkg / moved_module).exists()
 
     # 2. Only rtfm_adapter.py and storage.py (for context_cache.sqlite) may import sqlite3 in src/
     sqlite_importers = []

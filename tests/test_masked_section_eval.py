@@ -1,6 +1,6 @@
 import unittest
 
-from eval.metrics import (
+from tests.eval.metrics import (
     check_forbidden_phrases,
     check_latex_compile_success,
     check_length_bounds,
@@ -9,7 +9,7 @@ from eval.metrics import (
     check_section_heading_presence,
     lexical_similarity_v2,
 )
-from eval.rubric import load_rubric
+from tests.eval.rubric import load_rubric
 
 
 class TestMaskedSectionEval(unittest.TestCase):

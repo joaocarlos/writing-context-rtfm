@@ -22,4 +22,10 @@ The `writing-context-rtfm` extension evaluates retrieval optimization and conten
 **Goal**: Quantify exactly how much token context is saved by the tool versus reading the entire repository natively.
 - Asserts a baseline `≥ 3x` token reduction ratio to demonstrate the architectural value of the RTFM wrapper.
 
+## 5. Strict Test Integrity & Anti-Tampering Standard
+**Tests are non-negotiable specifications, not mutable answer keys.**
+- Under no circumstances may an agent or developer weaken assertions, inject `pytest.skip`, delete test cases, or introduce circular artificial mocks merely to force a failing test to turn green.
+- A failing test is an authoritative signal that the system code or environment violates an established requirement. Engineering effort must be directed 100% at investigating and fixing the underlying system implementation.
+- Tests may only be edited when the canonical specification itself changes or when correcting an objectively proven syntax/fixture bug in the test itself.
+
 By separating the tests into Contract, Retrieval, Semantic Evaluation, and Efficiency Layers, we can strictly guarantee that the extension limits context bloat while providing robust LLM writing context.

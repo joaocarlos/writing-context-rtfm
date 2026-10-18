@@ -88,7 +88,7 @@ class LocalIntentClassifier:
         model: Any | None = None,
         confidence_threshold: float = 0.55,
         margin_threshold: float = 0.05,
-        local_files_only: bool = True,
+        local_files_only: bool = False,
     ):
         self.model_id = model_id
         self._model = model

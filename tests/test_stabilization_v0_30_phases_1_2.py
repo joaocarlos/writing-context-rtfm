@@ -94,7 +94,7 @@ def test_get_active_reranker_preserves_modernbert_default_max_length():
 
 
 def test_local_intent_classifier_enforces_local_files_only_and_memoizes_failure():
-    clf = LocalIntentClassifier(model_id="org/missing-model")
+    clf = LocalIntentClassifier(model_id="org/missing-model", local_files_only=True)
     assert clf.local_files_only is True
 
     mock_st = MagicMock()
@@ -110,6 +110,20 @@ def test_local_intent_classifier_enforces_local_files_only_and_memoizes_failure(
         # Subsequent call returns None immediately without calling SentenceTransformer again
         assert clf._get_model() is None
         assert mock_st.SentenceTransformer.call_count == 1
+
+
+def test_local_intent_classifier_downloads_on_demand_when_not_cached():
+    clf = LocalIntentClassifier(model_id="org/remote-model")
+    assert clf.local_files_only is False
+
+    mock_st = MagicMock()
+    mock_model = MagicMock()
+    mock_st.SentenceTransformer.side_effect = [OSError("Not in cache"), mock_model]
+    with patch("importlib.import_module", return_value=mock_st):
+        assert clf._get_model() is mock_model
+        assert mock_st.SentenceTransformer.call_count == 2
+        mock_st.SentenceTransformer.assert_any_call("org/remote-model", local_files_only=True)
+        mock_st.SentenceTransformer.assert_any_call("org/remote-model")
 
 
 def test_infer_writing_mode_prioritizes_deterministic_regex_and_skips_neural_in_fast_profile(

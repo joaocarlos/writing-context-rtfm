@@ -524,8 +524,8 @@ def get_tools_list() -> dict[str, Any]:
                             "type": "integer",
                             "default": 4000,
                             "description": (
-                                "Upper bound on tokens in the assembled pack. If local context plus "
-                                "constraints exceeds this, status becomes 'degraded'."
+                                "Target token budget for assembled pack. When context exceeds this, "
+                                "full context is preserved to guarantee editorial precision."
                             ),
                         },
                     },
@@ -1033,7 +1033,7 @@ def handle_get_proofreading_context_pack(args: dict[str, Any]) -> dict[str, Any]
         all_warnings.extend(card_warnings)
     if all_warnings:
         payload["warnings"] = all_warnings
-        has_degrading_warning = any(not w.startswith("LaTeX Safety:") for w in all_warnings)
+        has_degrading_warning = any(_is_degrading_pack_warning(w) for w in all_warnings)
         if has_degrading_warning and payload.get("status") == "complete":
             payload["status"] = "degraded"
     return _success_response(_sanitize_pack_for_output(payload))

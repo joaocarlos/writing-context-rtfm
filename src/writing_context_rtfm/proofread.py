@@ -188,11 +188,6 @@ class ProofreadPackGenerator:
         )
         est = estimate_tokens(total_text) + estimate_tokens(json.dumps(asdict(constraints)))
 
-        if est > max_tokens:
-            warnings.append(
-                f"Note: Estimated tokens ({est}) exceeds the requested max_tokens ({max_tokens}). "
-                f"The full context was preserved to prevent context bloat."
-            )
 
         guidance = (
             f"Target: {target_file} (lines {line_start}-{line_end}). "

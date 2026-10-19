@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.30.1] - 2026-10-19
+
+### Fixed
+- **Proofreading Token Budget & Status Classification (`proofread.py`, `server.py`)**:
+  - Removed artificial token overflow warning check in `ProofreadPackGenerator.generate`, trusting the complete atomic context (target text, surrounding context, section constraints, and terminology) without truncation.
+  - Aligned `handle_get_proofreading_context_pack` in `server.py` to use `_is_degrading_pack_warning(w)`, preventing informational notes or non-degrading warnings from falsely reclassifying the response status to `"degraded"`.
+  - Updated tool schema description for `max_tokens` in `get_proofreading_context_pack` to clarify that full context is preserved to guarantee editorial precision.
+
 ## [0.30.0] - 2026-10-18
 
 ### Added

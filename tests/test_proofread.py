@@ -124,7 +124,7 @@ def test_token_budget_degraded(
     pack = generator.generate(target_file=test_file, line_start=3, line_end=4, max_tokens=10)
 
     assert pack.status == "complete"
-    assert any("exceeds the requested max_tokens" in w for w in pack.warnings)
+    assert not any("exceeds the requested max_tokens" in w for w in pack.warnings)
     assert pack.estimated_tokens > 10
 
 
@@ -339,3 +339,28 @@ def test_proofread_records_telemetry_run_in_store(
     assert stored_sources[0]["path"] == test_file
     assert stored_sources[0]["line_start"] == 3
     assert stored_sources[0]["line_end"] == 4
+
+
+def test_server_handle_proofread_preserves_complete_status_under_tight_budget(
+    mock_config, mock_section_cards, mock_adapter, mock_store, test_file
+):
+    import json
+    from unittest.mock import patch
+
+    from writing_context_rtfm.server import handle_get_proofreading_context_pack
+
+    with patch("writing_context_rtfm.server._load_runtime") as mock_load:
+        mock_load.return_value = (mock_config, mock_section_cards, [], mock_adapter, mock_store)
+
+        args = {
+            "target_file": test_file,
+            "line_start": 3,
+            "line_end": 4,
+            "max_tokens": 10,
+        }
+
+        resp = handle_get_proofreading_context_pack(args)
+        assert "content" in resp
+        payload = json.loads(resp["content"][0]["text"])
+        assert payload["status"] == "complete"
+

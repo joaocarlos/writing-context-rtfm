@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.30.2] - 2026-10-23
+
+### Fixed
+- **Tokenomics Telemetry Fallback (`storage.py`, `cli.py`)**:
+  - Replaced falsy `or` fallback with explicit `is not None` checks for `realistic_tokens_saved` and `realistic_savings_ratio` in `ExtensionStore.store_pack`, preventing zero-saving runs (e.g. packs larger than target neighborhood) from falling back to full-document naive savings and distorting aggregate statistics.
+- **LaTeX Safety Math Environment Filtering (`latex.py`)**:
+  - Restricted `scan_latex_commands` AST environment matching to mathematical environments (`equation`, `align`, `gather`, `multline`, etc.). Prose and list environments (`enumerate`, `itemize`, `description`) are no longer dumped as monolithic verbatim blocks into `warnings`, while nested citations, labels, and inline math inside items are still cleanly traversed and preserved.
+- **Zotero Provider Discovery Search Optimization (`providers/local.py`)**:
+  - Added automatic skip of open-ended discovery searches when target section has structural roles (`appendix`, `frontmatter`, `backmatter`), preserving explicit `\cite{...}` resolution while preventing multi-second sequential searches on non-content sections.
+  - Filtered generic stopwords and short abbreviations (<3 chars) from external queries, and capped maximum external Zotero search requests per pack to eliminate cold-start latency spikes.
+
 ## [0.30.1] - 2026-10-19
 
 ### Fixed

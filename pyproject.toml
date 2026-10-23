@@ -9,7 +9,7 @@ exclude = [
 
 [project]
 name = "writing-context-rtfm"
-version = "0.30.1"
+version = "0.30.2"
 description = "Context engine prioritizing RTFM search results into compact context packs"
 readme = "README.md"
 requires-python = ">=3.13"

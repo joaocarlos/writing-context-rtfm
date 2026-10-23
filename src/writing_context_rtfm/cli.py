@@ -1456,8 +1456,19 @@ def stats_command(args: argparse.Namespace) -> None:
             target_str = r.get("target") or "Whole Doc"
             t_mode = r.get("mode", "write")
             b_mode = r.get("baseline_mode", "section_neighborhood")
-            saved = r.get("realistic_tokens_saved", r.get("tokens_saved", 0))
-            ratio = r.get("realistic_savings_ratio", r.get("savings_ratio", 0.0)) * 100.0
+            saved = (
+                r["realistic_tokens_saved"]
+                if r.get("realistic_tokens_saved") is not None
+                else r.get("tokens_saved", 0)
+            )
+            ratio = (
+                (
+                    r["realistic_savings_ratio"]
+                    if r.get("realistic_savings_ratio") is not None
+                    else r.get("savings_ratio", 0.0)
+                )
+                * 100.0
+            )
             pack_tok = r.get("pack_tokens", 0)
             base_tok = r.get("baseline_realistic_tokens", r.get("baseline_doc_tokens", 0))
             raw_tok = r.get("baseline_tokens_raw", base_tok)

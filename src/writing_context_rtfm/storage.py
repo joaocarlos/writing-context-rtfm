@@ -335,18 +335,58 @@ class ExtensionStore:
     ) -> None:
         with self._connect() as conn:
             cursor = conn.cursor()
-            pack_tokens = run_data.get("pack_tokens") or payload.get("estimated_tokens", 0)
-            baseline_doc_tokens = run_data.get("baseline_doc_tokens") or 0
-            tokens_saved = run_data.get("tokens_saved") or 0
-            savings_ratio = run_data.get("savings_ratio") or 0.0
-            schema_overhead = run_data.get("schema_overhead_tokens") or 420
-            latency_ms = run_data.get("latency_ms") or 0.0
-            baseline_realistic = run_data.get("baseline_realistic_tokens") or baseline_doc_tokens
-            realistic_saved = run_data.get("realistic_tokens_saved") or tokens_saved
-            realistic_ratio = run_data.get("realistic_savings_ratio") or savings_ratio
+            pack_tokens = (
+                run_data["pack_tokens"]
+                if run_data.get("pack_tokens") is not None
+                else payload.get("estimated_tokens", 0)
+            )
+            baseline_doc_tokens = (
+                run_data["baseline_doc_tokens"]
+                if run_data.get("baseline_doc_tokens") is not None
+                else 0
+            )
+            tokens_saved = (
+                run_data["tokens_saved"]
+                if run_data.get("tokens_saved") is not None
+                else 0
+            )
+            savings_ratio = (
+                run_data["savings_ratio"]
+                if run_data.get("savings_ratio") is not None
+                else 0.0
+            )
+            schema_overhead = (
+                run_data["schema_overhead_tokens"]
+                if run_data.get("schema_overhead_tokens") is not None
+                else 420
+            )
+            latency_ms = (
+                run_data["latency_ms"]
+                if run_data.get("latency_ms") is not None
+                else 0.0
+            )
+            baseline_realistic = (
+                run_data["baseline_realistic_tokens"]
+                if run_data.get("baseline_realistic_tokens") is not None
+                else baseline_doc_tokens
+            )
+            realistic_saved = (
+                run_data["realistic_tokens_saved"]
+                if run_data.get("realistic_tokens_saved") is not None
+                else tokens_saved
+            )
+            realistic_ratio = (
+                run_data["realistic_savings_ratio"]
+                if run_data.get("realistic_savings_ratio") is not None
+                else savings_ratio
+            )
             baseline_mode = run_data.get("baseline_mode") or "section_neighborhood"
             task_mode = run_data.get("mode") or payload.get("mode") or "write"
-            baseline_raw = run_data.get("baseline_tokens_raw") or baseline_realistic
+            baseline_raw = (
+                run_data["baseline_tokens_raw"]
+                if run_data.get("baseline_tokens_raw") is not None
+                else baseline_realistic
+            )
             is_capped = 1 if run_data.get("is_capped") else 0
             instruction_tokens = run_data.get("instruction_tokens") or 0
             generation_tokens = run_data.get("generation_tokens") or 0

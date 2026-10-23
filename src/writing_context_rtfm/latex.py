@@ -19,6 +19,34 @@ MACRO_NAME_PAT = re.compile(
     r"^(cite[a-zA-Z]*|ref[a-zA-Z]*|eqref|label|cref|Cref|autoref|pageref|vref)$"
 )
 
+MATH_ENVIRONMENTS = {
+    "equation",
+    "equation*",
+    "align",
+    "align*",
+    "gather",
+    "gather*",
+    "multline",
+    "multline*",
+    "eqnarray",
+    "eqnarray*",
+    "math",
+    "displaymath",
+    "split",
+    "aligned",
+    "gathered",
+    "alignedat",
+    "flalign",
+    "flalign*",
+    "cases",
+    "matrix",
+    "pmatrix",
+    "bmatrix",
+    "vmatrix",
+    "Vmatrix",
+    "smallmatrix",
+}
+
 
 def scan_latex_commands(text: str) -> list[str]:
     """Scan text for LaTeX citations, labels, refs, and math environments using pylatexenc AST."""
@@ -40,10 +68,16 @@ def scan_latex_commands(text: str) -> list[str]:
                 m_clean = node.latex_verbatim().strip().replace("\n", " ")
                 if m_clean not in found:
                     found.append(m_clean)
-        elif node.isNodeType(LatexMathNode) or node.isNodeType(LatexEnvironmentNode):
+        elif node.isNodeType(LatexMathNode):
             m_clean = node.latex_verbatim().strip().replace("\n", " ")
             if m_clean not in found:
                 found.append(m_clean)
+        elif node.isNodeType(LatexEnvironmentNode):
+            env_name = getattr(node, "environmentname", "") or ""
+            if env_name.lower() in MATH_ENVIRONMENTS:
+                m_clean = node.latex_verbatim().strip().replace("\n", " ")
+                if m_clean not in found:
+                    found.append(m_clean)
 
         if hasattr(node, "nodelist") and node.nodelist:
             for child in node.nodelist:

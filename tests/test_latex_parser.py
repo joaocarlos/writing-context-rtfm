@@ -50,6 +50,30 @@ class TestLatexParser(unittest.TestCase):
         self.assertIn("$$c + d$$", cmds)
         self.assertTrue(any(c.startswith(r"\begin{equation}") for c in cmds))
 
+    def test_scan_latex_commands_filters_non_math_environments(self):
+        text = r"""
+        \begin{enumerate}[leftmargin=1.5em]
+            \item First item with \cite{author2024} and inline math $x = 1$.
+            \item Second item with \label{item:two}.
+        \end{enumerate}
+        \begin{align}
+            E &= mc^2 \label{eq:einstein}
+        \end{align}
+        """
+        cmds = scan_latex_commands(text)
+
+        # Enumerate environment itself must NOT be included as a verbatim block
+        self.assertFalse(any(c.startswith(r"\begin{enumerate}") for c in cmds))
+
+        # But citations, labels, and math nested inside the list must be captured
+        self.assertIn(r"\cite{author2024}", cmds)
+        self.assertIn(r"\label{item:two}", cmds)
+        self.assertIn("$x = 1$", cmds)
+
+        # Math environments like align must still be preserved
+        self.assertTrue(any(c.startswith(r"\begin{align}") for c in cmds))
+        self.assertIn(r"\label{eq:einstein}", cmds)
+
     def test_build_reference_graph(self):
         # Create temp files
         main_tex = self.project_dir / "main.tex"

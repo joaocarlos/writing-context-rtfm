@@ -608,3 +608,71 @@ def test_group_only_libraries_defaults_to_personal_user_library(base_config, moc
     assert lib.library_type == "user"
 
 
+def test_appendix_role_skips_external_zotero_searches(base_config, mock_manager):
+    from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
+
+    mock_cards = SectionCards(
+        version=2,
+        document=DocumentCard(title="Test", thesis="Thesis"),
+        sections={
+            "section_appendix": SectionCard(
+                id="section_appendix",
+                title="Appendix A",
+                role="appendix",
+                path="appendix.tex",
+            )
+        },
+    )
+
+    with patch(
+        "writing_context_rtfm.section_cards.load_section_cards", return_value=mock_cards
+    ):
+        provider = ZoteroProvider(base_config)
+        queries = ["AI", "Explain the architecture", "spatiotemporal vulnerability"]
+        query_type_map = {
+            "Explain the architecture": "intent",
+            "spatiotemporal vulnerability": "key_term",
+        }
+
+        spans = provider.fetch_context(
+            queries, target="section_appendix", limit=5, query_type_map=query_type_map
+        )
+
+        # Verification: external search should not be called for appendix
+        mock_manager.call_tool.assert_not_called()
+        assert len(spans) == 0
+
+
+def test_generic_stopwords_and_short_queries_filtered(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+
+    mock_result = MagicMock()
+    block = MagicMock()
+    block.type = "text"
+    block.text = "## 1. Domain Paper\n**Citation Key:** domainKey2025\n"
+    mock_result.content = [block]
+    mock_manager.call_tool.return_value = mock_result
+
+    # Queries mix: "AI" (<3 chars), "thesis" / "review" / "IEEE" (stopwords), "spatiotemporal" (legitimate)
+    queries = ["AI", "thesis", "review", "IEEE", "spatiotemporal"]
+    query_type_map = {
+        "AI": "key_term",
+        "thesis": "task_keyword",
+        "review": "task_keyword",
+        "IEEE": "key_term",
+        "spatiotemporal": "key_term",
+    }
+
+    spans = provider.fetch_context(
+        queries, target=None, limit=5, query_type_map=query_type_map
+    )
+
+    # Only "spatiotemporal" should have triggered a call
+    assert mock_manager.call_tool.call_count == 1
+    call_args = mock_manager.call_tool.call_args[1]
+    assert call_args["tool_name"] == "zotero_search_items"
+    assert call_args["arguments"]["query"] == "spatiotemporal"
+    assert len(spans) == 1
+
+
+

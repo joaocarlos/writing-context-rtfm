@@ -358,6 +358,41 @@ class TestStorage(unittest.TestCase):
 
             legacy_store.close()
 
+    def test_store_pack_preserves_zero_realistic_tokens_saved(self):
+        run_data = {
+            "task_hash": "zero-saved-task",
+            "task": "Revise small appendix",
+            "target": "section_appendix",
+            "corpus": "test_corpus",
+            "token_budget": 6000,
+            "pack_tokens": 6122,
+            "baseline_doc_tokens": 180000,
+            "tokens_saved": 173878,
+            "savings_ratio": 0.965,
+            "baseline_realistic_tokens": 4044,
+            "realistic_tokens_saved": 0,
+            "realistic_savings_ratio": 0.0,
+            "baseline_tokens_raw": 4044,
+            "is_capped": False,
+            "baseline_mode": "section_neighborhood",
+            "mode": "rewrite",
+            "schema_overhead_tokens": 420,
+            "latency_ms": 150.0,
+        }
+        self.store.store_pack("run-zero-saved-001", run_data, {"estimated_tokens": 6122}, [])
+
+        stats = self.store.get_tokenomics_stats()
+        self.assertEqual(stats["total_runs"], 1)
+        self.assertEqual(stats["total_realistic_baseline_tokens"], 4044)
+        # Crucial check: realistic_tokens_saved must be 0, NOT fallen back to tokens_saved (173878)
+        self.assertEqual(stats["total_realistic_tokens_saved"], 0)
+        self.assertEqual(stats["avg_realistic_savings_ratio"], 0.0)
+
+        recent = stats["recent_runs"]
+        self.assertEqual(len(recent), 1)
+        self.assertEqual(recent[0]["realistic_tokens_saved"], 0)
+        self.assertEqual(recent[0]["realistic_savings_ratio"], 0.0)
+
     def test_defensive_error_suppression(self):
         # Test invalid arguments to get_session_tokenomics
         res = self.store.get_session_tokenomics(window_hours="invalid", message_limit=None)  # type: ignore[arg-type]

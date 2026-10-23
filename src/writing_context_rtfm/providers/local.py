@@ -12,6 +12,55 @@ from writing_context_rtfm.schemas import SourceSpan
 
 logger = logging.getLogger("mcp-server")
 
+GENERIC_ZOTERO_STOPWORDS: frozenset[str] = frozenset({
+    "a",
+    "an",
+    "the",
+    "in",
+    "on",
+    "at",
+    "for",
+    "to",
+    "of",
+    "and",
+    "or",
+    "by",
+    "with",
+    "review",
+    "list",
+    "thesis",
+    "template",
+    "paper",
+    "papers",
+    "section",
+    "sections",
+    "chapter",
+    "chapters",
+    "publication",
+    "publications",
+    "document",
+    "documents",
+    "draft",
+    "drafts",
+    "write",
+    "writing",
+    "read",
+    "reading",
+    "overview",
+    "introduction",
+    "conclusion",
+    "method",
+    "methods",
+    "result",
+    "results",
+    "discussion",
+    "abstract",
+    "ieee",
+    "acm",
+    "springer",
+    "elsevier",
+})
+
 
 @dataclass(frozen=True)
 class _ZoteroLibrary:
@@ -435,15 +484,22 @@ class ZoteroProvider(BaseContextProvider):
             cards = None
 
         target_files = []
-        if cards and target and target in cards.sections:
-            target_card = cards.sections[target]
-            if target_card.path:
-                target_files.append(Path(self.config.rtfm.project_root) / target_card.path)
-            for dep_id in target_card.depends_on or []:
-                if dep_id in cards.sections:
-                    dep_card = cards.sections[dep_id]
-                    if dep_card.path:
-                        target_files.append(Path(self.config.rtfm.project_root) / dep_card.path)
+        target_card = None
+        if cards and target:
+            target_card = cards.sections.get(target)
+            if not target_card and cards.sections:
+                for sc in cards.sections.values():
+                    if sc.path == target or (sc.path and Path(sc.path).name == Path(target).name):
+                        target_card = sc
+                        break
+            if target_card:
+                if target_card.path:
+                    target_files.append(Path(self.config.rtfm.project_root) / target_card.path)
+                for dep_id in target_card.depends_on or []:
+                    if dep_id in cards.sections:
+                        dep_card = cards.sections[dep_id]
+                        if dep_card.path:
+                            target_files.append(Path(self.config.rtfm.project_root) / dep_card.path)
 
         for fpath in target_files:
             if fpath.exists():
@@ -552,6 +608,14 @@ class ZoteroProvider(BaseContextProvider):
         if task_type == "proofread":
             logger.info(
                 "Task type is proofread; skipping external Zotero searches to avoid context contamination."
+            )
+            return _deduplicate_spans(spans)
+
+        # Skip external open-ended searches for structural/appendix/frontmatter sections
+        target_role = getattr(target_card, "role", None) if target_card else None
+        if target_role in ("appendix", "frontmatter", "backmatter"):
+            logger.info(
+                f"Target section '{target}' has role '{target_role}'; skipping external Zotero discovery searches."
             )
             return _deduplicate_spans(spans)
 
@@ -685,10 +749,23 @@ class ZoteroProvider(BaseContextProvider):
                     )
             return _deduplicate_spans(matched)
 
+        filtered_queries: list[str] = []
         for q in queries:
-            if q in cite_keys or q in resolved_keys:
+            if not q or q in cite_keys or q in resolved_keys:
                 continue
+            q_clean = q.strip()
+            if len(q_clean) < 3 or q_clean.lower() in GENERIC_ZOTERO_STOPWORDS:
+                continue
+            if q_clean not in filtered_queries:
+                filtered_queries.append(q_clean)
 
+        filtered_queries.sort(
+            key=lambda item: 0 if query_type_map.get(item, "task_keyword") in semantic_types else 1
+        )
+        max_external_queries = int(extra_cfg.get("max_queries", 5))
+        active_queries = filtered_queries[:max_external_queries]
+
+        for q in active_queries:
             q_type = query_type_map.get(q, "task_keyword")
             is_semantic = q_type in semantic_types
 

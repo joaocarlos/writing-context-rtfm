@@ -318,6 +318,16 @@ sections:
         msg_prompts = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})
         res_prompts = json.loads(process_message(msg_prompts))
         self.assertIn("prompts", res_prompts["result"])
+        prompt_map = {p["name"]: p for p in res_prompts["result"]["prompts"]}
+        self.assertIn("write_section", prompt_map)
+        self.assertIn("proofread_section", prompt_map)
+        self.assertIn("audit_manuscript", prompt_map)
+        write_args = {a["name"]: a for a in prompt_map["write_section"]["arguments"]}
+        self.assertFalse(write_args["target"]["required"])
+        self.assertIn("profile", write_args)
+        self.assertIn("must_consider", write_args)
+        self.assertIn("strict_budget", write_args)
+        self.assertIn("git_diff", write_args)
 
         msg_initialize = json.dumps(
             {"jsonrpc": "2.0", "id": 10, "method": "initialize", "params": {}}
@@ -352,3 +362,44 @@ sections:
         )
         res_call = json.loads(process_message(msg_call))
         self.assertIn("content", res_call["result"])
+
+        # 5. prompts/get for write_section (with profile='fast' and comma-separated must_consider)
+        msg_get_write = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "prompts/get",
+                "params": {
+                    "name": "write_section",
+                    "arguments": {
+                        "task": "Draft section_intro",
+                        "profile": "fast",
+                        "must_consider": "termA, termB",
+                        "strict_budget": "true",
+                    },
+                },
+            }
+        )
+        res_get_write = json.loads(process_message(msg_get_write))
+        self.assertIn("messages", res_get_write["result"])
+        write_prompt_text = res_get_write["result"]["messages"][0]["content"]["text"]
+        self.assertIn("submit_generation_feedback", write_prompt_text)
+        self.assertIn("Run ID:", write_prompt_text)
+
+        # 6. prompts/get for audit_manuscript
+        msg_get_audit = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "prompts/get",
+                "params": {
+                    "name": "audit_manuscript",
+                    "arguments": {"project_root": str(self.root)},
+                },
+            }
+        )
+        res_get_audit = json.loads(process_message(msg_get_audit))
+        self.assertIn("messages", res_get_audit["result"])
+        audit_prompt_text = res_get_audit["result"]["messages"][0]["content"]["text"]
+        self.assertIn("<manuscript_summary>", audit_prompt_text)
+        self.assertIn("<terminology_violations>", audit_prompt_text)

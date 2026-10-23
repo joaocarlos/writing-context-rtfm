@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.30.3] - 2026-10-23
+
+### Added
+- **Unified Optional Dependency Group (`pyproject.toml`)**:
+  - Added `all = ["tiktoken", "sentence-transformers>=3.4.1", "transformers>=4.48.0"]` under `[project.optional-dependencies]`, allowing single-command complete installation via `uv tool install "writing-context-rtfm[all]" --force`.
+- **Native MCP Manuscript Audit Prompt (`server.py`)**:
+  - Added `audit_manuscript` to `prompts/list` and `prompts/get`, combining `audit_manuscript_terminology` and `build_reference_graph` into an automated, high-density LLM prompt summarizing scanned files, defined labels, terminology violations, and unresolved LaTeX cross-references.
+
+### Changed
+- **Native MCP Prompt Modernization (`server.py`)**:
+  - Updated `write_section` prompt: made `target` optional (`required: false`) to support automatic target inference from `task`, and added arguments for `profile` (`auto`, `fast`, `quality`), `must_consider`, `strict_budget`, and `git_diff`.
+- **Closed-Loop Telemetry & Autonomous Agent Guidance (`server.py`)**:
+  - Injected `run_id` into formatted prompts (`<task>` and `<instructions>`) and tool response `guidance` for both `get_writing_context_pack` and `get_proofreading_context_pack`.
+  - Prompts and guidance now instruct LLM agents to automatically close the feedback loop by invoking `submit_generation_feedback(run_id=..., generation_tokens=...)` upon drafting or revising, ensuring session statistics remain fully populated without human intervention.
+
 ## [0.30.2] - 2026-10-23
 
 ### Fixed

@@ -73,6 +73,7 @@ def _format_write_section_prompt(pack: Any) -> str:
             + "\n</author_macros>\n\n"
         )
 
+    run_id_str = getattr(pack, "run_id", None) or "N/A"
     return (
         "You are an expert scientific manuscript co-author and academic editor. "
         "Your objective is to draft or revise the specified manuscript section with rigorous fidelity "
@@ -80,6 +81,7 @@ def _format_write_section_prompt(pack: Any) -> str:
         f"<task>\n"
         f"Task: {pack.task}\n"
         f"Target Section: {pack.target or 'Unknown'}\n"
+        f"Run ID: {run_id_str}\n"
         f"</task>\n\n"
         f"<thesis>\n"
         f"[Manuscript Thesis]:\n{pack.document_thesis or 'None'}\n"
@@ -101,6 +103,7 @@ def _format_write_section_prompt(pack: Any) -> str:
         f"</rules>\n\n"
         f"<instructions>\n"
         f"Instruction: Draft or revise the section based strictly on the provided context spans and constraints above. Maintain academic tone and LaTeX/Markdown formatting consistency.\n"
+        f"Feedback Logging: After completing the draft/revision, call `submit_generation_feedback` with `run_id=\"{run_id_str}\"` and `generation_tokens` (estimated tokens generated).\n"
         f"</instructions>"
     )
 
@@ -241,6 +244,48 @@ def _format_proofread_section_prompt(pack: Any) -> str:
         f"</safety_rules>\n\n"
         f"<instructions>\n"
         f"Instruction: Revise the target segment strictly following the mode and constraints above. Maintain terminology consistency as shown in the examples.\n"
+        f"Feedback Logging: After completing the revision, call `submit_generation_feedback` with `run_id=\"{getattr(pack, 'run_id', None) or 'N/A'}\"` and `generation_tokens`.\n"
+        f"</instructions>"
+    )
+
+
+def _format_audit_manuscript_prompt(audit_res: dict[str, Any], graph_res: dict[str, Any]) -> str:
+    violations = audit_res.get("violations") or []
+    violations_txt = (
+        "\n".join(
+            f"- [{v.get('type', 'term')}] {v.get('term', '')} in {v.get('file', '')}:{v.get('line', '?')} — {v.get('message', '')}"
+            for v in violations[:50]
+        )
+        if violations
+        else "None detected."
+    )
+    unresolved = graph_res.get("unresolved_references") or []
+    unresolved_txt = (
+        "\n".join(
+            f"- `\\ref{{{u.get('label', '')}}}` in {u.get('file', '')}:{u.get('line', '?')}"
+            for u in unresolved[:50]
+        )
+        if unresolved
+        else "None detected."
+    )
+    files_scanned = graph_res.get("files_scanned") or []
+    labels = graph_res.get("defined_labels") or {}
+    return (
+        "You are an expert scientific manuscript editor performing a structural and terminology audit.\n\n"
+        f"<manuscript_summary>\n"
+        f"Files scanned: {len(files_scanned)}\n"
+        f"Defined LaTeX labels: {len(labels)}\n"
+        f"Terminology violations detected: {len(violations)}\n"
+        f"Unresolved cross-references: {len(unresolved)}\n"
+        f"</manuscript_summary>\n\n"
+        f"<terminology_violations>\n"
+        f"{violations_txt}\n"
+        f"</terminology_violations>\n\n"
+        f"<unresolved_references>\n"
+        f"{unresolved_txt}\n"
+        f"</unresolved_references>\n\n"
+        f"<instructions>\n"
+        f"Review the terminology violations and unresolved LaTeX cross-references above, prioritize actionable fixes by severity, and propose surgical edits to restore manuscript consistency.\n"
         f"</instructions>"
     )
 
@@ -878,10 +923,12 @@ def handle_get_writing_context_pack(args: dict[str, Any]) -> dict[str, Any]:
     payload = asdict(pack)
     if output_mode != "structured":
         payload["formatted_prompt"] = _format_write_section_prompt(pack)
+    run_id_str = getattr(pack, "run_id", None) or "N/A"
     payload["guidance"] = (
-        f"Writing Context Pack generated for task: '{task}'. "
+        f"Writing Context Pack generated for task: '{task}' (run_id: '{run_id_str}'). "
         f"Target section: '{target or 'General'}'. "
-        f"Use formatted_prompt or source_spans to draft/revise content aligned with section constraints."
+        f"Use formatted_prompt or source_spans to draft/revise content aligned with section constraints. "
+        f"After generating text, call submit_generation_feedback with run_id='{run_id_str}' and generation_tokens."
     )
     all_warnings = list(pack.warnings or [])
     if card_warnings:
@@ -1022,11 +1069,13 @@ def handle_get_proofreading_context_pack(args: dict[str, Any]) -> dict[str, Any]
 
     payload = asdict(pack)
     payload["formatted_prompt"] = _format_proofread_section_prompt(pack)
+    run_id_str = getattr(pack, "run_id", None) or "N/A"
     if not payload.get("guidance"):
         payload["guidance"] = (
-            f"Proofreading Context Pack generated for '{args.get('target_file')}' (lines {args.get('line_start')}-{args.get('line_end')}). "
+            f"Proofreading Context Pack generated for '{args.get('target_file')}' (lines {args.get('line_start')}-{args.get('line_end')}, run_id: '{run_id_str}'). "
             f"Mode: '{args.get('mode', 'surface')}', Strictness: '{args.get('strictness', 'moderate')}'. "
-            f"Use formatted_prompt to execute inline revisions with exact line replacements."
+            f"Use formatted_prompt to execute inline revisions with exact line replacements. "
+            f"After revising, call submit_generation_feedback with run_id='{run_id_str}' and generation_tokens."
         )
     all_warnings = list(pack.warnings or [])
     if card_warnings:
@@ -2090,8 +2139,8 @@ def process_message(line: str) -> str | None:
                                 },
                                 {
                                     "name": "target",
-                                    "description": "section_id from section_cards.yaml (e.g. section_intro)",
-                                    "required": True,
+                                    "description": "Section ID or filename (e.g. section_intro, chapter6.tex). Optional if inferable from task.",
+                                    "required": False,
                                     "type": "string",
                                 },
                                 {
@@ -2129,6 +2178,30 @@ def process_message(line: str) -> str | None:
                                     "description": "Functional writing mode: write, rewrite, adapt, compress",
                                     "required": False,
                                     "type": "string",
+                                },
+                                {
+                                    "name": "profile",
+                                    "description": "Retrieval profile override (auto, fast, quality)",
+                                    "required": False,
+                                    "type": "string",
+                                },
+                                {
+                                    "name": "must_consider",
+                                    "description": "Comma-separated terms or citation keys that must be prioritized",
+                                    "required": False,
+                                    "type": "string",
+                                },
+                                {
+                                    "name": "strict_budget",
+                                    "description": "Enforce strict token budget ceiling (true/false)",
+                                    "required": False,
+                                    "type": "boolean",
+                                },
+                                {
+                                    "name": "git_diff",
+                                    "description": "Prioritize lines modified in git working tree (true/false)",
+                                    "required": False,
+                                    "type": "boolean",
                                 },
                             ],
                         },
@@ -2168,6 +2241,18 @@ def process_message(line: str) -> str | None:
                                 },
                             ],
                         },
+                        {
+                            "name": "audit_manuscript",
+                            "description": "Pre-structure a manuscript consistency audit prompt combining terminology violations and LaTeX reference graph checks.",
+                            "arguments": [
+                                {
+                                    "name": "project_root",
+                                    "description": "Optional project root directory path",
+                                    "required": False,
+                                    "type": "string",
+                                },
+                            ],
+                        },
                     ]
                 }
             elif method == "prompts/get":
@@ -2183,8 +2268,32 @@ def process_message(line: str) -> str | None:
                     line_end_val = arguments.get("line_end")
                     pack_mode = arguments.get("pack_mode")
                     mode = arguments.get("mode")
+                    profile_override = arguments.get("profile")
+                    raw_must = arguments.get("must_consider")
+                    if isinstance(raw_must, str):
+                        must_consider = [t.strip() for t in raw_must.split(",") if t.strip()]
+                    elif isinstance(raw_must, list):
+                        must_consider = [str(t).strip() for t in raw_must if str(t).strip()]
+                    else:
+                        must_consider = []
+                    raw_strict = arguments.get("strict_budget")
+                    strict_budget = (
+                        raw_strict.strip().lower() in ("true", "1", "yes")
+                        if isinstance(raw_strict, str)
+                        else (bool(raw_strict) if raw_strict is not None else None)
+                    )
+                    raw_git_diff = arguments.get("git_diff")
+                    git_diff = (
+                        raw_git_diff.strip().lower() in ("true", "1", "yes")
+                        if isinstance(raw_git_diff, str)
+                        else bool(raw_git_diff)
+                    )
                     try:
                         config, cards, card_warnings, adapter, store = _load_runtime()
+                        if profile_override:
+                            from writing_context_rtfm.config import apply_profile
+
+                            config = apply_profile(config, str(profile_override))
                         budget = (
                             int(budget_arg)
                             if budget_arg is not None
@@ -2211,11 +2320,14 @@ def process_message(line: str) -> str | None:
                             task=task,
                             target=target,
                             token_budget=budget,
+                            must_consider=must_consider,
                             task_type=task_type,
                             line_start=line_start,
                             line_end=line_end,
                             pack_mode=pack_mode,
+                            strict_budget=strict_budget,
                             mode=mode,
+                            git_diff=git_diff,
                         )
                         prompt_text = _format_write_section_prompt(pack)
                         result = {
@@ -2264,6 +2376,31 @@ def process_message(line: str) -> str | None:
                         }
                     except Exception as e:
                         logger.exception("Failed to hydrate prompt proofread_section")
+                        response = json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": req.get("id"),
+                                "error": {
+                                    "code": -32603,
+                                    "message": f"Failed to hydrate prompt: {e}",
+                                },
+                            }
+                        )
+                        return response
+                elif name == "audit_manuscript":
+                    project_root = str(arguments.get("project_root") or WORKSPACE_ROOT)
+                    try:
+                        audit_res = audit_manuscript_terminology(project_root)
+                        graph_res = build_reference_graph(project_root)
+                        prompt_text = _format_audit_manuscript_prompt(audit_res, graph_res)
+                        result = {
+                            "description": "Hydrated manuscript terminology and reference graph audit prompt.",
+                            "messages": [
+                                {"role": "user", "content": {"type": "text", "text": prompt_text}}
+                            ],
+                        }
+                    except Exception as e:
+                        logger.exception("Failed to hydrate prompt audit_manuscript")
                         response = json.dumps(
                             {
                                 "jsonrpc": "2.0",

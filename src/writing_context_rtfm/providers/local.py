@@ -88,6 +88,24 @@ def _result_text(result: Any) -> str:
     )
 
 
+_ZOTERO_UNRESOLVED_PATTERNS = (
+    "no item found with citation key",
+    "returned no results",
+    "semantically related papers found via ai-powered search",
+    "the target paper may not be in your library",
+    "no item found",
+    "no items found",
+    "error looking up citation key",
+)
+
+
+def _is_unresolved_zotero_result(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    lower = text.casefold()
+    return any(pat in lower for pat in _ZOTERO_UNRESOLVED_PATTERNS)
+
+
 def _parse_libraries(markdown_text: str) -> list[_ZoteroLibrary]:
     if not markdown_text or not markdown_text.strip():
         return []
@@ -523,17 +541,13 @@ class ZoteroProvider(BaseContextProvider):
                     "zotero_search_by_citation_key",
                     {"citekey": key},
                 )
-                content_blocks = getattr(res, "content", [])
-                block_text = ""
-                for block in content_blocks:
-                    if getattr(block, "type", None) == "text" and getattr(block, "text", None):
-                        block_text += block.text
+                block_text = _result_text(res)
+                author_match = re.match(r"^([a-zA-Z]+)", key)
+                year_match = re.search(r"(\d{4})", key)
 
                 # Smart fallback: if Better BibTeX is not running or key not in Extra,
                 # extract author and year from citation key and search
-                if "No item found with citation key" in block_text or not block_text.strip():
-                    author_match = re.match(r"^([a-zA-Z]+)", key)
-                    year_match = re.search(r"(\d{4})", key)
+                if _is_unresolved_zotero_result(block_text):
                     if author_match and year_match:
                         author = author_match.group(1)
                         year = year_match.group(1)
@@ -547,18 +561,24 @@ class ZoteroProvider(BaseContextProvider):
                             "zotero_search_items",
                             {"query": fallback_query, "limit": 3},
                         )
-                        fallback_blocks = getattr(fallback_res, "content", [])
+                        fallback_text = _result_text(fallback_res)
+                        if not _is_unresolved_zotero_result(fallback_text) and author.lower() in fallback_text.lower():
+                            block_text = fallback_text
+                        else:
+                            block_text = ""
+                    else:
                         block_text = ""
-                        for fb in fallback_blocks:
-                            if getattr(fb, "type", None) == "text" and getattr(fb, "text", None):
-                                block_text += fb.text
 
-                if block_text.strip() and "No item found" not in block_text:
+                if not _is_unresolved_zotero_result(block_text):
                     # Try to extract the 8-character Zotero item key to retrieve annotations/notes
-                    item_key_match = re.search(r"Item Key:\s*(\w{8})", block_text, re.IGNORECASE)
+                    item_key_match = re.search(
+                        r"(?:\*\*)?Item Key:(?:\*\*)?\s*(\w{8})", block_text, re.IGNORECASE
+                    )
                     ann_text = ""
+                    notes_text = ""
                     if item_key_match:
                         z_key = item_key_match.group(1)
+                        # 1. Fetch user annotations
                         try:
                             ann_res = self._call_tool(
                                 manager,
@@ -569,13 +589,66 @@ class ZoteroProvider(BaseContextProvider):
                                 if getattr(ann_block, "type", None) == "text" and getattr(
                                     ann_block, "text", None
                                 ):
-                                    ann_text += "\n" + ann_block.text
+                                    t = ann_block.text.strip()
+                                    if (
+                                        t
+                                        and not t.startswith("No annotations found")
+                                        and not t.startswith("Error fetching annotations")
+                                    ):
+                                        ann_text += "\n" + t
                         except Exception:
                             pass
 
+                        # 2. Fetch user notes
+                        try:
+                            notes_res = self._call_tool(
+                                manager,
+                                "zotero_get_notes",
+                                {"item_key": z_key, "truncate": True},
+                            )
+                            for n_block in getattr(notes_res, "content", []):
+                                if getattr(n_block, "type", None) == "text" and getattr(
+                                    n_block, "text", None
+                                ):
+                                    t = n_block.text.strip()
+                                    if (
+                                        t
+                                        and not t.startswith("No notes found")
+                                        and not t.startswith("Error fetching notes")
+                                    ):
+                                        notes_text += "\n" + t
+                        except Exception:
+                            pass
+
+                        # 3. If item has neither notes nor annotations, explore search notes for mentions
+                        if not ann_text and not notes_text and author_match:
+                            author = author_match.group(1)
+                            try:
+                                rel_res = self._call_tool(
+                                    manager,
+                                    "zotero_search_notes",
+                                    {"query": author, "limit": 2},
+                                )
+                                for r_block in getattr(rel_res, "content", []):
+                                    if getattr(r_block, "type", None) == "text" and getattr(
+                                        r_block, "text", None
+                                    ):
+                                        t = r_block.text.strip()
+                                        if (
+                                            t
+                                            and not t.startswith("No results found")
+                                            and not t.startswith("Error")
+                                        ):
+                                            notes_text += "\n" + t
+                            except Exception:
+                                pass
+
                     snippet = block_text
-                    if ann_text:
-                        snippet += "\n\n### User Highlights & Annotations:\n" + ann_text
+                    has_user_content = bool(ann_text.strip() or notes_text.strip())
+                    if notes_text.strip():
+                        snippet += "\n\n### User Notes:\n" + notes_text.strip()
+                    if ann_text.strip():
+                        snippet += "\n\n### User Highlights & Annotations:\n" + ann_text.strip()
 
                     return SourceSpan(
                         path=f"zotero:{key}",
@@ -585,7 +658,11 @@ class ZoteroProvider(BaseContextProvider):
                         score=0.95,
                         priority="supporting",
                         source_role="reference",
-                        metadata={"snippet": snippet, "citekey": key},
+                        metadata={
+                            "snippet": snippet,
+                            "citekey": key,
+                            "has_user_content": has_user_content,
+                        },
                     )
             except Exception as e:
                 logger.error(f"Zotero citation key lookup failed for '{key}': {e}")
@@ -749,6 +826,58 @@ class ZoteroProvider(BaseContextProvider):
                     )
             return _deduplicate_spans(matched)
 
+        def _note_search(query: str) -> list[SourceSpan]:
+            note_spans: list[SourceSpan] = []
+            try:
+                res = self._call_tool(
+                    manager,
+                    "zotero_search_notes",
+                    {"query": query, "limit": min(limit, 5)},
+                )
+                block_text = _result_text(res)
+                if (
+                    not block_text
+                    or "No results found" in block_text
+                    or "Error" in block_text
+                    or "returned no results" in block_text
+                ):
+                    return []
+
+                # Split by markdown headers like "## Note 1" or "## Annotation 1"
+                parts = re.split(r"(?m)^## (?:Note|Annotation)\s+\d+", block_text)
+                for part in parts[1:]:
+                    part_str = part.strip()
+                    if not part_str:
+                        continue
+                    key_match = re.search(r"\*\*Key:\*\*\s*([\w]+)", part_str)
+                    note_key = key_match.group(1) if key_match else None
+                    parent_match = re.search(r'\(from "([^"]+)"\)', part_str)
+                    parent_title = parent_match.group(1) if parent_match else None
+
+                    span_path = f"zotero:note:{note_key}" if note_key else f"zotero:note:{query}"
+                    snippet = f"## Note (from \"{parent_title}\")\n{part_str}" if parent_title else f"## Note\n{part_str}"
+
+                    note_spans.append(
+                        SourceSpan(
+                            path=span_path,
+                            line_start=None,
+                            line_end=None,
+                            reason=f"Zotero user notes & annotations match for '{query}'",
+                            score=0.88,
+                            priority="supporting",
+                            source_role="reference",
+                            metadata={
+                                "snippet": snippet,
+                                "note_key": note_key,
+                                "parent_title": parent_title,
+                                "has_user_content": True,
+                            },
+                        )
+                    )
+            except Exception as note_e:
+                logger.debug(f"Zotero note search failed for '{query}': {note_e}")
+            return note_spans
+
         filtered_queries: list[str] = []
         for q in queries:
             if not q or q in cite_keys or q in resolved_keys:
@@ -805,8 +934,14 @@ class ZoteroProvider(BaseContextProvider):
                         continue
                     except Exception as sem_e:
                         logger.info(
-                            f"Semantic search failed for '{q}', falling back to keyword search: {sem_e}"
+                            f"Semantic search failed for '{q}', falling back to note/keyword search: {sem_e}"
                         )
+                        # When semantic search is unavailable, search user notes first
+                        spans.extend(_note_search(q))
+
+                elif extra_cfg.get("search_notes", False):
+                    # User explicitly requested searching notes for all queries
+                    spans.extend(_note_search(q))
 
                 # Keyword search (for keywords, or as fallback)
                 spans.extend(_metadata_search(q, q_type))

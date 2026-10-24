@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.30.4] - 2026-10-24
+
+### Fixed
+- **Zotero Hallucinated AI Search Fallback Rejection (`providers/local.py`)**:
+  - Added strict rejection pattern matching (`_is_unresolved_zotero_result`) for missing citation keys. Out-of-domain AI-powered fallback papers returned by Zotero MCP when a cited key is not in the library are now completely rejected rather than accepted under `zotero:<citekey>`.
+- **Cross-Provider Reference Deduplication (`context_pack.py`)**:
+  - Implemented cross-provider deduplication between `bibtex:` and `zotero:` spans sharing the same citation key. If the Zotero item contains user notes, annotations, or highlights, the rich Zotero span is retained and the BibTeX span is deduplicated. If Zotero contains only generic metadata, the canonical offline BibTeX span is kept and the duplicate Zotero span is dropped.
+- **Structural Scaffolding and Preamble Filtering (`context_pack.py`)**:
+  - Excluded pure non-narrative acronym and notation files (`abbrevs.tex`, `acronyms.tex`, `symbols.tex`, etc.) from RTFM semantic content retrieval, preventing abbreviation tables from flooding token budgets.
+  - Excluded book/thesis assembler preambles (`thesis.tex`) when dedicated chapter files are targeted. Single-file manuscripts (`main.tex`, `paper.tex`) remain fully preserved.
+
+### Added
+- **Zotero User Notes & Annotations Extraction (`providers/local.py`)**:
+  - Extended citation resolution to query `zotero_get_notes(item_key=...)` in addition to `zotero_get_annotations`, injecting user-authored child notes directly under `### User Notes:`.
+  - Added fallback search via `zotero_search_notes` when a cited paper lacks direct annotations or when local semantic search is unavailable, surfacing personal reading takeaways and highlighted quotes into the writing context.
+
 ## [0.30.3] - 2026-10-23
 
 ### Added

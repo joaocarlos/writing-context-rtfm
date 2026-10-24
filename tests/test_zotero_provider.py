@@ -675,4 +675,133 @@ def test_generic_stopwords_and_short_queries_filtered(base_config, mock_manager)
     assert len(spans) == 1
 
 
+def test_reject_hallucinated_ai_fallback_on_missing_citation_key(base_config, mock_manager, tmp_path):
+    manuscript = tmp_path / "paper.tex"
+    manuscript.write_text(r"\cite{shengDelayAnalysisTimeCritical2018}", encoding="utf-8")
+
+    from dataclasses import replace
+
+    config = replace(base_config, rtfm=replace(base_config.rtfm, project_root=str(tmp_path)))
+    provider = ZoteroProvider(config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None, session_scope=None):
+        mock_res = MagicMock()
+        block = MagicMock()
+        block.type = "text"
+        if tool_name == "zotero_search_by_citation_key":
+            block.text = "No item found with citation key: 'shengDelayAnalysisTimeCritical2018'"
+        elif tool_name == "zotero_search_items":
+            block.text = (
+                "*Note: Original search for 'sheng 2018' returned no results. "
+                "The following 3 item(s) are semantically related papers found via AI-powered search "
+                "— they may be ABOUT the same topic but may NOT be the exact paper you're looking for. "
+                "The target paper may not be in your library. Verify carefully by checking title, authors, and journal.*\n\n"
+                "## 1. Some Unrelated Paper\n**Item Key:** UNREL001\n"
+            )
+        mock_res.content = [block]
+        return mock_res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    mock_cards = MagicMock()
+    mock_card = MagicMock()
+    mock_card.path = "paper.tex"
+    mock_card.depends_on = []
+    mock_cards.sections = {"intro": mock_card}
+
+    with patch("writing_context_rtfm.section_cards.load_section_cards", return_value=mock_cards):
+        spans = provider.fetch_context(
+            queries=[], target="intro", limit=5, query_type_map={}, task_type="proofread"
+        )
+
+    # Hallucinated fallback must be rejected
+    assert len(spans) == 0
+
+
+def test_citation_key_resolves_and_attaches_user_notes(base_config, mock_manager, tmp_path):
+    manuscript = tmp_path / "paper.tex"
+    manuscript.write_text(r"\cite{costaSurveyEmergenciesManagement2022}", encoding="utf-8")
+
+    from dataclasses import replace
+
+    config = replace(base_config, rtfm=replace(base_config.rtfm, project_root=str(tmp_path)))
+    provider = ZoteroProvider(config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None, session_scope=None):
+        mock_res = MagicMock()
+        block = MagicMock()
+        block.type = "text"
+        if tool_name == "zotero_search_by_citation_key":
+            block.text = (
+                "# Citation Key: costaSurveyEmergenciesManagement2022\n\n"
+                "## A Survey of Emergencies Management Systems in Smart Cities\n"
+                "**Type:** journalArticle\n"
+                "**Item Key:** NAV93GTA\n"
+                "**Authors:** Costa, Daniel G.\n"
+            )
+        elif tool_name == "zotero_get_annotations":
+            block.text = "Highlight on page 10: prioritizing critical events"
+        elif tool_name == "zotero_get_notes":
+            block.text = "Summary note: key taxonomy of smart city emergencies"
+        mock_res.content = [block]
+        return mock_res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    mock_cards = MagicMock()
+    mock_card = MagicMock()
+    mock_card.path = "paper.tex"
+    mock_card.depends_on = []
+    mock_cards.sections = {"intro": mock_card}
+
+    with patch("writing_context_rtfm.section_cards.load_section_cards", return_value=mock_cards):
+        spans = provider.fetch_context(
+            queries=[], target="intro", limit=5, query_type_map={}, task_type="proofread"
+        )
+
+    assert len(spans) == 1
+    span = spans[0]
+    assert span.path == "zotero:costaSurveyEmergenciesManagement2022"
+    snippet = span.metadata["snippet"]
+    assert "### User Notes:" in snippet
+    assert "Summary note: key taxonomy of smart city emergencies" in snippet
+    assert "### User Highlights & Annotations:" in snippet
+    assert "Highlight on page 10: prioritizing critical events" in snippet
+    assert span.metadata["has_user_content"] is True
+
+
+def test_semantic_search_fallback_to_user_notes(base_config, mock_manager):
+    provider = ZoteroProvider(base_config)
+
+    def fake_call_tool(command, args, tool_name, arguments, env=None, session_scope=None):
+        mock_res = MagicMock()
+        block = MagicMock()
+        block.type = "text"
+        if tool_name == "zotero_semantic_search":
+            block.text = "Semantic search is not available. Install it with: uv tool install..."
+        elif tool_name == "zotero_search_notes":
+            block.text = (
+                "# Search Results for 'scheduling'\n\n"
+                "## Note 1 (from \"Adaptive Priority Scheduling of IoT Data\")\n"
+                "**Key:** NOTE0001\n"
+                "**Content:**\nMulti-level priority packet classification reduces delivery delay.\n"
+            )
+        elif tool_name == "zotero_search_items":
+            block.text = "## 1. Scheduling Paper\n**Item Key:** ITEM0001\n"
+        mock_res.content = [block]
+        return mock_res
+
+    mock_manager.call_tool.side_effect = fake_call_tool
+
+    spans = provider.fetch_context(
+        ["scheduling"], target=None, limit=5, query_type_map={"scheduling": "intent"}
+    )
+
+    # Both notes and metadata search results should be present
+    note_spans = [s for s in spans if "zotero:note:" in s.path]
+    assert len(note_spans) == 1
+    assert "Adaptive Priority Scheduling of IoT Data" in note_spans[0].metadata["parent_title"]
+    assert "Multi-level priority packet classification" in note_spans[0].metadata["snippet"]
+
+
 

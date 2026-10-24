@@ -286,5 +286,88 @@ class TestContextPackGenerator(unittest.TestCase):
         self.assertTrue(pack.quality.get("dropped_for_budget", 0) >= 1)
 
 
+    def test_cross_provider_reference_deduplication(self):
+        # Case 1: Zotero has NO notes -> canonical BibTeX span should be kept
+        bib_span = SourceSpan(
+            path="bibtex:costa2022",
+            line_start=None,
+            line_end=None,
+            score=0.9,
+            source_role="reference",
+            priority="supporting",
+            reason="BibTeX reference for citation key 'costa2022'",
+            metadata={"citekey": "costa2022", "snippet": "@article{costa2022, title={Urban EMS}}"},
+        )
+        zotero_span_plain = SourceSpan(
+            path="zotero:costa2022",
+            line_start=None,
+            line_end=None,
+            score=0.95,
+            source_role="reference",
+            priority="supporting",
+            reason="Zotero reference for citation key 'costa2022'",
+            metadata={"citekey": "costa2022", "snippet": "## Urban EMS\n**Authors:** Costa"},
+        )
+
+        deduped = self.generator._deduplicate_spans([bib_span, zotero_span_plain])
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0].path, "bibtex:costa2022")
+
+        # Case 2: Zotero HAS user notes -> Zotero span should be kept to preserve user notes
+        zotero_span_notes = SourceSpan(
+            path="zotero:costa2022",
+            line_start=None,
+            line_end=None,
+            score=0.95,
+            source_role="reference",
+            priority="supporting",
+            reason="Zotero reference for citation key 'costa2022'",
+            metadata={
+                "citekey": "costa2022",
+                "snippet": "## Urban EMS\n### User Notes:\nImportant prioritized queuing model",
+                "has_user_content": True,
+            },
+        )
+        deduped_notes = self.generator._deduplicate_spans([bib_span, zotero_span_notes])
+        self.assertEqual(len(deduped_notes), 1)
+        self.assertEqual(deduped_notes[0].path, "zotero:costa2022")
+        self.assertIn("Important prioritized queuing model", deduped_notes[0].metadata["snippet"])
+
+    def test_structural_scaffolding_filtered_when_not_target(self):
+        r_thesis = MagicMock()
+        r_thesis.path = "thesis.tex"
+        r_thesis.line_start = 1
+        r_thesis.line_end = 250
+        r_thesis.score = 0.95
+        r_thesis.snippet = r"\documentclass{book}\n\usepackage{acronym}"
+        r_thesis.metadata = {}
+
+        r_abbrevs = MagicMock()
+        r_abbrevs.path = "abbrevs.tex"
+        r_abbrevs.line_start = 1
+        r_abbrevs.line_end = 115
+        r_abbrevs.score = 0.92
+        r_abbrevs.snippet = r"\newacronym{AAP}{AAP}{Active Priority}"
+        r_abbrevs.metadata = {}
+
+        r_chapter = MagicMock()
+        r_chapter.path = "chapter1.tex"
+        r_chapter.line_start = 10
+        r_chapter.line_end = 30
+        r_chapter.score = 0.85
+        r_chapter.snippet = "This chapter discusses urban priority frameworks."
+        r_chapter.metadata = {}
+
+        self.adapter.search.return_value = [r_thesis, r_abbrevs, r_chapter]
+
+        pack = self.generator.generate(task="write chapter6", target="chapter6.tex", token_budget=2000)
+
+        # thesis.tex and abbrevs.tex must be filtered out as structural scaffolding
+        paths = [s.path for s in pack.source_spans]
+        self.assertNotIn("thesis.tex", paths)
+        self.assertNotIn("abbrevs.tex", paths)
+        self.assertIn("chapter1.tex", paths)
+
+
 if __name__ == "__main__":
     unittest.main()

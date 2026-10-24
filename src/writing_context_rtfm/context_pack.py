@@ -74,6 +74,17 @@ BibliographyHandoff = Callable[
     Sequence[SourceSpan],
 ]
 
+STRUCTURAL_SCAFFOLDING_FILES: frozenset[str] = frozenset(
+    {
+        "abbrevs.tex",
+        "abbreviations.tex",
+        "acronyms.tex",
+        "glossary.tex",
+        "symbols.tex",
+        "notation.tex",
+    }
+)
+
 # Task intent patterns for robust writing mode inference
 _REMOVAL_INTENT_PATTERN = re.compile(
     r"\b(?:remover|remov[aeiou][a-z]*|deletar|delet[aeiou][a-z]*|excluir|exclus[a-z]*|eliminar|elimin[a-z]*|apagar|remove|delete|drop)\b",
@@ -914,6 +925,74 @@ class ContextPackGenerator:
     ) -> list[SourceSpan]:
         if not candidates:
             return []
+
+        # 0. Cross-provider deduplication for citation reference spans (e.g. bibtex: vs zotero:)
+        ref_by_citekey: dict[str, list[SourceSpan]] = defaultdict(list)
+        non_cite_candidates: list[SourceSpan] = []
+
+        for c in candidates:
+            ck = (c.metadata or {}).get("citekey")
+            if not ck and (c.path.startswith("bibtex:") or c.path.startswith("zotero:")):
+                parts = c.path.split(":", 1)
+                if len(parts) == 2 and parts[1] and not parts[1].startswith("note:"):
+                    ck = parts[1]
+
+            if (
+                ck
+                and c.source_role == "reference"
+                and (c.path.startswith("bibtex:") or c.path.startswith("zotero:"))
+            ):
+                ref_by_citekey[ck].append(c)
+            else:
+                non_cite_candidates.append(c)
+
+        filtered_ref_candidates: list[SourceSpan] = []
+        for _ck, ref_spans in ref_by_citekey.items():
+            if len(ref_spans) == 1:
+                filtered_ref_candidates.append(ref_spans[0])
+                continue
+
+            zotero_span = next((s for s in ref_spans if s.path.startswith("zotero:")), None)
+            bibtex_span = next((s for s in ref_spans if s.path.startswith("bibtex:")), None)
+
+            if zotero_span and bibtex_span:
+                z_snippet = (zotero_span.metadata or {}).get("snippet", "")
+                has_notes = (
+                    "### User Notes:" in z_snippet
+                    or "### User Highlights & Annotations:" in z_snippet
+                    or "### Related Library Notes:" in z_snippet
+                    or bool((zotero_span.metadata or {}).get("has_user_content"))
+                )
+                if has_notes:
+                    combined_reasons = []
+                    for r in [bibtex_span.reason, zotero_span.reason]:
+                        if r and r not in combined_reasons:
+                            combined_reasons.append(r)
+                    kept_span = replace(zotero_span, reason="; ".join(combined_reasons))
+                    dropped_span = bibtex_span
+                else:
+                    combined_reasons = []
+                    for r in [bibtex_span.reason, zotero_span.reason]:
+                        if r and r not in combined_reasons:
+                            combined_reasons.append(r)
+                    kept_span = replace(bibtex_span, reason="; ".join(combined_reasons))
+                    dropped_span = zotero_span
+
+                if tracker is not None:
+                    canonical_cid = compute_span_candidate_id(kept_span)
+                    tracker.record_deduplicated(
+                        dropped_span, kept=False, canonical_cid=canonical_cid
+                    )
+                    tracker.record_deduplicated(kept_span, kept=True)
+
+                filtered_ref_candidates.append(kept_span)
+                for other in ref_spans:
+                    if other is not zotero_span and other is not bibtex_span:
+                        filtered_ref_candidates.append(other)
+            else:
+                filtered_ref_candidates.extend(ref_spans)
+
+        candidates = non_cite_candidates + filtered_ref_candidates
 
         # 1. Group spans by file path
         by_file = defaultdict(list)
@@ -1949,6 +2028,39 @@ class ContextPackGenerator:
                                     line_start=r.line_start,
                                     line_end=r.line_end,
                                     reason="Excluded path",
+                                    score=raw_score_val,
+                                ),
+                                reason=FILTER_UNALLOWED_PATH,
+                                action="filter_unallowed",
+                            )
+                        continue
+
+                    r_name = Path(r.path).name.lower()
+                    target_files: set[str] = set()
+                    if target:
+                        target_files.add(Path(target).name.lower())
+                    if target_card and target_card.path:
+                        target_files.add(Path(target_card.path).name.lower())
+                    for dc in dep_cards:
+                        if dc.path:
+                            target_files.add(Path(dc.path).name.lower())
+
+                    # Filter pure abbreviation/notation tables unless explicitly targeted
+                    is_scaffolding = r_name in STRUCTURAL_SCAFFOLDING_FILES and r_name not in target_files
+                    # Filter root wrapper preamble (thesis.tex) when dedicated target/dependency files exist and it is not targeted
+                    if not is_scaffolding and r_name == "thesis.tex" and target_files and "thesis.tex" not in target_files:
+                        is_scaffolding = True
+
+                    if is_scaffolding:
+                        quality.discarded_excluded_path += 1
+                        if tracker is not None:
+                            raw_score_val = r.score if r.score is not None else 0.5
+                            tracker.record_filtered(
+                                SourceSpan(
+                                    path=r.path,
+                                    line_start=r.line_start,
+                                    line_end=r.line_end,
+                                    reason=f"Structural scaffolding file ({r_name})",
                                     score=raw_score_val,
                                 ),
                                 reason=FILTER_UNALLOWED_PATH,

@@ -1199,7 +1199,9 @@ def cards_validate_command(project_root: str) -> dict[str, Any]:
     return {"status": "success", "stale_count": stale_count, "warnings": warnings}
 
 
-def cards_build_command(project_root: str, review: bool = False) -> dict[str, Any]:
+def cards_build_command(
+    project_root: str, review: bool = False, force: bool = False
+) -> dict[str, Any]:
     """Combined workflow command running scan, infer, and optional review."""
     print("Starting cards build workflow...", file=sys.stderr, flush=True)
     scan_res = cards_scan_command(project_root)
@@ -1207,7 +1209,7 @@ def cards_build_command(project_root: str, review: bool = False) -> dict[str, An
         return scan_res
 
     try:
-        infer_res = cards_infer_command(project_root)
+        infer_res = cards_infer_command(project_root, force=force)
     except Exception as e:
         infer_res = {"status": "warning", "message": f"Semantic inference skipped: {e}"}
 
@@ -1223,29 +1225,12 @@ def cards_rebuild_command(project_root: str, review: bool = False) -> dict[str, 
     """Cleanly rebuild main section cards from scratch (clears cards.generated.yaml and runs scan + infer --force)."""
     print("Rebuilding main section cards from scratch...", file=sys.stderr, flush=True)
     root = Path(project_root).resolve()
-    generated_path = root / ".writing-context" / "cards.generated.yaml"
-    lock_path = root / ".writing-context" / "cards.lock.json"
+    for fname in ("cards.generated.yaml", "cards.lock.json"):
+        path = root / ".writing-context" / fname
+        if path.exists():
+            with contextlib.suppress(Exception):
+                path.unlink()
 
-    if generated_path.exists():
-        with contextlib.suppress(Exception):
-            generated_path.unlink()
-
-    if lock_path.exists():
-        with contextlib.suppress(Exception):
-            lock_path.unlink()
-
-    scan_res = cards_scan_command(project_root)
-    if scan_res.get("status") == "error":
-        return scan_res
-
-    try:
-        infer_res = cards_infer_command(project_root, force=True)
-    except Exception as e:
-        infer_res = {"status": "warning", "message": f"Semantic inference skipped: {e}"}
-
-    review_res = None
-    if review:
-        review_res = cards_review_command(project_root)
-
+    res = cards_build_command(project_root, review=review, force=True)
     print("Cards rebuild completed successfully.", file=sys.stderr, flush=True)
-    return {"status": "success", "scan": scan_res, "infer": infer_res, "review": review_res}
+    return res

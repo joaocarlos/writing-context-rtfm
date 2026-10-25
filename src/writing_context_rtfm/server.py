@@ -1532,7 +1532,7 @@ def handle_review_card_candidates(args: dict[str, Any]) -> dict[str, Any]:
         )
 
 
-def handle_accept_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
+def _update_card_candidate_decision(args: dict[str, Any], action: str) -> dict[str, Any]:
     section_id = args.get("section_id", "")
     field = args.get("field", "")
     value = args.get("value")
@@ -1574,24 +1574,12 @@ def handle_accept_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
         if field == "purpose":
             purpose = sdata.get("purpose")
             if isinstance(purpose, dict) and purpose.get("value") == value:
-                purpose["status"] = "accepted"
+                purpose["status"] = action
                 found = True
-        elif field == "key_terms":
-            for kt in sdata.get("key_terms", []):
-                if isinstance(kt, dict) and kt.get("value") == value:
-                    kt["status"] = "accepted"
-                    found = True
-                    break
-        elif field == "facts":
-            for fact in sdata.get("facts", []):
-                if isinstance(fact, dict) and fact.get("value") == value:
-                    fact["status"] = "accepted"
-                    found = True
-                    break
-        elif field == "constraints":
-            for const in sdata.get("constraints", []):
-                if isinstance(const, dict) and const.get("value") == value:
-                    const["status"] = "accepted"
+        elif field in ("key_terms", "facts", "constraints"):
+            for item in sdata.get(field, []):
+                if isinstance(item, dict) and item.get("value") == value:
+                    item["status"] = action
                     found = True
                     break
 
@@ -1612,187 +1600,28 @@ def handle_accept_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 pass
 
-        over_sections: dict[str, Any] = overrides_data.setdefault("sections", {})
-        sec_over: dict[str, Any] = over_sections.setdefault(section_id, {})
-
-        if field == "purpose":
-            sec_over["purpose"] = value
-        elif field == "key_terms":
-            sec_over.setdefault("key_terms", [])
-            if sec_over["key_terms"] is None:
-                sec_over["key_terms"] = []
-            if value not in sec_over["key_terms"]:
-                sec_over["key_terms"].append(value)
-        elif field == "facts":
-            sec_over.setdefault("must_preserve", [])
-            if sec_over["must_preserve"] is None:
-                sec_over["must_preserve"] = []
-            if value not in sec_over["must_preserve"]:
-                sec_over["must_preserve"].append(value)
-        elif field == "constraints":
-            sec_over.setdefault("constraints", [])
-            if sec_over["constraints"] is None:
-                sec_over["constraints"] = []
-            if value not in sec_over["constraints"]:
-                sec_over["constraints"].append(value)
-
-        # Update lock decisions
-        lock_data: dict[str, Any] = {"sections": {}}
-        if lock_path.exists():
-            try:
-                with open(lock_path, encoding="utf-8") as f:
-                    loaded_lock = json.load(f)
-                    if isinstance(loaded_lock, dict):
-                        lock_data = loaded_lock
-            except Exception:
-                pass
-
-        lock_sections: dict[str, Any] = lock_data.setdefault("sections", {})
-        sec_lock: dict[str, Any] = lock_sections.setdefault(
-            section_id, {"content_hash": "", "decisions": {}, "stale_fields": []}
-        )
-        decisions: dict[str, Any] = sec_lock.setdefault("decisions", {})
-
-        decision_key = "purpose" if field == "purpose" else f"{field}:{value}"
-        previous_decision = decisions.get(decision_key)
-        decisions[decision_key] = "accepted"
-        _append_card_history(
-            sec_lock,
-            action="accepted",
-            field=field,
-            value=value,
-            previous_value=previous_decision,
-            changed=previous_decision != "accepted",
-        )
-
-        # Save files
-        overrides_path.parent.mkdir(exist_ok=True, parents=True)
-        with open(generated_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(gen_data, f, sort_keys=False)
-        with open(overrides_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(overrides_data, f, sort_keys=False)
-        with open(lock_path, "w", encoding="utf-8") as f:
-            json.dump(lock_data, f, indent=2)
-
-        # Invalidate runtime cache
-        global _RUNTIME_CACHE
-        _RUNTIME_CACHE = None
-
-        return _success_response(
-            {"status": "accepted", "section_id": section_id, "field": field, "value": value}
-        )
-
-    except Exception as e:
-        logger.exception("Failed to accept card candidate")
-        return _error_response(
-            ERROR_INTERNAL, f"Failed to accept card candidate: {e}", type(e).__name__
-        )
-
-
-def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
-    section_id = args.get("section_id", "")
-    field = args.get("field", "")
-    value = args.get("value")
-    project_root = args.get("project_root")
-
-    if not section_id or not field or value is None:
-        return _error_response(
-            ERROR_INVALID_INPUT, "Missing required arguments: section_id, field, value"
-        )
-    if field not in ("purpose", "key_terms", "facts", "constraints"):
-        return _error_response(ERROR_INVALID_INPUT, f"Invalid candidate field: {field}")
-
-    try:
-        root = Path(project_root) if project_root else WORKSPACE_ROOT
-        generated_path = root / ".writing-context" / "cards.generated.yaml"
-        overrides_path = root / ".writing-context" / "cards.overrides.yaml"
-        lock_path = root / ".writing-context" / "cards.lock.json"
-
-        if not generated_path.exists():
-            return _error_response(
-                ERROR_CONFIG, "No generated cards found. Please run 'cards scan' first."
-            )
-
-        import yaml
-
-        with open(generated_path, encoding="utf-8") as f:
-            gen_data: dict[str, Any] = yaml.safe_load(f) or {}
-
-        sections = gen_data.get("sections", {}) or {}
-        if section_id not in sections:
-            return _error_response(
-                ERROR_INVALID_INPUT, f"Section ID '{section_id}' not found in generated cards."
-            )
-
-        sdata = sections[section_id]
-        found = False
-
-        # Find and update candidate status in generated
-        if field == "purpose":
-            purpose = sdata.get("purpose")
-            if isinstance(purpose, dict) and purpose.get("value") == value:
-                purpose["status"] = "rejected"
-                found = True
-        elif field == "key_terms":
-            for kt in sdata.get("key_terms", []):
-                if isinstance(kt, dict) and kt.get("value") == value:
-                    kt["status"] = "rejected"
-                    found = True
-                    break
-        elif field == "facts":
-            for fact in sdata.get("facts", []):
-                if isinstance(fact, dict) and fact.get("value") == value:
-                    fact["status"] = "rejected"
-                    found = True
-                    break
-        elif field == "constraints":
-            for const in sdata.get("constraints", []):
-                if isinstance(const, dict) and const.get("value") == value:
-                    const["status"] = "rejected"
-                    found = True
-                    break
-
-        if not found:
-            return _error_response(
-                ERROR_INVALID_INPUT,
-                f"No matching candidate found for section '{section_id}', field '{field}', value '{value}'.",
-            )
-
-        # Update overrides (remove if present)
-        overrides_data: dict[str, Any] = {"version": 2, "document": {}, "sections": {}}
-        if overrides_path.exists():
-            try:
-                with open(overrides_path, encoding="utf-8") as f:
-                    loaded_ov = yaml.safe_load(f)
-                    if isinstance(loaded_ov, dict):
-                        overrides_data = loaded_ov
-            except Exception:
-                pass
-
         over_sections = overrides_data.setdefault("sections", {})
         sec_over = over_sections.setdefault(section_id, {})
 
-        if field == "purpose":
-            if "purpose" in sec_over:
-                del sec_over["purpose"]
-        elif field == "key_terms":
-            if "key_terms" in sec_over and sec_over["key_terms"]:
-                if value in sec_over["key_terms"]:
-                    sec_over["key_terms"].remove(value)
-                if not sec_over["key_terms"]:
-                    del sec_over["key_terms"]
-        elif field == "facts":
-            if "must_preserve" in sec_over and sec_over["must_preserve"]:
-                if value in sec_over["must_preserve"]:
-                    sec_over["must_preserve"].remove(value)
-                if not sec_over["must_preserve"]:
-                    del sec_over["must_preserve"]
-        elif field == "constraints":
-            if "constraints" in sec_over and sec_over["constraints"]:
-                if value in sec_over["constraints"]:
-                    sec_over["constraints"].remove(value)
-                if not sec_over["constraints"]:
-                    del sec_over["constraints"]
+        override_key = "must_preserve" if field == "facts" else field
+        if action == "accepted":
+            if field == "purpose":
+                sec_over["purpose"] = value
+            else:
+                sec_over.setdefault(override_key, [])
+                if sec_over[override_key] is None:
+                    sec_over[override_key] = []
+                if value not in sec_over[override_key]:
+                    sec_over[override_key].append(value)
+        else:
+            if field == "purpose":
+                sec_over.pop("purpose", None)
+            else:
+                if override_key in sec_over and sec_over[override_key]:
+                    if value in sec_over[override_key]:
+                        sec_over[override_key].remove(value)
+                    if not sec_over[override_key]:
+                        sec_over.pop(override_key, None)
 
         # Update lock decisions
         lock_data: dict[str, Any] = {"sections": {}}
@@ -1813,17 +1642,18 @@ def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
 
         decision_key = "purpose" if field == "purpose" else f"{field}:{value}"
         previous_decision = decisions.get(decision_key)
-        decisions[decision_key] = "rejected"
+        decisions[decision_key] = action
         _append_card_history(
             sec_lock,
-            action="rejected",
+            action=action,
             field=field,
             value=value,
             previous_value=previous_decision,
-            changed=previous_decision != "rejected",
+            changed=previous_decision != action,
         )
 
         # Save files
+        overrides_path.parent.mkdir(exist_ok=True, parents=True)
         with open(generated_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(gen_data, f, sort_keys=False)
         with open(overrides_path, "w", encoding="utf-8") as f:
@@ -1836,14 +1666,22 @@ def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
         _RUNTIME_CACHE = None
 
         return _success_response(
-            {"status": "rejected", "section_id": section_id, "field": field, "value": value}
+            {"status": action, "section_id": section_id, "field": field, "value": value}
         )
 
     except Exception as e:
-        logger.exception("Failed to reject card candidate")
+        logger.exception(f"Failed to {action} card candidate")
         return _error_response(
-            ERROR_INTERNAL, f"Failed to reject card candidate: {e}", type(e).__name__
+            ERROR_INTERNAL, f"Failed to {action} card candidate: {e}", type(e).__name__
         )
+
+
+def handle_accept_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    return _update_card_candidate_decision(args, "accepted")
+
+
+def handle_reject_card_candidate(args: dict[str, Any]) -> dict[str, Any]:
+    return _update_card_candidate_decision(args, "rejected")
 
 
 def handle_edit_card_field(args: dict[str, Any]) -> dict[str, Any]:

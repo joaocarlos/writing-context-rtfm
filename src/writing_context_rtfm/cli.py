@@ -336,32 +336,22 @@ def init_command(args: argparse.Namespace) -> None:
             return "\n".join(lines)
 
         zotero_cfg = discovered.get("zotero")
-        if zotero_cfg:
-            zotero_block = (
-                "  zotero:\n"
-                "    enabled: true\n"
-                f"{_format_mcp_server_config(zotero_cfg['mcp_server'])}\n"
-                "    extra:\n"
-                '      library_name: "My Library"\n'
-                "      collections: []\n"
-                "      include_subcollections: true\n"
-                "      include_abstract: false\n"
-                "      similarity_threshold: -0.4"
-            )
-        else:
-            zotero_block = (
-                "  zotero:\n"
-                "    enabled: false\n"
-                "    mcp_server:\n"
-                "      command: zotero-mcp\n"
-                '      args: ["serve"]\n'
-                "    extra:\n"
-                '      library_name: "My Library"\n'
-                "      collections: []\n"
-                "      include_subcollections: true\n"
-                "      include_abstract: false\n"
-                "      similarity_threshold: -0.4"
-            )
+        mcp_cfg = (
+            _format_mcp_server_config(zotero_cfg["mcp_server"])
+            if zotero_cfg
+            else '    mcp_server:\n      command: zotero-mcp\n      args: ["serve"]'
+        )
+        zotero_block = (
+            f"  zotero:\n"
+            f"    enabled: {'true' if zotero_cfg else 'false'}\n"
+            f"{mcp_cfg}\n"
+            "    extra:\n"
+            '      library_name: "My Library"\n'
+            "      collections: []\n"
+            "      include_subcollections: true\n"
+            "      include_abstract: false\n"
+            "      similarity_threshold: -0.4"
+        )
 
         openai_block = (
             "  openai_semantic:\n"

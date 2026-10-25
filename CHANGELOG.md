@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.30.5] - 2026-10-25
+
+### Refactored
+- **Section Card Candidate Handlers Consolidation (`server.py`)**:
+  - Unified `handle_accept_card_candidate` and `handle_reject_card_candidate` into a shared internal `_update_card_candidate_decision` dispatcher, eliminating over 160 lines of duplicate validation, candidate matching, override modification, lockfile persistence, and cache invalidation.
+- **Workflow Command Parameterization (`features.py`)**:
+  - Parameterized `cards_build_command` with `force: bool = False` and refactored `cards_rebuild_command` to delegate execution directly, removing duplicate multi-stage scan, semantic inference, and review pipelines.
+- **CLI Configuration Scaffolding Hygiene (`cli.py`)**:
+  - Extracted shared static YAML dictionary formatting for Zotero in `init_command`, eliminating duplicate configuration blocks.
+
 ## [0.30.4] - 2026-10-24
 
 ### Fixed

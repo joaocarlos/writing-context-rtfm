@@ -1137,9 +1137,18 @@ def handle_request_more_context(args: dict[str, Any]) -> dict[str, Any]:
         store.init_db()
         results = store.get_more_context(run_id, limit)
         sanitized = [_sanitize_span_for_output(s, output_mode=output_mode) for s in results]
-        return _success_response(
-            {"run_id": run_id, "source_spans": sanitized, "count": len(sanitized)}
-        )
+        resp_payload: dict[str, Any] = {
+            "run_id": run_id,
+            "source_spans": sanitized,
+            "count": len(sanitized),
+        }
+        if not sanitized:
+            resp_payload["loop_guard_redirect"] = (
+                "Loop Guard: All candidate spans for this run are exhausted. "
+                "Stop calling request_more_context and use Autonomous Direct-Read Fallback "
+                "on the target and dependency files."
+            )
+        return _success_response(resp_payload)
     except Exception as e:
         logger.exception("Failed to request more context")
         return _error_response(

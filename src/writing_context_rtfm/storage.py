@@ -269,6 +269,16 @@ class ExtensionStore:
         CREATE INDEX IF NOT EXISTS idx_reranker_scores_lookup
         ON reranker_scores(model_key, task_hash);
         """)
+
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_evaluation_records_run_id
+        ON evaluation_records(run_id);
+        """)
+
+        cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_context_pack_runs_target
+        ON context_pack_runs(target, created_at);
+        """)
         conn.commit()
 
     def _compress(self, data: str) -> bytes:
@@ -590,7 +600,7 @@ class ExtensionStore:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_target_feedback_summary(self, target: str) -> dict[str, Any]:
-        """Compute aggregated feedback metrics for a target section for offline inspection."""
+        """Compute aggregated feedback metrics and experience profile for a target section."""
         with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -610,7 +620,247 @@ class ExtensionStore:
                 }
                 for row in cursor.fetchall()
             }
-            return {"target": target, "metrics": metrics_summary}
+        experience = self.get_target_experience_profile(target=target)
+        return {
+            "target": target,
+            "metrics": metrics_summary,
+            "experience_profile": experience,
+        }
+
+    def get_target_experience_profile(
+        self,
+        target: str | None = None,
+        target_aliases: list[str] | None = None,
+        mode: str | None = None,
+        min_confirmations: int = 3,
+        loop_window_minutes: int = 15,
+    ) -> dict[str, Any]:
+        """Compute experience-driven priors, micro-skills, and loop guard metrics (TokenEconomizer methodology).
+
+        1. Span Priors & Micro-skills (k >= min_confirmations):
+           - Source paths reinforced as helpful (>= 0.8) across k distinct runs are promoted.
+           - Source paths marked noisy/unhelpful (<= 0.25) across k distinct runs are penalized,
+             unless contradicted by a more recent positive evaluation (contradiction decay).
+           - Recurring constraint_violated / hallucinations / micro_skill text notes confirmed
+             across k distinct runs are surfaced as learned micro-skills.
+        2. Retrieval Loop Guard:
+           - Detects when the same target has >= 3 context pack runs within `loop_window_minutes`
+             exhibiting high source-path overlap (>= 0.75 Jaccard similarity) or exhausted pagination.
+        3. Empirical P90 Token Budget Calibration:
+           - Computes 1.25 * P90(pack_tokens) across successful runs for the target/mode.
+        """
+        aliases = [a for a in (target_aliases or ([target] if target else [])) if a]
+        default_profile: dict[str, Any] = {
+            "target": target,
+            "promoted_paths": [],
+            "demoted_paths": [],
+            "span_score_deltas": {},
+            "learned_micro_skills": [],
+            "loop_guard": {
+                "triggered": False,
+                "recent_runs_count": 0,
+                "avg_jaccard_overlap": 0.0,
+                "reason": None,
+            },
+            "empirical_budget": {
+                "sample_count": 0,
+                "p50_tokens": None,
+                "p90_tokens": None,
+                "recommended_budget_p90": None,
+            },
+        }
+        if not aliases:
+            return default_profile
+
+        try:
+            with self._connect() as conn:
+                cursor = conn.cursor()
+                placeholders = ",".join("?" for _ in aliases)
+
+                # 1. Experience-driven span priors and micro-skills
+                cursor.execute(
+                    f"""
+                    SELECT e.id, e.run_id, e.metric_name, e.metric_value, e.metric_text,
+                           e.source_path, e.line_start, e.line_end, e.created_at
+                    FROM evaluation_records e
+                    JOIN context_pack_runs r ON e.run_id = r.run_id
+                    WHERE r.target IN ({placeholders})
+                    ORDER BY e.created_at ASC, e.id ASC
+                    """,
+                    aliases,
+                )
+                fb_rows = cursor.fetchall()
+
+                # Track per-path feedback across distinct runs with contradiction decay
+                path_pos_runs: dict[str, set[str]] = {}
+                path_neg_runs: dict[str, set[str]] = {}
+                path_last_polarity: dict[str, int] = {}
+
+                # Track recurring micro-skill / constraint notes across distinct runs
+                skill_runs: dict[str, set[str]] = {}
+                skill_canonical_text: dict[str, str] = {}
+
+                for row in fb_rows:
+                    r_id = str(row["run_id"])
+                    m_name = str(row["metric_name"] or "").strip().lower()
+                    m_val = float(row["metric_value"]) if row["metric_value"] is not None else 0.0
+                    m_text = str(row["metric_text"] or "").strip()
+                    s_path = str(row["source_path"] or "").strip().replace("\\", "/")
+
+                    if s_path and m_name in ("helpfulness", "relevance", "span_quality", "utility"):
+                        if m_val >= 0.8:
+                            # Contradiction decay: positive evidence decays prior negative streak
+                            if path_last_polarity.get(s_path) == -1 and s_path in path_neg_runs:
+                                path_neg_runs[s_path].clear()
+                            path_pos_runs.setdefault(s_path, set()).add(r_id)
+                            path_last_polarity[s_path] = 1
+                        elif m_val <= 0.25:
+                            # Contradiction decay: negative evidence decays prior positive streak
+                            if path_last_polarity.get(s_path) == 1 and s_path in path_pos_runs:
+                                path_pos_runs[s_path].clear()
+                            path_neg_runs.setdefault(s_path, set()).add(r_id)
+                            path_last_polarity[s_path] = -1
+
+                    if m_text and (
+                        m_name in ("constraint_violated", "hallucinations", "micro_skill", "environment_fact")
+                        or (not s_path and m_name == "helpfulness" and m_val <= 0.25 and len(m_text) >= 12)
+                    ):
+                        norm_key = " ".join(m_text.lower().split())
+                        skill_runs.setdefault(norm_key, set()).add(r_id)
+                        skill_canonical_text[norm_key] = m_text
+
+                promoted: list[str] = []
+                demoted: list[str] = []
+                deltas: dict[str, float] = {}
+
+                for p_key, runs_set in sorted(path_pos_runs.items()):
+                    if len(runs_set) >= min_confirmations:
+                        promoted.append(p_key)
+                        deltas[p_key] = round(min(0.6, 0.35 + 0.05 * (len(runs_set) - min_confirmations)), 3)
+
+                for p_key, runs_set in sorted(path_neg_runs.items()):
+                    if len(runs_set) >= min_confirmations and p_key not in deltas:
+                        demoted.append(p_key)
+                        deltas[p_key] = -round(min(0.75, 0.45 + 0.05 * (len(runs_set) - min_confirmations)), 3)
+
+                default_profile["promoted_paths"] = promoted
+                default_profile["demoted_paths"] = demoted
+                default_profile["span_score_deltas"] = deltas
+                default_profile["learned_micro_skills"] = [
+                    skill_canonical_text[k] for k, r_set in skill_runs.items() if len(r_set) >= min_confirmations
+                ]
+
+                # 2. Retrieval Loop Guard: inspect recent runs for this target within loop_window_minutes
+                cursor.execute(
+                    f"""
+                    SELECT run_id, task, created_at
+                    FROM context_pack_runs
+                    WHERE target IN ({placeholders})
+                      AND created_at >= datetime('now', ? || ' minutes')
+                    ORDER BY created_at DESC
+                    LIMIT 6
+                    """,
+                    [*aliases, f"-{abs(int(loop_window_minutes))}"],
+                )
+                recent_runs = cursor.fetchall()
+                recent_count = len(recent_runs)
+                default_profile["loop_guard"]["recent_runs_count"] = recent_count
+
+                if recent_count >= min_confirmations:
+                    run_ids = [str(r["run_id"]) for r in recent_runs[:min_confirmations]]
+                    run_placeholders = ",".join("?" for _ in run_ids)
+                    cursor.execute(
+                        f"""
+                        SELECT run_id, path, line_start, line_end, selected
+                        FROM context_pack_sources
+                        WHERE run_id IN ({run_placeholders})
+                        """,
+                        run_ids,
+                    )
+                    rows_by_run: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
+                    for sr in cursor.fetchall():
+                        rows_by_run.setdefault(str(sr["run_id"]), []).append(sr)
+
+                    span_sets: list[set[tuple[str, int | None, int | None]]] = []
+                    paginated_count = 0
+                    for rid in run_ids:
+                        s_rows = rows_by_run.get(rid, [])
+                        selected_spans = {
+                            (str(sr["path"]), sr["line_start"], sr["line_end"])
+                            for sr in s_rows
+                            if sr["selected"] == 1
+                        }
+                        if selected_spans:
+                            span_sets.append(selected_spans)
+                        if len(s_rows) > 3 and all(sr["selected"] == 1 for sr in s_rows):
+                            paginated_count += 1
+
+                    overlaps = [
+                        len(span_sets[i] & span_sets[i + 1]) / len(span_sets[i] | span_sets[i + 1])
+                        for i in range(len(span_sets) - 1)
+                        if (span_sets[i] | span_sets[i + 1])
+                    ]
+                    avg_overlap = round(sum(overlaps) / len(overlaps), 3) if overlaps else 0.0
+                    default_profile["loop_guard"]["avg_jaccard_overlap"] = avg_overlap
+
+                    if avg_overlap >= 0.75:
+                        default_profile["loop_guard"]["triggered"] = True
+                        default_profile["loop_guard"]["reason"] = (
+                            f"high_span_overlap ({avg_overlap:.0%} across {recent_count} recent runs)"
+                        )
+                    elif paginated_count >= 2:
+                        default_profile["loop_guard"]["triggered"] = True
+                        default_profile["loop_guard"]["reason"] = (
+                            f"repeated_pagination_exhaustion ({paginated_count} exhausted runs)"
+                        )
+
+                # 3. Empirical P90 Budget Calibration: 1.25 * P90(pack_tokens) of successful runs
+                where_clauses = [
+                    "r.pack_tokens IS NOT NULL",
+                    "r.pack_tokens > 0",
+                    f"r.target IN ({placeholders})",
+                ]
+                query_params: list[Any] = list(aliases)
+                if mode:
+                    where_clauses.append("COALESCE(r.mode, 'write') = ?")
+                    query_params.append(mode)
+
+                # Exclude runs that have explicit low helpfulness feedback (<= 0.3)
+                where_clauses.append(
+                    """NOT EXISTS (
+                        SELECT 1 FROM evaluation_records e2
+                        WHERE e2.run_id = r.run_id
+                          AND e2.metric_name = 'helpfulness'
+                          AND e2.metric_value <= 0.3
+                    )"""
+                )
+
+                cursor.execute(
+                    f"""
+                    SELECT r.pack_tokens
+                    FROM context_pack_runs r
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY r.pack_tokens ASC
+                    LIMIT 200
+                    """,
+                    query_params,
+                )
+                token_rows = [int(r["pack_tokens"]) for r in cursor.fetchall() if r["pack_tokens"]]
+                if len(token_rows) >= min_confirmations:
+                    n = len(token_rows)
+                    p50_val = token_rows[min(n - 1, int(0.50 * (n - 1)))]
+                    p90_val = token_rows[min(n - 1, int(round(0.90 * (n - 1))))]
+                    default_profile["empirical_budget"] = {
+                        "sample_count": n,
+                        "p50_tokens": p50_val,
+                        "p90_tokens": p90_val,
+                        "recommended_budget_p90": int(round(1.25 * p90_val)),
+                    }
+
+            return default_profile
+        except Exception as e:
+            logger.warning("Failed to compute target experience profile: %s", e)
+            return default_profile
 
     def store_calibration(
         self,

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.31.0] - 2026-10-31
+
+### Added
+- **Experience-Driven Span Priors & Learned Micro-Skills (`storage.py`, `context_pack.py`, `schemas.py`)**:
+  - Implemented `ExtensionStore.get_target_experience_profile` following the *TokenEconomizer* ($k \ge 3$ confirmations + contradiction decay) methodology.
+  - Source paths evaluated as highly helpful ($\ge 0.8$) across $\ge 3$ distinct runs for a target section receive automatic score boosts (`[experience +boost]`), whereas repeatedly unhelpful/noisy paths ($\le 0.25$) are demoted (`[experience -demote]`) below `min_score` thresholds to save token budget.
+  - Added automatic contradiction decay so a subsequent polarity reversal immediately resets outdated positive or negative streaks and updates the retrieval fingerprint (`exp:<hash>`) to invalidate stale cached packs.
+  - Recurring `constraint_violated`, `hallucinations`, or `micro_skill` notes confirmed across $\ge 3$ distinct runs are automatically surfaced in `pack.constraints` as `[Learned Micro-skill]: ...`.
+- **Retrieval Loop Guard & Direct-Read Redirect (`storage.py`, `context_pack.py`, `server.py`)**:
+  - Detects unproductive agent query loops ($\ge 3$ recent runs within 15 minutes for the same target with Jaccard span overlap $\ge 0.75$ or repeated pagination exhaustion) and injects an explicit `Note: Loop Guard intervention` warning (including on cached pack hits) redirecting the agent to Autonomous Direct-Read Fallback.
+  - Updated `handle_request_more_context` to return `loop_guard_redirect` guidance when pagination candidates are exhausted.
+- **Empirical $P_{90}$ Token Budget Calibration (`storage.py`, `token_budget.py`, `context_pack.py`)**:
+  - Computed $1.25 \times P_{90}(\text{pack\_tokens})$ across successful runs (excluding runs with `helpfulness <= 0.3`) and surfaced `empirical_recommended_budget` in `preflight_budget_check` and `quality.experience_economizer`.
+
 ## [0.30.5] - 2026-10-25
 
 ### Refactored

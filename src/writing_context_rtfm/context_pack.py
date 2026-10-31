@@ -1524,6 +1524,51 @@ class ContextPackGenerator:
         if self.reranker is not None:
             with contextlib.suppress(Exception):
                 provider_fps.append(f"reranker:{self.reranker.get_fingerprint()}")
+
+        # Load experience-driven profile (TokenEconomizer k>=3 confirmations, Loop Guard, P90 budget)
+        experience_profile: dict[str, Any] = {}
+        inferred_lbl = target_path or (target_card.title if target_card else None)
+        raw_aliases = (
+            target,
+            resolved_key,
+            target_path,
+            f"{inferred_lbl} (inferred)" if not target and inferred_lbl else None,
+        )
+        target_aliases = list(dict.fromkeys(a for a in raw_aliases if a))
+
+        if self.store is not None:
+            with contextlib.suppress(Exception):
+                exp_fn = getattr(self.store, "get_target_experience_profile", None)
+                if callable(exp_fn):
+                    res_exp = exp_fn(
+                        target=target or resolved_key or target_path,
+                        target_aliases=target_aliases,
+                        mode=inferred_mode,
+                    )
+                    if isinstance(res_exp, dict):
+                        experience_profile = res_exp
+        quality.experience_economizer = experience_profile
+
+        loop_guard_warning: str | None = None
+        if isinstance(experience_profile, dict) and (
+            experience_profile.get("loop_guard") or {}
+        ).get("triggered"):
+            lg_info = experience_profile["loop_guard"]
+            direct_read_target = target_path or target or resolved_key or "the target file"
+            loop_guard_warning = (
+                f"Note: Loop Guard intervention ({lg_info.get('reason')}): "
+                f"Repeated context queries detected for '{target or resolved_key or target_path}'. "
+                f"Redirect: Stop re-querying or paginating MCP for this section and use "
+                f"Autonomous Direct-Read Fallback on '{direct_read_target}'."
+            )
+
+        if experience_profile:
+            exp_deltas = experience_profile.get("span_score_deltas") or {}
+            exp_skills = experience_profile.get("learned_micro_skills") or []
+            if exp_deltas or exp_skills:
+                exp_sig = stable_hash(f"{sorted(exp_deltas.items())}|{sorted(exp_skills)}")
+                provider_fps.append(f"exp:{exp_sig}")
+
         retrieval_fingerprint = compute_retrieval_fingerprint(rtfm_db, provider_fps)
 
         if self.config.cache.enabled and not include_diagnostics:
@@ -1546,6 +1591,12 @@ class ContextPackGenerator:
                         section_cards_hash=sc_hash,
                         rtfm_index_fingerprint=retrieval_fingerprint,
                     )
+                cached_warnings = list(cached.get("warnings", []))
+                if loop_guard_warning and loop_guard_warning not in cached_warnings:
+                    cached_warnings.append(loop_guard_warning)
+                cached_quality = dict(cached.get("quality") or {})
+                if experience_profile:
+                    cached_quality["experience_economizer"] = experience_profile
                 return ContextPack(
                     task=cached["task"],
                     target=cached.get("target"),
@@ -1556,8 +1607,8 @@ class ContextPackGenerator:
                     source_spans=spans,
                     estimated_tokens=cached.get("estimated_tokens", 0),
                     status=cached.get("status", "complete"),
-                    warnings=cached.get("warnings", []),
-                    quality=cached.get("quality") or {},
+                    warnings=cached_warnings,
+                    quality=cached_quality,
                     summary=cached.get("summary"),
                     run_id=cached.get("run_id"),
                     cache=cd,
@@ -1726,6 +1777,12 @@ class ContextPackGenerator:
                     if isinstance(c_val, (int, float)):
                         session_calls_used = int(c_val)
 
+        empirical_rec_budget = (
+            (experience_profile.get("empirical_budget") or {}).get("recommended_budget_p90")
+            if isinstance(experience_profile, dict)
+            else None
+        )
+
         # Pre-flight budget evaluation
         preflight = preflight_budget_check(
             budget=token_budget,
@@ -1745,7 +1802,10 @@ class ContextPackGenerator:
             model_family=model_family,
             session_tokens_used=session_tokens_used,
             session_calls_used=session_calls_used,
+            empirical_recommended_budget=empirical_rec_budget,
         )
+        if loop_guard_warning:
+            warnings.append(loop_guard_warning)
         if not preflight["feasible"]:
             warnings.append(
                 f"Note: Pre-flight budget evaluation: Fixed overhead requires {preflight['fixed_tokens']} tokens "
@@ -2328,6 +2388,29 @@ class ContextPackGenerator:
         deduped = self._deduplicate_spans(snapped_candidates, tracker=tracker)
         self._record_diagnostic("deduplicated", deduped)
 
+        # --- Experience-driven span score priors (TokenEconomizer k>=3 confirmations) ---
+        span_score_deltas = (
+            experience_profile.get("span_score_deltas") or {}
+            if isinstance(experience_profile, dict)
+            else {}
+        )
+        if span_score_deltas and isinstance(span_score_deltas, dict):
+            adjusted_deduped: list[SourceSpan] = []
+            for s in deduped:
+                applied_delta = 0.0
+                for p_pattern, d_val in span_score_deltas.items():
+                    if _path_matches(s.path, p_pattern):
+                        applied_delta = float(d_val)
+                        break
+                if applied_delta != 0.0 and s.source_role != "target_text":
+                    new_score = round(max(0.0, s.score + applied_delta), 3)
+                    tag = "[experience +boost]" if applied_delta > 0 else "[experience -demote]"
+                    new_reason = f"{s.reason} {tag}" if tag not in s.reason else s.reason
+                    adjusted_deduped.append(replace(s, score=new_score, reason=new_reason))
+                else:
+                    adjusted_deduped.append(s)
+            deduped = adjusted_deduped
+
         # --- Optional bounded local cross-encoder reranking & auto-escalation ---
         active_reranker = self.reranker
         auto_escalation_info: dict[str, Any] | None = None
@@ -2693,6 +2776,17 @@ class ContextPackGenerator:
             if target_card:
                 constraints.extend(target_card.constraints or [])
                 constraints.extend(target_card.must_preserve or [])
+
+        # Inject learned micro-skills confirmed across k >= 3 sessions (TokenEconomizer)
+        learned_skills = (
+            experience_profile.get("learned_micro_skills") or []
+            if isinstance(experience_profile, dict)
+            else []
+        )
+        for skill_text in learned_skills:
+            formatted_skill = f"[Learned Micro-skill]: {skill_text}"
+            if formatted_skill not in constraints and skill_text not in constraints:
+                constraints.append(formatted_skill)
 
         # Mode-specific functional constraints
         if inferred_mode == "compress":

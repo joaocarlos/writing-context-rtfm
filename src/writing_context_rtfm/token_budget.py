@@ -142,6 +142,7 @@ def preflight_budget_check(
     session_tokens_used: int = 0,
     session_calls_used: int = 0,
     session_message_limit: int = 25,
+    empirical_recommended_budget: int | None = None,
 ) -> dict[str, Any]:
     """Evaluates fixed non-negotiable token overhead and 5-hour rolling session limits.
 
@@ -164,6 +165,13 @@ def preflight_budget_check(
 
     # Recommended minimum budget allows at least 600 tokens for dependencies and references
     recommended_min_budget = fixed_tokens + 600
+    empirical_budget_val = (
+        int(empirical_recommended_budget)
+        if isinstance(empirical_recommended_budget, (int, float)) and empirical_recommended_budget > 0
+        else None
+    )
+    if empirical_budget_val is not None:
+        recommended_min_budget = max(recommended_min_budget, min(empirical_budget_val, fixed_tokens + 4000))
 
     # 5-hour rolling session constraints (Astra tier)
     if not isinstance(session_tokens_used, (int, float)):
@@ -208,6 +216,7 @@ def preflight_budget_check(
         "available_elastic_tokens": max(0, available_elastic),
         "deficit": abs(available_elastic) if available_elastic < 0 else 0,
         "recommended_min_budget": recommended_min_budget,
+        "empirical_recommended_budget": empirical_budget_val,
         "model_family": model_family,
         "breakdown": {
             "target_text": target_tokens,

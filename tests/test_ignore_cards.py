@@ -105,3 +105,37 @@ def test_build_reference_graph_honors_rtfmignore(tmp_path: Path) -> None:
     assert "sec:main" in graph["labels"]
     assert "draft.tex" not in graph["references"]
     assert "sec:draft" not in graph["labels"]
+
+
+def test_load_ignore_spec_nested_gitignore(tmp_path: Path) -> None:
+    (tmp_path / ".gitignore").write_text("*.bak\n", encoding="utf-8")
+    sub = tmp_path / "chapters"
+    sub.mkdir()
+    (sub / ".gitignore").write_text("local_scratch.tex\n!keep.bak\n", encoding="utf-8")
+
+    spec = load_ignore_spec(tmp_path)
+    assert spec is not None
+    assert is_path_ignored("root.bak", spec)
+    assert is_path_ignored("chapters/local_scratch.tex", spec)
+    assert not is_path_ignored("local_scratch.tex", spec)
+    assert not is_path_ignored("chapters/keep.bak", spec)
+
+
+def test_load_ignore_spec_rtfmignore_ignores_versions_section(tmp_path: Path) -> None:
+    (tmp_path / ".rtfmignore").write_text(
+        "excluded.tex\n\n[versions]\nno_history_but_indexed.tex\n",
+        encoding="utf-8",
+    )
+    spec = load_ignore_spec(tmp_path)
+    assert spec is not None
+    assert is_path_ignored("excluded.tex", spec)
+    assert not is_path_ignored("no_history_but_indexed.tex", spec)
+
+
+def test_claude_worktrees_always_excluded(tmp_path: Path) -> None:
+    from writing_context_rtfm.utils import is_allowed_source
+
+    assert is_path_ignored(".claude/worktrees/agent1/main.tex", None)
+    assert is_path_ignored(".claude/worktrees", None, is_dir=True)
+    assert not is_allowed_source(str(tmp_path / ".claude" / "worktrees" / "agent1" / "main.tex"))
+    assert not is_allowed_source(str(tmp_path / ".claude" / "worktrees"))

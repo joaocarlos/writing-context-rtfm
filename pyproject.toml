@@ -9,7 +9,7 @@ exclude = [
 
 [project]
 name = "writing-context-rtfm"
-version = "0.31.0"
+version = "0.32.0"
 description = "Context engine prioritizing RTFM search results into compact context packs"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
 dependencies = [
-    "rtfm-ai[embeddings]>=0.46.1",
+    "rtfm-ai[embeddings]>=0.55.3",
     "pyyaml",
     "pylatexenc",
     "mcp>=1.27.1",

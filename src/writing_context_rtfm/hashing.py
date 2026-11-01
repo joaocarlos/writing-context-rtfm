@@ -50,14 +50,20 @@ def compute_task_hash(
 
 
 def compute_rtfm_fingerprint(db_path: Path) -> str:
-    """Compute real RTFM database fingerprint based on mtime and size."""
-    if db_path.exists():
-        try:
-            stat = db_path.stat()
-            return stable_hash(str(stat.st_mtime), str(stat.st_size))
-        except OSError:
-            return "no-rtfm-db"
-    return "no-rtfm-db"
+    """Compute real RTFM database fingerprint based on db (and active WAL) mtime and size."""
+    if not db_path.exists():
+        return "no-rtfm-db"
+    try:
+        stat = db_path.stat()
+        parts = [str(stat.st_mtime), str(stat.st_size)]
+        wal_path = Path(f"{db_path}-wal")
+        if wal_path.exists():
+            wal_stat = wal_path.stat()
+            if wal_stat.st_size > 0:
+                parts.extend([str(wal_stat.st_mtime), str(wal_stat.st_size)])
+        return stable_hash(*parts)
+    except OSError:
+        return "no-rtfm-db"
 
 
 def compute_retrieval_fingerprint(

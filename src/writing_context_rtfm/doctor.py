@@ -90,10 +90,136 @@ def check_python() -> DiagnosticCategory:
     return cat
 
 
+_MIN_RTFM_VERSION = (0, 55, 3)
+_VERSION_PARTS_COUNT = 3
+_MAX_BIB_PREVIEW = 3
+
+
+def _resolve_module_version(mod: Any, display_name: str) -> str:
+    """Resolve package version from module __version__ or importlib.metadata."""
+    import importlib.metadata
+
+    ver = getattr(mod, "__version__", None)
+    if isinstance(ver, str) and ver:
+        return ver
+    try:
+        return importlib.metadata.version(display_name)
+    except Exception:
+        return "installed"
+
+
+def _is_outdated_rtfm_version(ver: str) -> bool:
+    """Return True if rtfm version string is valid and older than _MIN_RTFM_VERSION."""
+    if ver in ("installed", "0.0.0"):
+        return False
+    try:
+        parts = tuple(int(p) for p in ver.split(".")[:_VERSION_PARTS_COUNT] if p.isdigit())
+        return len(parts) == _VERSION_PARTS_COUNT and parts < _MIN_RTFM_VERSION
+    except ValueError:
+        return False
+
+
+def _check_core_package(
+    display_name: str, mod_names: list[str], is_core: bool, fix_cmd: str
+) -> DiagnosticItem:
+    mod = None
+    imported_name = None
+    for m in mod_names:
+        try:
+            mod = __import__(m)
+            imported_name = m
+            break
+        except ImportError:
+            continue
+
+    if not mod:
+        return DiagnosticItem(
+            name=f"Package {display_name}",
+            status="FAIL" if is_core else "WARN",
+            message="Not installed",
+            remediation=f"Install dependency: '{fix_cmd}'",
+        )
+
+    ver = _resolve_module_version(mod, display_name)
+    if display_name == "rtfm" and _is_outdated_rtfm_version(ver):
+        return DiagnosticItem(
+            name=f"Package {display_name}",
+            status="WARN",
+            message=(
+                f"v{ver} ({imported_name}) — upgrade to >=0.55.3 recommended "
+                "(fixes FastEmbed cache, FTS compaction & git worktrees)"
+            ),
+            remediation=(
+                "Upgrade rtfm-ai: 'uv sync --upgrade-package rtfm-ai' "
+                "or 'pip install -U rtfm-ai[embeddings]>=0.55.3'"
+            ),
+        )
+    return DiagnosticItem(
+        name=f"Package {display_name}",
+        status="OK",
+        message=f"v{ver} ({imported_name})",
+    )
+
+
+def _check_rtfm_cli() -> DiagnosticItem:
+    rtfm_cli = shutil.which("rtfm")
+    if not rtfm_cli:
+        cand = os.path.join(os.path.dirname(sys.executable), "rtfm")
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            rtfm_cli = cand
+    if rtfm_cli:
+        return DiagnosticItem(name="RTFM CLI", status="OK", message=f"Found at {rtfm_cli}")
+    return DiagnosticItem(
+        name="RTFM CLI",
+        status="WARN",
+        message="Executable 'rtfm' not found in PATH",
+        remediation=(
+            "Ensure 'rtfm-ai' is installed globally or in virtualenv: "
+            "'uv tool install rtfm-ai[embeddings]'"
+        ),
+    )
+
+
+def _check_optional_package(
+    display_name: str, mod_names: list[str], description: str
+) -> DiagnosticItem:
+    import importlib.metadata
+    import importlib.util
+
+    found_spec = False
+    for m in mod_names:
+        try:
+            if m in sys.modules or importlib.util.find_spec(m) is not None:
+                found_spec = True
+                break
+        except Exception:
+            continue
+
+    if not found_spec:
+        return DiagnosticItem(
+            name=f"Optional {display_name}",
+            status="OK",
+            message=f"Not installed (optional: {description})",
+        )
+
+    ver = "installed"
+    try:
+        ver = importlib.metadata.version(display_name)
+    except Exception:
+        for m in mod_names:
+            if m in sys.modules:
+                ver = getattr(sys.modules[m], "__version__", "installed")
+                break
+    return DiagnosticItem(
+        name=f"Optional {display_name}",
+        status="OK",
+        message=f"v{ver} ({description})",
+    )
+
+
 def check_dependencies() -> DiagnosticCategory:
     cat = DiagnosticCategory(category="Dependencies")
 
-    # Core dependencies
     core_pkgs = [
         ("rtfm", ["rtfm", "rtfm_ai"], True, "pip install rtfm-ai[embeddings]"),
         ("mcp", ["mcp"], True, "pip install mcp"),
@@ -101,96 +227,21 @@ def check_dependencies() -> DiagnosticCategory:
         ("pylatexenc", ["pylatexenc"], True, "pip install pylatexenc"),
         ("pathspec", ["pathspec"], True, "pip install pathspec"),
     ]
-
     for display_name, mod_names, is_core, fix_cmd in core_pkgs:
-        mod = None
-        imported_name = None
-        for m in mod_names:
-            try:
-                mod = __import__(m)
-                imported_name = m
-                break
-            except ImportError:
-                continue
+        cat.items.append(_check_core_package(display_name, mod_names, is_core, fix_cmd))
 
-        if mod:
-            ver = getattr(mod, "__version__", "installed")
-            cat.items.append(
-                DiagnosticItem(
-                    name=f"Package {display_name}",
-                    status="OK",
-                    message=f"v{ver} ({imported_name})",
-                )
-            )
-        else:
-            cat.items.append(
-                DiagnosticItem(
-                    name=f"Package {display_name}",
-                    status="FAIL" if is_core else "WARN",
-                    message="Not installed",
-                    remediation=f"Install dependency: '{fix_cmd}'",
-                )
-            )
+    cat.items.append(_check_rtfm_cli())
 
-    # Check rtfm CLI binary
-    rtfm_cli = shutil.which("rtfm")
-    if not rtfm_cli:
-        python_dir = os.path.dirname(sys.executable)
-        cand = os.path.join(python_dir, "rtfm")
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            rtfm_cli = cand
-
-    if rtfm_cli:
-        cat.items.append(
-            DiagnosticItem(
-                name="RTFM CLI",
-                status="OK",
-                message=f"Found at {rtfm_cli}",
-            )
-        )
-    else:
-        cat.items.append(
-            DiagnosticItem(
-                name="RTFM CLI",
-                status="WARN",
-                message="Executable 'rtfm' not found in PATH",
-                remediation="Ensure 'rtfm-ai' is installed globally or in virtualenv: 'uv tool install rtfm-ai[embeddings]'",
-            )
-        )
-
-    # Optional dependencies
+    # Optional dependencies (inspected via importlib metadata/spec to avoid C++ runtime
+    # conflicts between onnxruntime and libtorch during process teardown on macOS)
     opt_pkgs = [
         ("tiktoken", ["tiktoken"], "Fast token budgeting and accurate cl100k_base counting"),
         ("fastembed", ["fastembed"], "Local ONNX embeddings for RTFM semantic search"),
         ("sentence-transformers", ["sentence_transformers"], "Local models and reranker provider"),
         ("transformers", ["transformers"], "HuggingFace transformer model inference"),
     ]
-
     for display_name, mod_names, description in opt_pkgs:
-        mod = None
-        for m in mod_names:
-            try:
-                mod = __import__(m)
-                break
-            except ImportError:
-                continue
-        if mod:
-            ver = getattr(mod, "__version__", "installed")
-            cat.items.append(
-                DiagnosticItem(
-                    name=f"Optional {display_name}",
-                    status="OK",
-                    message=f"v{ver} ({description})",
-                )
-            )
-        else:
-            cat.items.append(
-                DiagnosticItem(
-                    name=f"Optional {display_name}",
-                    status="OK",
-                    message=f"Not installed (optional: {description})",
-                )
-            )
+        cat.items.append(_check_optional_package(display_name, mod_names, description))
 
     return cat
 
@@ -283,30 +334,43 @@ def check_index(project_root: Path) -> DiagnosticCategory:
     return cat
 
 
+def _check_rtfm_bibliographic_cards(project_root: Path) -> DiagnosticItem | None:
+    """Return a DiagnosticItem when RTFM bibliographic source cards exist in the index."""
+    try:
+        from writing_context_rtfm.rtfm_adapter import RTFMAdapter
+
+        adapter = RTFMAdapter(project_root=str(project_root), allow_cli_fallback=False)
+        source_cards = adapter.list_source_cards()
+        if source_cards:
+            attributed_count = sum(1 for c in source_cards if c.get("attributed"))
+            return DiagnosticItem(
+                name="RTFM Bibliographic Cards",
+                status="OK",
+                message=f"{len(source_cards)} card(s) recorded ({attributed_count} attributed)",
+            )
+    except Exception:
+        pass
+    return None
+
+
 def check_zotero_and_bibtex(project_root: Path) -> DiagnosticCategory:
     cat = DiagnosticCategory(category="Literature & Citations (BibTeX / Zotero)")
 
     # 1. Local .bib files
     bib_files = list(project_root.glob("*.bib")) + list(project_root.glob("references/*.bib"))
     if bib_files:
-        bib_names = ", ".join(f.name for f in bib_files[:3])
-        if len(bib_files) > 3:
-            bib_names += f" (+{len(bib_files) - 3} more)"
-        cat.items.append(
-            DiagnosticItem(
-                name="Offline BibTeX Files",
-                status="OK",
-                message=f"Found {len(bib_files)} file(s): {bib_names}",
-            )
-        )
+        bib_names = ", ".join(f.name for f in bib_files[:_MAX_BIB_PREVIEW])
+        if len(bib_files) > _MAX_BIB_PREVIEW:
+            bib_names += f" (+{len(bib_files) - _MAX_BIB_PREVIEW} more)"
+        bib_msg = f"Found {len(bib_files)} file(s): {bib_names}"
     else:
-        cat.items.append(
-            DiagnosticItem(
-                name="Offline BibTeX Files",
-                status="OK",
-                message="No local .bib files detected (BibTeX provider idle)",
-            )
-        )
+        bib_msg = "No local .bib files detected (BibTeX provider idle)"
+    cat.items.append(DiagnosticItem(name="Offline BibTeX Files", status="OK", message=bib_msg))
+
+    # 1b. RTFM bibliographic source cards (rtfm cite >= 0.47.0)
+    cards_item = _check_rtfm_bibliographic_cards(project_root)
+    if cards_item is not None:
+        cat.items.append(cards_item)
 
     # 2. Local Zotero installation
     zotero_sqlite_locations = [
@@ -314,42 +378,32 @@ def check_zotero_and_bibtex(project_root: Path) -> DiagnosticCategory:
         Path.home() / ".zotero" / "zotero.sqlite",
         Path.home() / "Library" / "Application Support" / "Zotero" / "Profiles",
     ]
-    found_zotero_dir = any(p.exists() for p in zotero_sqlite_locations)
-    if found_zotero_dir:
-        cat.items.append(
-            DiagnosticItem(
-                name="Zotero Desktop Storage",
-                status="OK",
-                message="Local Zotero data directory detected",
-            )
+    found_zotero = any(p.exists() for p in zotero_sqlite_locations)
+    cat.items.append(
+        DiagnosticItem(
+            name="Zotero Desktop Storage",
+            status="OK",
+            message=(
+                "Local Zotero data directory detected"
+                if found_zotero
+                else "Zotero desktop data not detected at default paths"
+            ),
         )
-    else:
-        cat.items.append(
-            DiagnosticItem(
-                name="Zotero Desktop Storage",
-                status="OK",
-                message="Zotero desktop data not detected at default paths",
-            )
-        )
+    )
 
     # 3. Zotero MCP Server executable
     zmcp_path = shutil.which("zotero-mcp")
-    if zmcp_path:
-        cat.items.append(
-            DiagnosticItem(
-                name="zotero-mcp Executable",
-                status="OK",
-                message=f"Found at {zmcp_path}",
-            )
+    cat.items.append(
+        DiagnosticItem(
+            name="zotero-mcp Executable",
+            status="OK",
+            message=(
+                f"Found at {zmcp_path}"
+                if zmcp_path
+                else "Not on PATH (optional: required only if using live Zotero MCP search)"
+            ),
         )
-    else:
-        cat.items.append(
-            DiagnosticItem(
-                name="zotero-mcp Executable",
-                status="OK",
-                message="Not on PATH (optional: required only if using live Zotero MCP search)",
-            )
-        )
+    )
 
     # 4. Check config provider status
     config_file = project_root / ".writing-context" / "config.yaml"
@@ -357,22 +411,14 @@ def check_zotero_and_bibtex(project_root: Path) -> DiagnosticCategory:
         try:
             config = load_config(str(project_root))
             zotero_cfg = config.providers.get("zotero")
-            if zotero_cfg and zotero_cfg.enabled:
-                cat.items.append(
-                    DiagnosticItem(
-                        name="Zotero Provider Config",
-                        status="OK",
-                        message="Enabled in config.yaml",
-                    )
+            enabled = bool(zotero_cfg and zotero_cfg.enabled)
+            cat.items.append(
+                DiagnosticItem(
+                    name="Zotero Provider Config",
+                    status="OK",
+                    message="Enabled in config.yaml" if enabled else "Disabled in config.yaml",
                 )
-            else:
-                cat.items.append(
-                    DiagnosticItem(
-                        name="Zotero Provider Config",
-                        status="OK",
-                        message="Disabled in config.yaml",
-                    )
-                )
+            )
         except Exception:
             pass
 
@@ -487,15 +533,19 @@ def check_local_models() -> DiagnosticCategory:
         )
     )
 
-    # FastEmbed cache
-    fastembed_cache = Path.home() / ".cache" / "fastembed"
+    # FastEmbed cache (respects FASTEMBED_CACHE_PATH introduced in rtfm-ai 0.55.3)
+    env_fastembed = os.environ.get("FASTEMBED_CACHE_PATH")
+    fastembed_cache = (
+        Path(env_fastembed) if env_fastembed else (Path.home() / ".cache" / "fastembed")
+    )
     if fastembed_cache.is_dir() and any(fastembed_cache.iterdir()):
         cached_models = [d.name for d in fastembed_cache.iterdir() if d.is_dir()]
+        source_note = " via FASTEMBED_CACHE_PATH" if env_fastembed else ""
         cat.items.append(
             DiagnosticItem(
                 name="FastEmbed Cache",
                 status="OK",
-                message=f"Cached models: {', '.join(cached_models[:2])}",
+                message=f"Cached models{source_note}: {', '.join(cached_models[:2])}",
             )
         )
     else:
@@ -503,7 +553,10 @@ def check_local_models() -> DiagnosticCategory:
             DiagnosticItem(
                 name="FastEmbed Cache",
                 status="OK",
-                message="No pre-cached models (downloaded on-demand when semantic sync runs)",
+                message=(
+                    f"No pre-cached models at {fastembed_cache} "
+                    "(downloaded on-demand when semantic sync runs)"
+                ),
             )
         )
 

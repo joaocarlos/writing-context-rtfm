@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.32.0] - 2026-11-01
+
+### Added
+- **RTFM 0.55.3+ Upgrade & Bibliographic Source Cards (`rtfm_adapter.py`, `schemas.py`, `doctor.py`)**:
+  - Upgraded dependency constraint to `rtfm-ai[embeddings]>=0.55.3`.
+  - Added support for RTFM's bibliographic source cards (`source_cards` table from `rtfm cite`, RTFM >= 0.47.0) via `RTFMAdapter.list_source_cards()` and `RTFMAdapter.get_source_card()`.
+  - Enriched direct SQLite search results with bibliographic card metadata (`source_card`, `author`, `attributed`).
+  - Added RTFM Bibliographic Cards status check in `doctor.py` (`check_zotero_and_bibtex`).
+- **Linked Git Worktree Database & Root Resolution (`utils.py`, `rtfm_adapter.py`)**:
+  - Added `resolve_git_worktree_main_root` and updated `resolve_rtfm_db_path` to resolve main repository `.rtfm/library.db` from linked git worktrees without spawning external git processes (RTFM >= 0.52.0).
+  - Added `RTFMAdapter._rewrite_worktree_path` to map indexed paths from the main tree back to the worktree copy.
+- **Hierarchical Ignore & RTFM Ignore Spec (`utils.py`)**:
+  - Added `_ProjectIgnoreSpec` combining root and nested `.gitignore` files with `.rtfmignore` (applying patterns from the `[index]` section and ignoring `[versions]`).
+  - Added `.claude/worktrees/` and `.codegraph/` to default excluded source patterns and directory traversals.
+- **WAL-Aware Invalidation Fingerprinting (`hashing.py`)**:
+  - Enhanced `compute_rtfm_fingerprint` to track `library.db-wal` modifications (`mtime` and non-empty `size`), ensuring immediate cache invalidation for RTFM WAL mode and background asynchronous syncs.
+
+### Fixed
+- **BM25 Score Normalization and Rank Slot Skew in SQLite Search (`rtfm_adapter.py`)**:
+  - Filtered out internal metadata files (`.writing-context/*`, `AGENTS.md`, etc.) via `is_allowed_source` before applying BM25 score normalization and `LIMIT` slicing, preventing internal YAML configuration files from consuming top retrieval slots or deflating manuscript scores.
+- **macOS C++ Static Destructor Crash in Doctor Checks (`doctor.py`)**:
+  - Switched optional package availability checks in `check_dependencies` to use `importlib.util.find_spec` and `importlib.metadata.version` instead of direct `__import__`, avoiding fatal C++ runtime destructor mutex collisions between `onnxruntime` (`fastembed`) and `libtorch` (`sentence-transformers`) on macOS during process exit.
+- **Core Package Version Fallback (`doctor.py`)**:
+  - Added fallback to `importlib.metadata.version` when core dependencies (such as `mcp`) do not expose a top-level `__version__` attribute.
+
+### Refactored
+- **Complexity and Control-Flow Simplification (`utils.py`, `rtfm_adapter.py`, `doctor.py`)**:
+  - Decomposed high-complexity functions in `doctor.py` (`check_dependencies`, `check_zotero_and_bibtex`), `rtfm_adapter.py` (`_direct_sqlite_search`, `health_check`), and `utils.py` (`resolve_git_worktree_main_root`, `resolve_rtfm_db_path`, `load_ignore_spec`) following `/py-complexity` guidelines.
+  - Reduced `rtfm_adapter.py` file length below 500 lines while maintaining 100% test contract compliance.
+
 ## [0.31.0] - 2026-10-31
 
 ### Added

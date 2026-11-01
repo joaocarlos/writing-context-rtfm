@@ -379,6 +379,173 @@ class TestResolveRtfmDbPath(unittest.TestCase):
             adapter.search("routing", corpus="manuscript", limit=1)
         run_command.assert_not_called()
 
+    def test_resolve_rtfm_db_path_and_search_in_git_worktree(self):
+        import sqlite3
+
+        if "RTFM_DB" in os.environ:
+            del os.environ["RTFM_DB"]
+
+        main_root = self.project_root / "main_repo"
+        wt_root = self.project_root / "worktree_copy"
+        git_wt_dir = main_root / ".git" / "worktrees" / "wt1"
+        git_wt_dir.mkdir(parents=True)
+        (git_wt_dir / "commondir").write_text("../..\n", encoding="utf-8")
+
+        wt_root.mkdir(parents=True)
+        (wt_root / ".git").write_text(f"gitdir: {git_wt_dir}\n", encoding="utf-8")
+
+        rtfm_dir = main_root / ".rtfm"
+        rtfm_dir.mkdir(parents=True)
+        db_path = rtfm_dir / "library.db"
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT, title TEXT, corpus TEXT);"
+        )
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, "
+            "line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content);")
+        abs_in_main = str((main_root / "chapters" / "intro.tex").resolve())
+        conn.execute(
+            "INSERT INTO books VALUES (1, ?, 'Intro', 'manuscript');",
+            (abs_in_main,),
+        )
+        conn.execute("INSERT INTO chunks VALUES (1, 1, 'worktree routing test', 1, 5, 'Intro');")
+        conn.execute("INSERT INTO chunks_fts(rowid, content) VALUES (1, 'worktree routing test');")
+        conn.commit()
+        conn.close()
+
+        resolved = resolve_rtfm_db_path(wt_root)
+        self.assertEqual(resolved.resolve(), db_path.resolve())
+
+        adapter = RTFMAdapter(project_root=str(wt_root), allow_cli_fallback=False)
+        results = adapter.search("worktree routing", corpus="manuscript", limit=5)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            Path(results[0].path).resolve(),
+            (wt_root / "chapters" / "intro.tex").resolve(),
+        )
+
+    def test_direct_sqlite_search_attaches_rtfm_cite_source_cards(self):
+        import sqlite3
+
+        db_path = self.project_root / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT, title TEXT, corpus TEXT);"
+        )
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, "
+            "line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content);")
+        conn.execute(
+            """CREATE TABLE source_cards (
+                corpus TEXT NOT NULL,
+                filepath TEXT NOT NULL,
+                author TEXT,
+                title TEXT,
+                nature TEXT,
+                language TEXT,
+                year TEXT,
+                edition TEXT,
+                translator TEXT,
+                range_start INTEGER,
+                range_end INTEGER,
+                note TEXT,
+                extra TEXT,
+                updated_at TEXT,
+                PRIMARY KEY (corpus, filepath)
+            );"""
+        )
+        conn.execute("INSERT INTO books VALUES (1, 'paper.pdf', 'Paper', 'manuscript');")
+        conn.execute(
+            "INSERT INTO chunks VALUES (1, 1, 'sparse attention routing', 10, 20, 'Method');"
+        )
+        conn.execute(
+            "INSERT INTO chunks_fts(rowid, content) VALUES (1, 'sparse attention routing');"
+        )
+        conn.execute(
+            """INSERT INTO source_cards
+               (corpus, filepath, author, title, nature, year, range_start, range_end, extra, updated_at)
+               VALUES ('manuscript', 'paper.pdf', 'Silva, J.', 'Sparse Routing', 'article', '2026', 3, 18, '{"doi":"10.1000/xyz"}', '2026-10-01T00:00:00')"""
+        )
+        conn.commit()
+        conn.close()
+
+        adapter = RTFMAdapter(project_root=str(self.project_root), allow_cli_fallback=False)
+        cards = adapter.list_source_cards(corpus="manuscript")
+        self.assertEqual(len(cards), 1)
+        self.assertTrue(cards[0]["attributed"])
+        self.assertEqual(cards[0]["author"], "Silva, J.")
+        self.assertEqual(cards[0]["range"], [3, 18])
+        self.assertEqual(cards[0]["extra"], {"doi": "10.1000/xyz"})
+
+        card = adapter.get_source_card("paper.pdf", corpus="manuscript")
+        self.assertIsNotNone(card)
+
+        results = adapter.search("sparse attention", corpus="manuscript", limit=5)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].metadata.get("author"), "Silva, J.")
+        self.assertTrue(results[0].metadata.get("attributed"))
+        self.assertIn("source_card", results[0].metadata)
+
+    def test_direct_sqlite_search_excludes_internal_files_before_bm25_normalization(self):
+        import sqlite3
+
+        db_path = self.project_root / "library.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "CREATE TABLE books (id INTEGER PRIMARY KEY, filename TEXT, title TEXT, corpus TEXT);"
+        )
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, book_id INTEGER, content TEXT, "
+            "line_start INTEGER, line_end INTEGER, chapter_title TEXT);"
+        )
+        conn.execute("CREATE VIRTUAL TABLE chunks_fts USING fts5(content);")
+        conn.execute(
+            "INSERT INTO books VALUES (1, '.writing-context/section_cards.yaml', 'Cards', 'default');"
+        )
+        conn.execute("INSERT INTO books VALUES (2, 'main.tex', 'Main', 'default');")
+        conn.execute(
+            "INSERT INTO chunks VALUES (1, 1, 'TinyML acoustic TinyML acoustic TinyML acoustic', 1, 10, 'Cards');"
+        )
+        conn.execute(
+            "INSERT INTO chunks VALUES (2, 2, 'TinyML acoustic classification', 1, 10, 'Intro');"
+        )
+        conn.execute(
+            "INSERT INTO chunks_fts(rowid, content) VALUES (1, 'TinyML acoustic TinyML acoustic TinyML acoustic');"
+        )
+        conn.execute(
+            "INSERT INTO chunks_fts(rowid, content) VALUES (2, 'TinyML acoustic classification');"
+        )
+        conn.commit()
+        conn.close()
+
+        adapter = RTFMAdapter(project_root=str(self.project_root), allow_cli_fallback=False)
+        results = adapter.search("TinyML acoustic", corpus="default", limit=1)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].path, "main.tex")
+        self.assertEqual(results[0].score, 1.0)
+        self.assertEqual(results[0].metadata["retrieval_rank"], 1)
+
+    def test_fingerprint_tracks_wal_changes(self):
+        from writing_context_rtfm.hashing import compute_rtfm_fingerprint
+
+        db_path = self.project_root / "library.db"
+        db_path.write_bytes(b"sqlite-main-db")
+        fp_base = compute_rtfm_fingerprint(db_path)
+
+        wal_path = self.project_root / "library.db-wal"
+        wal_path.write_bytes(b"")
+        self.assertEqual(compute_rtfm_fingerprint(db_path), fp_base)
+
+        wal_path.write_bytes(b"uncheckpointed-wal-frames")
+        fp_with_wal = compute_rtfm_fingerprint(db_path)
+        self.assertNotEqual(fp_with_wal, fp_base)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.33.0] - 2026-11-03
 
 ### Added
 - **Project-Wide 1-Hop Environment & Reference Resolution (`virtual_doc.py`, `context_pack.py`, `section_cards.py`)**:

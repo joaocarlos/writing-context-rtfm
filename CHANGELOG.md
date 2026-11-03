@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Project-Wide 1-Hop Environment & Reference Resolution (`virtual_doc.py`, `context_pack.py`, `section_cards.py`)**:
+  - Added `VirtualDocumentParser.index_project_environments()` with `mtime` caching to index environments across all `.tex` and `.md` files in a project, enabling cross-file figure, table, equation, algorithm, and listing references to resolve seamlessly.
+  - Added multi-flavor reference extraction from task prompts (`\ref`, `\eqref`, `\cref`, `\Cref`, `\autoref`) and from `target_card.references`.
+  - Added section reference fallback (`\label{sec:...}`) in 1-hop traversal to retrieve the referenced section header and context.
+  - Added candidate anchoring (`metadata["anchor"] = True`, `source_role="dependency"`, reason check) in `_prioritize_and_bound_reranker_candidates` to prevent essential structural references from being pruned during lexical ranking.
+  - Extended `SectionCard` to parse and retain structural fields (`citations`, `references`, `figures`, `tables`, `equations`, `algorithms`) across card splits and merges.
+- **Transitive Dependency Resolution in Terminology Audits (`features.py`)**:
+  - Implemented `get_transitive_deps` in `audit_manuscript_terminology` to traverse the section dependency chain (`A -> B -> C`), eliminating false-positive terminology drift warnings when terms declared in ancestor sections are used in descendant sections.
+
+### Fixed
+- **Single-File Section Scoping in Context Pack Generation (`context_pack.py`)**:
+  - Passed `effective_line_start` and `effective_line_end` (resolved from `target_node`) into `_classify_priority`, correctly classifying non-target spans in single-file manuscripts (e.g. IEEE conference papers) as outside the target range instead of conflating them with target text.
+- **Dependency Role Preservation in Priority Classifier (`context_pack.py`)**:
+  - Preserved `source_role="dependency"` for structural 1-hop spans during priority and role classification.
+
 ## [0.32.0] - 2026-11-01
 
 ### Added

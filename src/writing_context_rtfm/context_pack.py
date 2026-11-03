@@ -1287,10 +1287,13 @@ class ContextPackGenerator:
             snippet_lower = snippet_text.lower()
 
             is_anchored = (
-                span.path in dep_paths
+                span.source_role == "dependency"
+                or span.path in dep_paths
                 or meta.get("section_id") in dep_ids
+                or meta.get("anchor") is True
                 or "dep" in span.reason.lower()
                 or "1-hop" in span.reason.lower()
+                or "referenced" in span.reason.lower()
                 or bool(citation_keys and any(k in snippet_lower for k in citation_keys))
             )
 
@@ -1623,6 +1626,8 @@ class ContextPackGenerator:
         all_candidates: list[SourceSpan] = []
         initial_token_budget = token_budget
         has_explicit_line_range = line_start is not None and line_end is not None
+        effective_line_start = line_start
+        effective_line_end = line_end
         target_snippet: str | None = None
 
         if has_explicit_line_range and not target_path:
@@ -1725,6 +1730,10 @@ class ContextPackGenerator:
                         if target_node and target_node.source_path == target_path:
                             start = max(1, min(target_node.line_start, num_lines))
                             end = max(1, min(target_node.line_end, num_lines))
+                            if effective_line_start is None:
+                                effective_line_start = start
+                            if effective_line_end is None:
+                                effective_line_end = end
                         else:
                             start = 1
                             end = num_lines
@@ -2279,16 +2288,33 @@ class ContextPackGenerator:
             try:
                 doc_parser = VirtualDocumentParser(pr)
                 doc_parser.parse(target_path)
+                doc_parser.index_project_environments()
 
                 ref_labels: list[str] = []
                 if resolved_key and resolved_key in doc_parser.nodes:
                     ref_labels.extend(doc_parser.nodes[resolved_key].references)
 
+                # Extract references from task query
+                task_ref_pat = re.compile(r"(?:\\ref|\\eqref|\\cref|\\Cref|\\autoref)\{([^}]+)\}")
+                for m in task_ref_pat.finditer(task):
+                    for k in m.group(1).split(","):
+                        k_clean = k.strip()
+                        if k_clean and k_clean not in ref_labels:
+                            ref_labels.append(k_clean)
+
+                # Extract references from target_card if present
+                if target_card and getattr(target_card, "references", None):
+                    for ref_str in target_card.references or []:
+                        if ref_str not in ref_labels:
+                            ref_labels.append(ref_str)
+
                 seen_env_keys = set()
                 for ref_label in ref_labels:
+                    matched_env = False
                     for file_rel, envs in doc_parser.environments_by_file.items():
                         for env in envs:
                             if env.get("label") == ref_label:
+                                matched_env = True
                                 env_key = (file_rel, env.get("line_start"), env.get("line_end"))
                                 if env_key not in seen_env_keys:
                                     seen_env_keys.add(env_key)
@@ -2313,6 +2339,7 @@ class ContextPackGenerator:
                                                 "snippet": env_snippet,
                                                 "env_name": env.get("env_name"),
                                                 "label": ref_label,
+                                                "anchor": True,
                                             },
                                         )
                                         all_candidates.append(env_span)
@@ -2322,6 +2349,49 @@ class ContextPackGenerator:
                                                 query=f"\\ref{{{ref_label}}}",
                                                 stream_key="ref_graph",
                                             )
+                    if not matched_env:
+                        # Check if ref_label is a section in doc_parser.nodes or section_cards
+                        sec_node = None
+                        for nid, n in doc_parser.nodes.items():
+                            if n.selector == ref_label or ref_label in n.labels or nid == ref_label:
+                                sec_node = n
+                                break
+                        if sec_node:
+                            s_start = max(1, sec_node.line_start)
+                            s_end = min(s_start + 15, sec_node.line_end)
+                            sec_key = (sec_node.source_path, s_start, s_end)
+                            if sec_key not in seen_env_keys:
+                                seen_env_keys.add(sec_key)
+                                f_abs = Path(pr) / sec_node.source_path
+                                if f_abs.is_file():
+                                    f_lines = f_abs.read_text(
+                                        encoding="utf-8", errors="replace"
+                                    ).splitlines()
+                                    sec_end = min(len(f_lines), s_end)
+                                    sec_snippet = "\n".join(f_lines[s_start - 1 : sec_end])
+                                    sec_span = SourceSpan(
+                                        path=sec_node.source_path,
+                                        line_start=s_start,
+                                        line_end=sec_end,
+                                        reason=f"Referenced section '{sec_node.title}' (\\ref{{{ref_label}}})",
+                                        score=0.90,
+                                        structural_score=0.90,
+                                        priority="supporting",
+                                        source_role="dependency",
+                                        metadata={
+                                            "snippet": sec_snippet,
+                                            "label": ref_label,
+                                            "section_id": sec_node.node_id,
+                                            "anchor": True,
+                                        },
+                                    )
+                                    all_candidates.append(sec_span)
+                                    if tracker is not None:
+                                        tracker.record_retrieved(
+                                            sec_span,
+                                            query=f"\\ref{{{ref_label}}}",
+                                            stream_key="ref_graph",
+                                        )
             except Exception as e:
                 warnings.append(f"Note: 1-Hop reference traversal notice: {e}")
 
@@ -2470,8 +2540,8 @@ class ContextPackGenerator:
             target_card,
             dep_cards,
             target_path=target_path,
-            line_start=line_start,
-            line_end=line_end,
+            line_start=effective_line_start,
+            line_end=effective_line_end,
             git_modified_ranges=git_modified_ranges,
         )
 
@@ -3243,7 +3313,7 @@ class ContextPackGenerator:
                         break
 
             # Determine source_role
-            if span.source_role in ("target_text", "local_context"):
+            if span.source_role in ("target_text", "local_context", "dependency"):
                 role = span.source_role
             elif is_target:
                 if line_start is not None and line_end is not None:

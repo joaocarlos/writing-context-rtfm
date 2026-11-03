@@ -158,3 +158,50 @@ Methodology body text.
             nodes1["section_cached_section"].content_hash,
             nodes2["section_cached_section"].content_hash,
         )
+
+    def test_index_project_environments(self):
+        main_tex = self.test_dir / "main.tex"
+        main_tex.write_text(
+            r"""
+            \documentclass{article}
+            \begin{document}
+            \section{Main}
+            See Figure~\ref{fig:arch} and Equation~\eqref{eq:loss}.
+            \end{document}
+            """,
+            encoding="utf-8",
+        )
+        figures_tex = self.test_dir / "figures.tex"
+        figures_tex.write_text(
+            r"""
+            \begin{figure}[t]
+            \caption{Architecture}
+            \label{fig:arch}
+            \end{figure}
+            """,
+            encoding="utf-8",
+        )
+        math_tex = self.test_dir / "math.tex"
+        math_tex.write_text(
+            r"""
+            \begin{equation}
+            L = \sum_i (y_i - \hat{y}_i)^2
+            \label{eq:loss}
+            \end{equation}
+            """,
+            encoding="utf-8",
+        )
+
+        parser = VirtualDocumentParser(str(self.test_dir))
+        parser.parse("main.tex")
+        self.assertNotIn("figures.tex", parser.environments_by_file)
+
+        parser.index_project_environments()
+        self.assertIn("figures.tex", parser.environments_by_file)
+        self.assertIn("math.tex", parser.environments_by_file)
+
+        fig_envs = parser.environments_by_file["figures.tex"]
+        self.assertTrue(any(e.get("label") == "fig:arch" for e in fig_envs))
+
+        math_envs = parser.environments_by_file["math.tex"]
+        self.assertTrue(any(e.get("label") == "eq:loss" for e in math_envs))

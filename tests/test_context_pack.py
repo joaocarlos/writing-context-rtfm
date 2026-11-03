@@ -368,6 +368,111 @@ class TestContextPackGenerator(unittest.TestCase):
         self.assertNotIn("abbrevs.tex", paths)
         self.assertIn("chapter1.tex", paths)
 
+    def test_1hop_reference_traversal_project_environments(self):
+        import tempfile
+        from pathlib import Path
+
+        from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p_root = Path(tmpdir)
+            (p_root / "chapter1.tex").write_text(
+                "\\section{Intro}\\label{sec:intro}\nSee Figure~\\ref{fig:arch}.\n",
+                encoding="utf-8",
+            )
+            (p_root / "figures.tex").write_text(
+                "\\begin{figure}[h]\n\\caption{Arch}\n\\label{fig:arch}\n\\end{figure}\n",
+                encoding="utf-8",
+            )
+
+            config = AppConfig(
+                version=1,
+                rtfm=RTFMConfig(project_root=str(p_root)),
+                context=ContextConfig(default_token_budget=1000),
+                cache=CacheConfig(enabled=False),
+                section_cards=SectionCardsConfig(),
+            )
+            cards = SectionCards(
+                version=1,
+                document=DocumentCard(title="Test", thesis="Test thesis"),
+                sections={
+                    "section_intro": SectionCard(
+                        id="section_intro",
+                        title="Intro",
+                        path="chapter1.tex",
+                        references=["fig:arch"],
+                    )
+                },
+            )
+
+            gen = ContextPackGenerator(config, cards, self.adapter, self.store)
+            pack = gen.generate(
+                task="Explain Figure~\\ref{fig:arch}",
+                target="section_intro",
+                token_budget=2000,
+            )
+
+            fig_spans = [s for s in pack.source_spans if s.path == "figures.tex"]
+            self.assertTrue(len(fig_spans) >= 1)
+            self.assertEqual(fig_spans[0].source_role, "dependency")
+            self.assertTrue(fig_spans[0].metadata.get("anchor"))
+            self.assertIn("fig:arch", fig_spans[0].reason)
+
+    def test_1hop_reference_traversal_fallback_section(self):
+        import tempfile
+        from pathlib import Path
+
+        from writing_context_rtfm.section_cards import DocumentCard, SectionCard, SectionCards
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p_root = Path(tmpdir)
+            (p_root / "intro.tex").write_text(
+                "\\section{Intro}\\label{sec:intro}\nRefer to Section~\\ref{sec:methods}.\n",
+                encoding="utf-8",
+            )
+            (p_root / "methods.tex").write_text(
+                "\\section{Methods}\\label{sec:methods}\nOur algorithm details.\n",
+                encoding="utf-8",
+            )
+
+            config = AppConfig(
+                version=1,
+                rtfm=RTFMConfig(project_root=str(p_root)),
+                context=ContextConfig(default_token_budget=1000),
+                cache=CacheConfig(enabled=False),
+                section_cards=SectionCardsConfig(),
+            )
+            cards = SectionCards(
+                version=1,
+                document=DocumentCard(title="Test", thesis="Test thesis"),
+                sections={
+                    "section_intro": SectionCard(
+                        id="section_intro",
+                        title="Intro",
+                        path="intro.tex",
+                        references=["sec:methods"],
+                    ),
+                    "section_methods": SectionCard(
+                        id="section_methods",
+                        title="Methods",
+                        path="methods.tex",
+                    ),
+                },
+            )
+
+            gen = ContextPackGenerator(config, cards, self.adapter, self.store)
+            pack = gen.generate(
+                task="Integrate with Section~\\ref{sec:methods}",
+                target="section_intro",
+                token_budget=2000,
+            )
+
+            sec_spans = [s for s in pack.source_spans if s.path == "methods.tex"]
+            self.assertTrue(len(sec_spans) >= 1)
+            self.assertEqual(sec_spans[0].source_role, "dependency")
+            self.assertTrue(sec_spans[0].metadata.get("anchor"))
+            self.assertIn("sec:methods", sec_spans[0].reason)
+
 
 if __name__ == "__main__":
     unittest.main()

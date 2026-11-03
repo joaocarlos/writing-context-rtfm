@@ -32,6 +32,12 @@ class SectionCard:
     unverified_key_terms: list[str] | None = None
     unverified_dependencies: list[str] | None = None
     selector: str | None = None
+    citations: list[str] | None = None
+    references: list[str] | None = None
+    figures: list[str] | None = None
+    tables: list[str] | None = None
+    equations: list[str] | None = None
+    algorithms: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -373,6 +379,12 @@ def _merge_split_cards(
             unverified_key_terms=unverified_key_terms,
             unverified_dependencies=unverified_dependencies,
             selector=selector,
+            citations=gs.get("citations"),
+            references=gs.get("references"),
+            figures=gs.get("figures"),
+            tables=gs.get("tables"),
+            equations=gs.get("equations"),
+            algorithms=gs.get("algorithms"),
         )
 
     version_val = (
@@ -459,6 +471,12 @@ def load_section_cards(
             unverified_key_terms=[],
             unverified_dependencies=[],
             selector=sec_selector,
+            citations=sec_data.get("citations"),
+            references=sec_data.get("references"),
+            figures=sec_data.get("figures"),
+            tables=sec_data.get("tables"),
+            equations=sec_data.get("equations"),
+            algorithms=sec_data.get("algorithms"),
         )
 
     return SectionCards(version=data.get("version", 1), document=document, sections=sections)

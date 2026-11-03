@@ -208,11 +208,14 @@ Prevents syntax corruption and broken code blocks in LLM prompts by ensuring ret
 ## 10. 1-Hop Reference Graph Traversal
 
 ### Objective
-Directly resolves cross-reference labels (`\ref{fig:pipeline}`, `\ref{tab:microcontrollers}`, `\ref{sec:method}`) within the target text, injecting the defining snippets of referenced figures, tables, and equations into the context pack.
+Directly resolves cross-reference labels (`\ref{fig:pipeline}`, `\ref{tab:microcontrollers}`, `\ref{sec:method}`) from both the target section prose and the agent's task query across the entire manuscript file tree, injecting defining snippets of referenced figures, tables, equations, and section headings into the context pack with deterministic candidate anchoring.
 
 ### Behavior
-- Parses all `\label{...}` declarations across the manuscript AST.
-- Resolves cross-references in the target section and queries the AST to extract the full definition block for each referenced figure, table, or equation.
+- Scans and indexes environments (`figure`, `table`, `equation`, `align`, `algorithm`, `lstlisting`) across all allowed `.tex` and `.md` files in the project.
+- Extracts `\ref{...}`, `\eqref{...}`, `\cref{...}`, `\Cref{...}`, and `\autoref{...}` declarations from both the target section node and the incoming task prompt.
+- Extracts the exact line range and full definition block for each referenced figure, table, or equation across all manuscript files.
+- When a reference points to a section (`\label{sec:...}`), resolves to the defining section node and injects its title and lead snippet as a supporting dependency span.
+- Attaches `anchor: True` and `source_role: "dependency"` to resolved spans so they are protected from displacement during neural reranking candidate pre-filtering.
 
 ---
 

@@ -1,3 +1,4 @@
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -189,6 +190,39 @@ class VirtualDocumentParser:
         # Resolve parent-child links globally based on heading levels
         self._resolve_hierarchy()
         return self.nodes
+
+    def index_project_environments(self) -> dict[str, list[dict[str, Any]]]:
+        """Scan and index environments across all allowed manuscript files in project_root."""
+        from writing_context_rtfm.utils import is_allowed_source, is_path_ignored, load_ignore_spec
+
+        ignore_spec = load_ignore_spec(self.project_root)
+        for root_dir, dirs, files in os.walk(self.project_root):
+            dirs[:] = [
+                d
+                for d in dirs
+                if is_allowed_source(str(Path(root_dir) / d))
+                and not is_path_ignored(
+                    (Path(root_dir) / d).relative_to(self.project_root), ignore_spec, is_dir=True
+                )
+            ]
+            for file in files:
+                full_path = Path(root_dir) / file
+                rel_file = full_path.relative_to(self.project_root)
+                if is_path_ignored(rel_file, ignore_spec):
+                    continue
+                if not is_allowed_source(str(full_path)):
+                    continue
+
+                rel_str = str(rel_file)
+                if rel_str in self.environments_by_file:
+                    continue
+
+                if file.endswith(".tex"):
+                    self._parse_latex(rel_str)
+                elif file.endswith(".md"):
+                    self._parse_markdown(rel_str)
+
+        return self.environments_by_file
 
     def _to_rel_path(self, path_str: str) -> str | None:
         try:

@@ -100,6 +100,52 @@ section_cards:
         self.assertIn("report", audit_res)
         self.assertTrue(audit_res["audited_terms_count"] >= 1)
 
+    @patch("writing_context_rtfm.rtfm_adapter.RTFMAdapter.search")
+    def test_audit_manuscript_terminology_transitive_deps(self, mock_search):
+        initialize_section_cards(str(self.root))
+        sc_path = self.wc_dir / "section_cards.yaml"
+        with open(sc_path) as f:
+            data = yaml.safe_load(f)
+
+        data.setdefault("sections", {})
+        data["sections"]["section_intro"] = {
+            "title": "Introduction",
+            "path": "intro.tex",
+            "key_terms": ["Deep Learning"],
+            "depends_on": [],
+        }
+        data["sections"]["section_methods"] = {
+            "title": "Methodology",
+            "path": "methods.md",
+            "key_terms": [],
+            "depends_on": ["section_intro"],
+        }
+        data["sections"]["section_experiments"] = {
+            "title": "Experiments",
+            "path": "experiments.tex",
+            "key_terms": [],
+            "depends_on": ["section_methods"],
+        }
+
+        with open(sc_path, "w") as f:
+            yaml.dump(data, f)
+
+        exp_tex = self.root / "experiments.tex"
+        exp_tex.write_text("We test Deep Learning models on benchmark datasets.\n", encoding="utf-8")
+
+        mock_search.return_value = []
+        audit_res = audit_manuscript_terminology(str(self.root))
+        self.assertEqual(audit_res["status"], "success")
+        report = audit_res["report"]
+        # Deep Learning was used in experiments.tex, which transitively depends on section_intro
+        # So it should NOT have undeclared/unscoped warnings in findings
+        findings = report.get("findings", [])
+        dl_unscoped = [
+            f for f in findings
+            if f.get("canonical_term") == "Deep Learning" and f.get("type") == "unscoped_usage"
+        ]
+        self.assertEqual(len(dl_unscoped), 0)
+
     def test_get_term_context(self):
         initialize_section_cards(str(self.root))
         sc_path = self.wc_dir / "section_cards.yaml"

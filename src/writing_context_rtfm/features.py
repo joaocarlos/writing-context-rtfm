@@ -211,17 +211,21 @@ def initialize_section_cards(project_root: str | None = None) -> dict[str, Any]:
     }
 
 
-def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, Any]:
+def audit_manuscript_terminology(
+    project_root: str | None = None,
+    config: Any = None,
+) -> dict[str, Any]:
     """Audit canonical terms, accepted variants, and forbidden forms in the RTFM index."""
     from writing_context_rtfm.config import load_config
     from writing_context_rtfm.rtfm_adapter import RTFMAdapter
     from writing_context_rtfm.section_cards import load_section_cards, normalize_terminology
 
     root = Path(project_root or ".").resolve()
-    try:
-        config = load_config(str(root))
-    except Exception as e:
-        return {"status": "error", "message": f"Config load failed: {e}"}
+    if config is None:
+        try:
+            config = load_config(str(root))
+        except Exception as e:
+            return {"status": "error", "message": f"Config load failed: {e}"}
 
     sc_path = Path(config.section_cards.path)
     if not sc_path.is_absolute():
@@ -317,6 +321,19 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
                 )
             occurrences_by_spec[spec] = occurrences
 
+    def get_transitive_deps(sid: str) -> set[str]:
+        visited: set[str] = set()
+        stack = [sid]
+        while stack:
+            curr = stack.pop()
+            card = section_cards.sections.get(curr)
+            if card and card.depends_on:
+                for dep in card.depends_on:
+                    if dep not in visited:
+                        visited.add(dep)
+                        stack.append(dep)
+        return visited
+
     for key, entry in registry.items():
         canonical = entry["canonical_term"]
         sids = entry["declared_in_sections"]
@@ -366,8 +383,8 @@ def audit_manuscript_terminology(project_root: str | None = None) -> dict[str, A
                 declares = any(sid_occ in sids for sid_occ in sids_occurrence)
                 if not declares:
                     for sid_occ in sids_occurrence:
-                        occ_card = section_cards.sections.get(sid_occ)
-                        if occ_card and any(sid in (occ_card.depends_on or []) for sid in sids):
+                        trans_deps = get_transitive_deps(sid_occ)
+                        if any(sid in trans_deps for sid in sids):
                             declares = True
                             break
                 if not declares:
